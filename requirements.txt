@@ -1,0 +1,7 @@
+
+streamlit
+fpdf2
+python-dateutil
+pandas
+numpy
+matplotlib
