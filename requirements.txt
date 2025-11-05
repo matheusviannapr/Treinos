@@ -5,4 +5,3 @@ python-dateutil
 pandas
 numpy
 matplotlib
-unicodedata
