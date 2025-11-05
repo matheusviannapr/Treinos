@@ -127,7 +127,6 @@ def week_range(start_monday: date):
 def today() -> date:
     return date.today()
 
-
 def get_week_key(week_start: date) -> str:
     return pd.Timestamp(week_start).strftime("%Y-%m-%d")
 
@@ -153,7 +152,6 @@ def set_frozen_weekly_targets(week_start: date, targets: dict):
     st.session_state["frozen_targets"][wk] = {
         k: float(targets.get(k, 0.0) or 0.0) for k in MODALIDADES
     }
-
 
 def init_csv_if_needed():
     ensure_dirs()
@@ -328,6 +326,18 @@ def prescribe_detail(mod, tipo, volume, unit, paces):
             return "Mobilidade ombro/quadril/torácica 15–20min. Foco em pontos fracos."
     return ""
 
+# ---------- NOVO: utilitário para expandir listas ao tamanho n ----------
+def _expand_to_n(pattern_list, n):
+    """Repete o padrão até atingir n itens (preservando ordem)."""
+    if n <= 0:
+        return []
+    if not pattern_list:
+        return [1.0 / n] * n  # fallback numérico quando usado com pesos
+    k = len(pattern_list)
+    reps = n // k
+    rem = n % k
+    return pattern_list * reps + pattern_list[:rem]
+
 def distribute_week_by_targets(
     week_start: date,
     weekly_targets: dict,
@@ -349,54 +359,59 @@ def distribute_week_by_targets(
     default_days = {
         "Corrida": [2, 4, 6],  # Wed, Fri, Sun
         "Ciclismo": [1, 3, 5], # Tue, Thu, Sat
-        "Natação": [0, 2], # Mon, Wed
+        "Natação": [0, 2],     # Mon, Wed
         "Força/Calistenia": [1, 4], # Tue, Fri
-        "Mobilidade": [0, 6], # Mon, Sun
+        "Mobilidade": [0, 6],  # Mon, Sun
     }
     
     # 1. Calcular a carga total e a distribuição de volume
     mod_volumes = {}
     for mod, weekly_vol in weekly_targets.items():
         weekly_vol = float(weekly_vol or 0)
-        if weekly_vol <= 0: continue
         n = int(sessions_per_mod.get(mod, 0))
-        if n <= 0: continue
+        if weekly_vol <= 0 or n <= 0:
+            continue
         unit = UNITS_ALLOWED[mod]
         target_total = _round_to_step_sum(weekly_vol, unit)
-        
-        # Distribuir o volume pelo número de sessões e pesos
-        w = weights.get(mod, [1.0/n] * n)
-        w = w[:n] # Garante que o número de pesos é igual ao número de sessões
-        if sum(w) != 1.0:
-            w = [x / sum(w) for x in w] # Normaliza se necessário
-            
+
+        # --- PATCH: expandir pesos para exatamente n e normalizar ---
+        w_template = weights.get(mod, None)
+        if w_template is None:
+            w = [1.0 / n] * n
+        else:
+            w = _expand_to_n(w_template, n)
+            s = sum(w)
+            w = [1.0 / n] * n if s == 0 else [x / s for x in w]
+
         volumes = [_round_to_step_sum(target_total * wi, unit) for wi in w]
-        
-        # Ajuste fino para garantir que a soma é o total (devido ao arredondamento)
+
+        # Ajuste fino para garantir soma exata após arredondamentos
         diff = target_total - sum(volumes)
-        if diff != 0:
-            # Adiciona/subtrai a diferença na maior sessão
-            max_idx = volumes.index(max(volumes))
+        if abs(diff) > 1e-9:
+            max_idx = max(range(len(volumes)), key=lambda i: volumes[i])
             volumes[max_idx] = _round_to_step_sum(volumes[max_idx] + diff, unit)
-            
+
         mod_volumes[mod] = volumes
 
     # 2. Atribuir sessões aos dias
     session_assignments = {i: [] for i in range(7)} # {day_index: [(mod, vol, tipo)]}
-    
     for mod, volumes in mod_volumes.items():
         n = len(volumes)
-        
-        # Seleção de dias preferenciais
-        prefs = user_preferred_days.get(mod) if user_preferred_days and mod in user_preferred_days else default_days.get(mod, list(range(7)))
+        prefs = (user_preferred_days or {}).get(mod, default_days.get(mod, list(range(7))))
+        # completa a lista de dias com os restantes e limita a n
         day_idx = prefs + [i for i in range(7) if i not in prefs]
         day_idx = day_idx[:n]
-        
-        # Tipos de treino
-        tipos = TIPOS_MODALIDADE.get(mod, ["Treino"])
-        tipos = tipos[:n]
-        
-        # Atribuição
+
+        # --- PATCH: expandir tipos para exatamente n ---
+        tipos_base = TIPOS_MODALIDADE.get(mod, ["Treino"])
+        tipos = _expand_to_n(tipos_base, n)
+
+        # se houver treino chave definido, posicione-o na maior sessão (opcional)
+        key_tipo = (key_sessions or {}).get(mod, "")
+        if key_tipo and key_tipo in tipos:
+            max_i = max(range(n), key=lambda i: volumes[i])
+            tipos[max_i] = key_tipo
+
         for i in range(n):
             day = day_idx[i]
             vol = volumes[i]
@@ -406,7 +421,6 @@ def distribute_week_by_targets(
     # 3. Criar o DataFrame final
     for i in range(7):
         d = days[i]
-        
         # Ordenar as sessões do dia (ex: Corrida > Ciclismo > Natação > Força > Mobilidade)
         day_sessions = sorted(session_assignments[i], key=lambda x: MODALIDADES.index(x[0]) if x[0] in MODALIDADES else 99)
         
@@ -555,10 +569,6 @@ def generate_cycle(
 # Funções de Exportação
 # -----------------------
 
-# ... (Funções de exportação ICS e PDF - manter as do código funcional) ...
-# O código funcional já tem as funções de exportação (generate_ics, generate_pdf)
-# Vou garantir que a função de exportação PDF use o `pdf_safe` e seja robusta.
-
 def generate_ics(df: pd.DataFrame, filename: str) -> str:
     """Gera o conteúdo do arquivo .ics a partir do DataFrame."""
     ics_content = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Manus//TriathlonPlanner//EN\n"
@@ -693,9 +703,6 @@ def calculate_metrics(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     ATL_TAU = 7 # Acute Training Load (curto prazo)
     CTL_TAU = 42 # Chronic Training Load (longo prazo)
     
-    # Cálculo do CTL (Chronic Training Load) - Exponentially Weighted Moving Average (EWMA)
-    # CTL[i] = CTL[i-1] * exp(-1/CTL_TAU) + Load[i] * (1 - exp(-1/CTL_TAU))
-    
     # Simplificação: usar rolling mean (aproximação)
     weekly_metrics["CTL"] = weekly_metrics["TotalLoad"].rolling(window=6, min_periods=1).mean()
     weekly_metrics["ATL"] = weekly_metrics["TotalLoad"].rolling(window=2, min_periods=1).mean()
@@ -715,12 +722,12 @@ def plot_load_chart(weekly_metrics: pd.DataFrame):
     fig, ax = plt.subplots(figsize=(10, 4))
     
     # CTL e ATL
-    ax.plot(weekly_metrics["WeekStart"], weekly_metrics["CTL"], label="CTL (Carga Crônica)", color="blue")
-    ax.plot(weekly_metrics["WeekStart"], weekly_metrics["ATL"], label="ATL (Carga Aguda)", color="red")
+    ax.plot(weekly_metrics["WeekStart"], weekly_metrics["CTL"], label="CTL (Carga Crônica)")
+    ax.plot(weekly_metrics["WeekStart"], weekly_metrics["ATL"], label="ATL (Carga Aguda)")
     
     # TSB (em barras)
     ax2 = ax.twinx()
-    ax2.bar(weekly_metrics["WeekStart"], weekly_metrics["TSB"], label="TSB (Balanço)", color="green", alpha=0.3, width=5)
+    ax2.bar(weekly_metrics["WeekStart"], weekly_metrics["TSB"], label="TSB (Balanço)", alpha=0.3, width=5)
     
     ax.set_xlabel("Semana")
     ax.set_ylabel("Carga (Proxy Load)")
@@ -759,13 +766,6 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    
-    # ----------------------------------------------------------------------------
-    # 4. Correção: Aplicar preferências visuais (se possível, via config ou CSS)
-    # O Streamlit não permite mudar o fundo para azul marinho e letras brancas
-    # diretamente no código Python sem usar CSS/HTML não recomendados.
-    # Vou usar o tema escuro padrão do Streamlit e focar na organização.
-    # ----------------------------------------------------------------------------
     
     # Inicialização de estado
     if "df" not in st.session_state:
@@ -928,7 +928,6 @@ def main():
             
         # Botão Salvar Edições
         if col_btn2.button("💾 Salvar Edições Manuais", help="Salva as alterações feitas diretamente na tabela."):
-            # O callback do editor deve ser usado para capturar as mudanças
             st.info("As edições são salvas automaticamente ao interagir com a tabela.")
             
         # Botão Exportar ICS
@@ -1115,8 +1114,7 @@ def main():
                     df_current = st.session_state["df"].copy()
                     
                     for idx, new_values in changes.items():
-                        # O índice do data_editor é o índice do DataFrame filtrado/exibido
-                        # Precisamos mapear de volta para o índice original do DF completo
+                        # Mapeamento simples: assume mesma ordenação/linhas visíveis (OK para este fluxo)
                         original_index = df_current.index[idx]
                         old_row = df_current.loc[original_index]
                         
@@ -1241,8 +1239,6 @@ def main():
             )
             
             # 2. Mesclar com o DF principal (substituir as semanas do ciclo)
-            
-            # Encontrar as semanas do ciclo no DF principal
             cycle_end_week = cycle_start_week + timedelta(days=7 * num_weeks)
             df_before = df[df["WeekStart"] < cycle_start_week]
             df_after = df[df["WeekStart"] >= cycle_end_week]
