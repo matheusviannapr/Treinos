@@ -1072,33 +1072,64 @@ def get_week_key(d: date) -> str:
     return d.strftime("%Y-%W")
 
 @st.cache_data(show_spinner=False)
-def canonical_week_df(_user_id: str, week_start: date) -> pd.DataFrame:
-    # Esta função agora usa o session_state como fonte da verdade.
-    # O _user_id é mantido para compatibilidade da assinatura da função cacheada.
-    df = st.session_state.get("df", pd.DataFrame())
-    if df.empty:
-        return pd.DataFrame(columns=SCHEMA_COLS + ["StartDT", "EndDT"])
+def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
+    # Sempre partimos do df persistido
+    base_df = st.session_state["df"].copy()
 
-    week_df = week_slice(df, week_start).copy()
+    # Filtra apenas a semana e o usuário
+    week_end = week_start + timedelta(days=7)
+    mask = (
+        (base_df["UserID"] == user_id)
+        & (base_df["Data"] >= week_start)
+        & (base_df["Data"] < week_end)
+    )
+
+    week_df = base_df[mask].copy()
     if week_df.empty:
-        return pd.DataFrame(columns=SCHEMA_COLS + ["StartDT", "EndDT"])
+        return pd.DataFrame(columns=SCHEMA_COLS)
 
-    # Garante que Start/End são strings antes de processar
-    week_df["Start"] = week_df["Start"].astype(str)
-    week_df["End"] = week_df["End"].astype(str)
+    # Normaliza tipos
+    if not np.issubdtype(week_df["Data"].dtype, np.datetime64):
+        week_df["Data"] = pd.to_datetime(week_df["Data"]).dt.date
 
-    # Converte para datetime, tratando erros e strings vazias
+    week_df["Volume"] = pd.to_numeric(week_df["Volume"], errors="coerce").fillna(0.0)
+
+    # Garante UID estável: qualquer UID vazio ganha um novo e isso é salvo no base_df
+    if "UID" not in week_df.columns:
+        week_df["UID"] = ""
+
+    missing_uid_mask = (week_df["UID"] == "") | week_df["UID"].isna()
+    if missing_uid_mask.any():
+        for idx in week_df[missing_uid_mask].index:
+            new_uid = generate_uid(user_id)
+            week_df.at[idx, "UID"] = new_uid
+            base_df.at[idx, "UID"] = new_uid
+
+        # Atualiza sessão + CSV para que os handlers (eventDrop/eventClick) enxerguem os mesmos UIDs do calendário
+        save_user_df(user_id, base_df)
+
+    # StartDT / EndDT canônicos
+    week_df["StartDT"] = week_df["Start"].apply(parse_iso)
     week_df["StartDT"] = week_df.apply(
-        lambda r: parse_iso(r["Start"]) or datetime.combine(r["Data"], time(6, 0)), axis=1
+        lambda r: r["StartDT"] or datetime.combine(r["Data"], time(6, 0)),
+        axis=1,
     )
+
+    week_df["EndDT"] = week_df["End"].apply(parse_iso)
     week_df["EndDT"] = week_df.apply(
-        lambda r: parse_iso(r["End"]) or (r["StartDT"] + timedelta(minutes=DEFAULT_TRAINING_DURATION_MIN)), axis=1
+        lambda r: r["EndDT"] or (r["StartDT"] + timedelta(minutes=DEFAULT_TRAINING_DURATION_MIN)),
+        axis=1,
     )
-    
-    # Filtra treinos de descanso com volume zero
-    week_df = week_df[~((week_df["Modalidade"] == "Descanso") & (week_df["Volume"] <= 0))]
+
+    # Remove Descanso puro (como combinado para calendário/PDF/ICS)
+    mask_valid = ~((week_df["Modalidade"] == "Descanso") & (week_df["Volume"] <= 0))
+    week_df = week_df[mask_valid]
+
+    # Ordena
+    week_df = week_df.sort_values(["Data", "StartDT"]).reset_index(drop=True)
 
     return week_df
+
 
 def main():
     st.set_page_config(page_title="TriPlano", layout="wide")
