@@ -5,3 +5,4 @@ python-dateutil
 pandas
 numpy
 matplotlib
+streamlit_calendar
