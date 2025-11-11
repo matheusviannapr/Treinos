@@ -1423,20 +1423,23 @@ def main():
             if not uid or not start or not end or end <= start:
                 return
 
-            df_current = st.session_state["df"].copy()
+            # CORREÇÃO: Atualiza o st.session_state["df"] diretamente
+            df_current = st.session_state["df"]
             mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
             if not mask.any():
                 return
             idx = df_current[mask].index[0]
             old_row = df_current.loc[idx].copy()
 
-            df_current.at[idx, "Start"] = start.isoformat()
-            df_current.at[idx, "End"] = end.isoformat()
-            df_current.at[idx, "Data"] = start.date()
-            df_current.at[idx, "WeekStart"] = monday_of_week(start.date())
-            df_current.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
-            df_current.at[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
+            # Atualiza os dados no DataFrame do session_state
+            df_current.loc[idx, "Start"] = start.isoformat()
+            df_current.loc[idx, "End"] = end.isoformat()
+            df_current.loc[idx, "Data"] = start.date()
+            df_current.loc[idx, "WeekStart"] = monday_of_week(start.date())
+            df_current.loc[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
+            df_current.loc[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
 
+            # Salva o DataFrame atualizado no CSV e recarrega o session_state["df"]
             save_user_df(user_id, df_current)
 
             ws_old = monday_of_week(old_row["Data"]) if not isinstance(old_row["Data"], str) else monday_of_week(datetime.fromisoformat(old_row["Data"]).date())
@@ -1474,7 +1477,8 @@ def main():
             # Clique em treino -> popup edita treino e salva no df base (canonical lê daqui)
             if etype == "treino":
                 uid = ext.get("uid")
-                df_current = st.session_state["df"].copy()
+                # Não precisa de .copy() aqui, pois a edição é feita no pop-up
+                df_current = st.session_state["df"]
                 mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
                 if not mask.any():
                     st.error("Treino não encontrado.")
@@ -1486,6 +1490,8 @@ def main():
                     with st.container(border=True):
                         st.markdown("### 📝 Detalhes do treino")
 
+                        # CORREÇÃO: Garante que o horário lido para o pop-up é o mais recente
+                        # Se o treino foi arrastado, o Start/End no df_current já foi atualizado
                         start_dt = parse_iso(r.get("Start", "")) or datetime.combine(r["Data"], time(6, 0))
                         end_dt = parse_iso(r.get("End", "")) or (start_dt + timedelta(minutes=DEFAULT_TRAINING_DURATION_MIN))
                         dur_min = int((end_dt - start_dt).total_seconds() / 60)
@@ -1521,6 +1527,7 @@ def main():
                             min_value=0.0,
                             value=default_vol,
                             step=_unit_step(unit),
+                            format="%.1f" if unit == "km" else "%g",
                             key=f"vol_{uid}",
                         )
 
@@ -1568,31 +1575,31 @@ def main():
                         col_feito, col_nao, col_salvar = st.columns(3)
 
                         def apply_update(status_override=None):
-                            df_upd = st.session_state["df"].copy()
+                            df_upd = st.session_state["df"]
                             mask2 = (df_upd["UserID"] == user_id) & (df_upd["UID"] == uid)
                             if not mask2.any():
                                 return
                             i2 = df_upd[mask2].index[0]
                             old_row = df_upd.loc[i2].copy()
 
-                            df_upd.at[i2, "Modalidade"] = new_mod
-                            df_upd.at[i2, "Tipo de Treino"] = new_tipo
-                            df_upd.at[i2, "Volume"] = new_vol
-                            df_upd.at[i2, "Unidade"] = UNITS_ALLOWED.get(new_mod, old_row.get("Unidade", ""))
+                            df_upd.loc[i2, "Modalidade"] = new_mod
+                            df_upd.loc[i2, "Tipo de Treino"] = new_tipo
+                            df_upd.loc[i2, "Volume"] = new_vol
+                            df_upd.loc[i2, "Unidade"] = UNITS_ALLOWED.get(new_mod, old_row.get("Unidade", ""))
 
-                            df_upd.at[i2, "Start"] = new_start.isoformat()
-                            df_upd.at[i2, "End"] = new_end.isoformat()
-                            df_upd.at[i2, "Data"] = new_start.date()
-                            df_upd.at[i2, "WeekStart"] = monday_of_week(new_start.date())
+                            df_upd.loc[i2, "Start"] = new_start.isoformat()
+                            df_upd.loc[i2, "End"] = new_end.isoformat()
+                            df_upd.loc[i2, "Data"] = new_start.date()
+                            df_upd.loc[i2, "WeekStart"] = monday_of_week(new_start.date())
 
-                            df_upd.at[i2, "RPE"] = new_rpe
-                            df_upd.at[i2, "Observações"] = new_obs
+                            df_upd.loc[i2, "RPE"] = new_rpe
+                            df_upd.loc[i2, "Observações"] = new_obs
 
                             if status_override is not None:
-                                df_upd.at[i2, "Status"] = status_override
+                                df_upd.loc[i2, "Status"] = status_override
 
-                            df_upd.at[i2, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
-                            df_upd.at[i2, "ChangeLog"] = append_changelog(old_row, df_upd.loc[i2])
+                            df_upd.loc[i2, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
+                            df_upd.loc[i2, "ChangeLog"] = append_changelog(old_row, df_upd.loc[i2])
 
                             save_user_df(user_id, df_upd)
 
