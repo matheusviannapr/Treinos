@@ -1421,17 +1421,25 @@ def main():
             start = parse_iso(ev.get("start"))
             end = parse_iso(ev.get("end"))
             if not uid or not start or not end or end <= start:
+                st.toast(f"ERRO: Dados inválidos para {action_label} ({uid}).")
                 return
 
-            # CORREÇÃO: Atualiza o st.session_state["df"] diretamente
+            # Acessa o DataFrame do session_state
             df_current = st.session_state["df"]
             mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
+            
             if not mask.any():
+                st.toast(f"ERRO: Treino {uid} não encontrado no DataFrame.")
                 return
+            
             idx = df_current[mask].index[0]
             old_row = df_current.loc[idx].copy()
 
+            # Log de debug
+            st.toast(f"DEBUG: {action_label} treino {uid}. De {old_row['Start']} para {start.isoformat()}")
+
             # Atualiza os dados no DataFrame do session_state
+            # Usamos .loc para garantir a escrita no DataFrame
             df_current.loc[idx, "Start"] = start.isoformat()
             df_current.loc[idx, "End"] = end.isoformat()
             df_current.loc[idx, "Data"] = start.date()
@@ -1440,13 +1448,17 @@ def main():
             df_current.loc[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
 
             # Salva o DataFrame atualizado no CSV e recarrega o session_state["df"]
+            # A função save_user_df atualiza o st.session_state["df"]
             save_user_df(user_id, df_current)
+            st.toast(f"SUCESSO: Treino {uid} {action_label} e salvo no CSV.")
 
+            # Atualiza a disponibilidade, pois o treino pode ter mudado de semana
             ws_old = monday_of_week(old_row["Data"]) if not isinstance(old_row["Data"], str) else monday_of_week(datetime.fromisoformat(old_row["Data"]).date())
             ws_new = monday_of_week(start.date())
             update_availability_from_current_week(user_id, ws_old)
             update_availability_from_current_week(user_id, ws_new)
 
+            # Limpa o cache e força o Streamlit a redesenhar a página
             canonical_week_df.clear()
             safe_rerun()
 
@@ -1477,7 +1489,7 @@ def main():
             # Clique em treino -> popup edita treino e salva no df base (canonical lê daqui)
             if etype == "treino":
                 uid = ext.get("uid")
-                # Não precisa de .copy() aqui, pois a edição é feita no pop-up
+                # Acessa o DataFrame do session_state
                 df_current = st.session_state["df"]
                 mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
                 if not mask.any():
@@ -1490,8 +1502,7 @@ def main():
                     with st.container(border=True):
                         st.markdown("### 📝 Detalhes do treino")
 
-                        # CORREÇÃO: Garante que o horário lido para o pop-up é o mais recente
-                        # Se o treino foi arrastado, o Start/End no df_current já foi atualizado
+                        # Garante que o horário lido para o pop-up é o mais recente
                         start_dt = parse_iso(r.get("Start", "")) or datetime.combine(r["Data"], time(6, 0))
                         end_dt = parse_iso(r.get("End", "")) or (start_dt + timedelta(minutes=DEFAULT_TRAINING_DURATION_MIN))
                         dur_min = int((end_dt - start_dt).total_seconds() / 60)
