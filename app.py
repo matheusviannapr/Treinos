@@ -1176,6 +1176,11 @@ def main():
         st.stop()
 
     # CONTEXTO
+    if "user_id" not in st.session_state:
+        st.session_state["user_id"] = None
+    if "user_name" not in st.session_state:
+        st.session_state["user_name"] = ""
+        
     user_id = st.session_state["user_id"]
     user_name = st.session_state.get("user_name", user_id)
 
@@ -1418,86 +1423,51 @@ def main():
             "height": "650px",
         }
 
+# Após definição de `cal_state = calendar(...)`
+
         cal_state = calendar(
             events=events,
             options=options,
             key=f"cal_semana_{get_week_key(week_start)}",
         )
 
-        if cal_state and "select" in cal_state:
-            sel = cal_state["select"]
-            s = parse_iso(sel.get("start"))
-            e = parse_iso(sel.get("end"))
-            if s and e and e > s:
-                conflito = False
-                for _, r in week_df_can.iterrows():
-                    ts = r["StartDT"]
-                    te = r["EndDT"]
-                    if ts and te and not (te <= s or ts >= e):
-                        conflito = True
-                        break
-                if not conflito:
-                    week_slots.append({"start": s, "end": e})
-                    set_week_availability(user_id, week_start, week_slots)
-                    canonical_week_df.clear()
-                    safe_rerun()
+        # 1. Captura de evento “global” – para sincronizar todos os eventos (drag, resize, etc)
+        if cal_state and "eventsSet" in cal_state:
+            updated_events = cal_state["eventsSet"]
+            # Reconstrói parte da base a partir dos eventos do front
+            df_current = st.session_state["df"].copy()
+            # Cria dict para localizar por UID
+            uid_map = { row["UID"]: idx for idx, row in df_current.iterrows() }
 
-        # 5.2 Drag/resize treinos -> atualiza df base (logo afeta canonical e PDF/ICS)
-        def handle_move_or_resize(ev_dict, action_label):
-            ev = ev_dict.get("event", {}) if ev_dict else {}
-            ext = ev.get("extendedProps", {}) or {}
-            if ext.get("type") != "treino":
-                return
-            uid = ext.get("uid")
-            start = parse_iso(ev.get("start"))
-            end = parse_iso(ev.get("end"))
-            if not uid or not start or not end or end <= start:
-                st.toast(f"ERRO: Dados inválidos para {action_label} ({uid}).")
-                return
+            for e in updated_events:
+                ev_uid = e.get("id")
+                ev_start = e.get("start")
+                ev_end   = e.get("end")
+                if ev_uid in uid_map and ev_start and ev_end:
+                    idx = uid_map[ev_uid]
+                    # Atualiza no df
+                    df_current.at[idx, "Start"] = ev_start
+                    df_current.at[idx, "End"]   = ev_end
+                    new_dt = datetime.fromisoformat(ev_start).date()
+                    df_current.at[idx, "Data"] = new_dt
+                    df_current.at[idx, "WeekStart"] = monday_of_week(new_dt)
+                    df_current.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
+                    # Opcional: atualizar ChangeLog
+                    old_row = df_current.loc[idx].copy()
+                    df_current.at[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
 
-            # Acessa o DataFrame do session_state
-            df_current = st.session_state["df"]
-            mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
-            
-            if not mask.any():
-                st.toast(f"ERRO: Treino {uid} não encontrado no DataFrame.")
-                return
-            
-            idx = df_current[mask].index[0]
-            old_row = df_current.loc[idx].copy()
-
-            # Log de debug
-            st.toast(f"DEBUG: {action_label} treino {uid}. De {old_row['Start']} para {start.isoformat()}")
-
-            # Atualiza os dados no DataFrame do session_state
-            # Usamos .loc para garantir a escrita no DataFrame
-            df_current.loc[idx, "Start"] = start.isoformat()
-            df_current.loc[idx, "End"] = end.isoformat()
-            df_current.loc[idx, "Data"] = start.date()
-            df_current.loc[idx, "WeekStart"] = monday_of_week(start.date())
-            df_current.loc[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
-            df_current.loc[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
-
-            # Salva o DataFrame atualizado no CSV e recarrega o session_state["df"]
-            # A função save_user_df atualiza o st.session_state["df"]
+            # Salva sincronizado
             save_user_df(user_id, df_current)
-            st.toast(f"SUCESSO: Treino {uid} {action_label} e salvo no CSV.")
-
-            # Atualiza a disponibilidade, pois o treino pode ter mudado de semana
-            ws_old = monday_of_week(old_row["Data"]) if not isinstance(old_row["Data"], str) else monday_of_week(datetime.fromisoformat(old_row["Data"]).date())
-            ws_new = monday_of_week(start.date())
-            update_availability_from_current_week(user_id, ws_old)
-            update_availability_from_current_week(user_id, ws_new)
-
-            # Limpa o cache e força o Streamlit a redesenhar a página
-            canonical_week_df.clear()
+            st.session_state["df"] = df_current
             safe_rerun()
 
+        # 2. Manter seus handlers específicos para eventDrop/eventResize/eventClick
         if cal_state and "eventDrop" in cal_state:
             handle_move_or_resize(cal_state["eventDrop"], "movido")
 
         if cal_state and "eventResize" in cal_state:
             handle_move_or_resize(cal_state["eventResize"], "redimensionado")
+
 
         # 5.3 Clique eventos
         if cal_state and "eventClick" in cal_state:
