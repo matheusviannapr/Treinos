@@ -1,22 +1,37 @@
-# app.py — Planner de Treinos (versão turbo, single-file)
-# ------------------------------------------------------------
-# Upgrades implementados:
-# - Unidade travada por modalidade (validação forte)
-# - Wizard de metas semanais a partir de meta total
-# - Templates parametrizados (séries geradas por volume/pace)
-# - Status do dia + KPIs de aderência
-# - Alertas (pico de carga, desequilíbrio, estagnação)
-# - Paces alvos por modalidade (corrida, bike, natação)
-# - Periodização 4-12 semanas com fases (Base/Build/Peak/Recovery)
-# - Modo mobile (form por dia) além do editor em tabela
-# - Auditoria de mudanças (ChangeLog JSON) + LastEditedAt
-# - Export .ics (semana e ciclo), PDF semanal omitindo zeros
-# - Persistência CSV (Sheets opcional se ligar depois)
-# ------------------------------------------------------------
+# app.py — TriPlano (evolução do TriCiclo Planner)
+# ----------------------------------------------------------------------------
+# Funcionalidades:
+# - Login/cadastro multiusuário (CSV)
+# - Treinos multiusuário com UserID + UID estável
+# - Metas, sessões, preferências por modalidade
+# - Geração automática de semana
+# - Periodização multi-semanal (generate_cycle)
+# - Exportações: PDF / ICS
+# - Disponibilidade persistida em availability.csv
+# - Calendário semanal (streamlit-calendar):
+#     - Seleção cria slots "Livre"
+#     - Clique em "Livre" remove slot
+#     - Uso opcional dos horários livres ou ignorar
+#     - Treinos com UID estável, drag & drop e resize atualizam horários
+#     - Pop-up do treino:
+#           - Editar Modalidade, Tipo, Volume
+#           - Editar data/hora/duração
+#           - RPE, Comentário
+#           - Marcar FEITO / NÃO FEITO / salvar
+# - Quando um horário Livre é ocupado por treino, o slot é removido/ajustado.
+# - Botão "Salvar Semana Atual" para persistir qualquer ajuste.
+# - PDF:
+#     - Página 1: tabela colorida
+#     - Página 2: calendário semanal em paisagem (timeGridWeek-like).
+# - ICS e PDF usam EXATAMENTE o mesmo conjunto de treinos exibidos no calendário.
+# - Descanso com volume 0 nunca aparece no calendário/ICS/PDF.
+# - Calendário de front é SIEMPRE derivado de canonical_week_df (fonte única).
+# ----------------------------------------------------------------------------
 
-import os, io, json, math
-from datetime import datetime, date, timedelta
-from dateutil.parser import parse as dtparse
+import os
+import json
+import math
+from datetime import datetime, date, timedelta, time
 
 import pandas as pd
 import numpy as np
@@ -25,41 +40,64 @@ from fpdf import FPDF
 import matplotlib.pyplot as plt
 import unicodedata
 
+from streamlit_calendar import calendar  # pip install streamlit-calendar
+
 # ----------------------------------------------------------------------------
-# 1. Correção: Função safe_rerun() para substituir st.experimental_rerun()
+# Utilitários básicos
 # ----------------------------------------------------------------------------
+
 def safe_rerun():
-    """
-    Função auxiliar para forçar o recarregamento da página.
-    Usa st.rerun() se disponível, com fallback para st.experimental_rerun().
-    """
     try:
         st.rerun()
-    except AttributeError:
-        # Fallback para versões mais antigas do Streamlit
-        st.experimental_rerun()
+    except Exception:
+        if hasattr(st, "experimental_rerun"):
+            try:
+                st.experimental_rerun()
+            except Exception:
+                pass
 
-# ----------------------------------------------------------------------------
-# Constantes e Schema
-# ----------------------------------------------------------------------------
+DATA_DIR = "data"
+EXPORT_DIR = "exports"
+CSV_PATH = os.path.join(DATA_DIR, "treinos.csv")
+USERS_CSV_PATH = os.path.join(DATA_DIR, "usuarios.csv")
+AVAIL_CSV_PATH = os.path.join(DATA_DIR, "availability.csv")
 
-# Cores para o PDF (por modalidade)
+SCHEMA_COLS = [
+    "UserID",
+    "UID",
+    "Data",
+    "Start",
+    "End",
+    "Modalidade",
+    "Tipo de Treino",
+    "Volume",
+    "Unidade",
+    "RPE",
+    "Detalhamento",
+    "Observações",
+    "Status",
+    "adj",
+    "AdjAppliedAt",
+    "ChangeLog",
+    "LastEditedAt",
+    "WeekStart",
+]
+
 MODALITY_COLORS = {
-    "Corrida": (255, 0, 0),         # Vermelho Puro
-    "Ciclismo": (64, 64, 64),       # Cinza Escuro
-    "Natação": (75, 0, 130),        # Azul Índigo
-    "Força/Calistenia": (34, 139, 34), # Verde Floresta
-    "Mobilidade": (255, 140, 0),   # Laranja Escuro
-    "Descanso": (201, 201, 201),    # Cinza Claro
+    "Corrida": (255, 0, 0),
+    "Ciclismo": (64, 64, 64),
+    "Natação": (75, 0, 130),
+    "Força/Calistenia": (34, 139, 34),
+    "Mobilidade": (255, 140, 0),
+    "Descanso": (201, 201, 201),
+}
+MODALITY_TEXT_COLORS = {
+    "Ciclismo": (255, 255, 255),
 }
 
-# Cores de texto para o PDF (para contraste)
-MODALITY_TEXT_COLORS = {
-    "Ciclismo": (255, 255, 255),    # Branco para fundo cinza escuro
-}
 PDF_REPLACE = str.maketrans({
-    "—": "-",  # em dash
-    "–": "-",  # en dash
+    "—": "-",
+    "–": "-",
     "“": '"',
     "”": '"',
     "’": "'",
@@ -70,18 +108,7 @@ def pdf_safe(s: str) -> str:
     if s is None:
         return ""
     t = str(s).translate(PDF_REPLACE)
-    # normaliza e remove o que não é latin-1
     return unicodedata.normalize("NFKD", t).encode("latin-1", "ignore").decode("latin-1")
-
-DATA_DIR = "data"
-EXPORT_DIR = "exports"
-CSV_PATH = os.path.join(DATA_DIR, "treinos.csv")
-
-SCHEMA_COLS = [
-    "Data","Modalidade","Tipo de Treino","Volume","Unidade","RPE",
-    "Detalhamento","Observações","Status","adj",
-    "AdjAppliedAt","ChangeLog","LastEditedAt","WeekStart"
-]
 
 UNITS_ALLOWED = {
     "Corrida": "km",
@@ -91,32 +118,246 @@ UNITS_ALLOWED = {
     "Mobilidade": "min",
 }
 MODALIDADES = list(UNITS_ALLOWED.keys())
-STATUS_CHOICES = ["Planejado","Realizado","Adiado","Cancelado"]
+STATUS_CHOICES = ["Planejado", "Realizado", "Adiado", "Cancelado"]
 
-# Coeficientes para Carga Interna (ajustáveis)
 LOAD_COEFF = {
     "Corrida": 1.0,
     "Ciclismo": 0.6,
-    "Natação": 1.2,           # metros/1000 * 1.2
-    "Força/Calistenia": 0.3,  # minutos
-    "Mobilidade": 0.2         # minutos
+    "Natação": 1.2,
+    "Força/Calistenia": 0.3,
+    "Mobilidade": 0.2,
 }
 
-# Tipos/descrições base (serão refinadas por templates)
 TIPOS_MODALIDADE = {
-    "Corrida": ["Regenerativo","Força","Longão","Tempo Run"],
-    "Ciclismo": ["Endurance","Intervalado","Cadência","Força/Subida"],
-    "Natação": ["Técnica","Ritmo","Intervalado","Contínuo"],
-    "Força/Calistenia": ["Força máxima","Resistência muscular","Core/Estabilidade","Mobilidade/Recuperação"],
-    "Mobilidade": ["Soltura","Recuperação","Prevenção"]
+    "Corrida": ["Regenerativo", "Força", "Longão", "Tempo Run"],
+    "Ciclismo": ["Endurance", "Intervalado", "Cadência", "Força/Subida"],
+    "Natação": ["Técnica", "Ritmo", "Intervalado", "Contínuo"],
+    "Força/Calistenia": ["Força máxima", "Resistência muscular", "Core/Estabilidade", "Mobilidade/Recuperação"],
+    "Mobilidade": ["Soltura", "Recuperação", "Prevenção"],
 }
 
-# -----------------------
-# HELPERS
-# -----------------------
+PHASES = ["Base", "Build", "Peak", "Recovery"]
+
+DEFAULT_TRAINING_DURATION_MIN = 60
+
+# ----------------------------------------------------------------------------
+# Diretórios
+# ----------------------------------------------------------------------------
+
 def ensure_dirs():
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(EXPORT_DIR, exist_ok=True)
+
+# ----------------------------------------------------------------------------
+# Usuários
+# ----------------------------------------------------------------------------
+
+def init_users_if_needed():
+    ensure_dirs()
+    if not os.path.exists(USERS_CSV_PATH):
+        df = pd.DataFrame(columns=["user_id", "nome", "created_at"])
+        df.to_csv(USERS_CSV_PATH, index=False)
+
+@st.cache_data(show_spinner=False)
+def load_users_df() -> pd.DataFrame:
+    init_users_if_needed()
+    return pd.read_csv(USERS_CSV_PATH, dtype=str).fillna("")
+
+def save_users_df(df: pd.DataFrame):
+    df.to_csv(USERS_CSV_PATH, index=False)
+    load_users_df.clear()
+
+def get_user(user_id: str):
+    df = load_users_df()
+    row = df[df["user_id"] == user_id]
+    return row.iloc[0] if not row.empty else None
+
+def create_user(user_id: str, nome: str) -> bool:
+    df = load_users_df()
+    if (df["user_id"] == user_id).any():
+        return False
+    new_row = pd.DataFrame([{
+        "user_id": user_id,
+        "nome": nome,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }])
+    df = pd.concat([df, new_row], ignore_index=True)
+    save_users_df(df)
+    return True
+
+def logout():
+    for key in list(st.session_state.keys()):
+        if key.startswith("login_") or key.startswith("cal_") or key in [
+            "user_id", "user_name", "df", "all_df",
+            "current_week_start", "frozen_targets"
+        ]:
+            del st.session_state[key]
+    safe_rerun()
+
+# ----------------------------------------------------------------------------
+# Treinos CSV (multiusuário)
+# ----------------------------------------------------------------------------
+
+def init_csv_if_needed():
+    ensure_dirs()
+    if not os.path.exists(CSV_PATH):
+        df = pd.DataFrame(columns=SCHEMA_COLS)
+        df.to_csv(CSV_PATH, index=False)
+
+@st.cache_data(show_spinner=False)
+def load_all() -> pd.DataFrame:
+    init_csv_if_needed()
+    df = pd.read_csv(CSV_PATH, dtype=str).fillna("")
+
+    for col in SCHEMA_COLS:
+        if col not in df.columns:
+            if col in ["Volume", "RPE", "adj"]:
+                df[col] = 0.0
+            elif col == "UserID":
+                df[col] = "default"
+            else:
+                df[col] = ""
+
+    if not df.empty:
+        df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
+        df["WeekStart"] = pd.to_datetime(df["WeekStart"], errors="coerce").dt.date
+
+        for c in ["Volume", "RPE", "adj"]:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+
+        for c in ["ChangeLog", "Detalhamento", "Observações"]:
+            df[c] = df[c].astype(str)
+
+        for i, r in df.iterrows():
+            mod = r.get("Modalidade", "")
+            if mod in UNITS_ALLOWED:
+                unit_ok = UNITS_ALLOWED[mod]
+                if r.get("Unidade", "") != unit_ok:
+                    df.at[i, "Unidade"] = unit_ok
+
+    if "UID" not in df.columns:
+        df["UID"] = ""
+    if "UserID" not in df.columns:
+        df["UserID"] = "default"
+
+    return df[SCHEMA_COLS].copy()
+
+def save_all(df: pd.DataFrame):
+    df_out = df.copy()
+    if not df_out.empty:
+        df_out["Data"] = pd.to_datetime(df_out["Data"], errors="coerce").dt.date.astype(str)
+        df_out["WeekStart"] = pd.to_datetime(df_out["WeekStart"], errors="coerce").dt.date.astype(str)
+    df_out.to_csv(CSV_PATH, index=False)
+    load_all.clear()
+
+def generate_uid(user_id: str) -> str:
+    ts = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    rand = np.random.randint(1000, 9999)
+    return f"{user_id}-{ts}-{rand}"
+
+def save_user_df(user_id: str, user_df: pd.DataFrame):
+    all_df = load_all()
+
+    if "UserID" not in user_df.columns:
+        user_df["UserID"] = user_id
+    else:
+        user_df.loc[user_df["UserID"] == "", "UserID"] = user_id
+
+    if "UID" not in user_df.columns:
+        user_df["UID"] = ""
+    for i, r in user_df[user_df["UID"] == ""].iterrows():
+        user_df.at[i, "UID"] = generate_uid(user_id)
+
+    others = all_df[all_df["UserID"] != user_id]
+    merged = pd.concat([others, user_df[SCHEMA_COLS]], ignore_index=True)
+    save_all(merged)
+
+    st.session_state["all_df"] = merged
+    st.session_state["df"] = merged[merged["UserID"] == user_id].copy()
+
+# ----------------------------------------------------------------------------
+# Disponibilidade
+# ----------------------------------------------------------------------------
+
+def init_availability_if_needed():
+    ensure_dirs()
+    if not os.path.exists(AVAIL_CSV_PATH):
+        df = pd.DataFrame(columns=["UserID", "WeekStart", "Start", "End"])
+        df.to_csv(AVAIL_CSV_PATH, index=False)
+
+@st.cache_data(show_spinner=False)
+def load_all_availability() -> pd.DataFrame:
+    init_availability_if_needed()
+    df = pd.read_csv(AVAIL_CSV_PATH, dtype=str).fillna("")
+    if not df.empty:
+        df["WeekStart"] = pd.to_datetime(df["WeekStart"], errors="coerce").dt.date
+        df["Start"] = pd.to_datetime(df["Start"], errors="coerce")
+        df["End"] = pd.to_datetime(df["End"], errors="coerce")
+    return df
+
+def save_all_availability(df: pd.DataFrame):
+    df_out = df.copy()
+    if not df_out.empty:
+        df_out["WeekStart"] = pd.to_datetime(df_out["WeekStart"], errors="coerce").dt.date.astype(str)
+        df_out["Start"] = pd.to_datetime(df_out["Start"], errors="coerce").astype(str)
+        df_out["End"] = pd.to_datetime(df_out["End"], errors="coerce").astype(str)
+    df_out.to_csv(AVAIL_CSV_PATH, index=False)
+    load_all_availability.clear()
+
+def normalize_slots(slots):
+    if not slots:
+        return []
+    slots = sorted(slots, key=lambda s: s["start"])
+    merged = [slots[0]]
+    for s in slots[1:]:
+        last = merged[-1]
+        if s["start"] <= last["end"]:
+            last["end"] = max(last["end"], s["end"])
+        else:
+            merged.append(s)
+    return merged
+
+def get_week_key(week_start: date) -> str:
+    return pd.Timestamp(week_start).strftime("%Y-%m-%d")
+
+def get_week_availability(user_id: str, week_start: date):
+    all_df = load_all_availability()
+    wk = get_week_key(week_start)
+    sub = all_df[(all_df["UserID"] == user_id) &
+                 (all_df["WeekStart"] == pd.to_datetime(wk).date())]
+    slots = []
+    for _, r in sub.iterrows():
+        if pd.isna(r["Start"]) or pd.isna(r["End"]):
+            continue
+        slots.append({
+            "start": r["Start"].to_pydatetime(),
+            "end": r["End"].to_pydatetime(),
+        })
+    return normalize_slots(slots)
+
+def set_week_availability(user_id: str, week_start: date, slots):
+    all_df = load_all_availability()
+    wk = get_week_key(week_start)
+    keep = ~((all_df["UserID"] == user_id) &
+             (all_df["WeekStart"] == pd.to_datetime(wk).date()))
+    all_df = all_df[keep]
+
+    rows = []
+    for s in normalize_slots(slots):
+        rows.append({
+            "UserID": user_id,
+            "WeekStart": pd.to_datetime(wk).date(),
+            "Start": s["start"],
+            "End": s["end"],
+        })
+    if rows:
+        all_df = pd.concat([all_df, pd.DataFrame(rows)], ignore_index=True)
+
+    save_all_availability(all_df)
+
+# ----------------------------------------------------------------------------
+# Helpers gerais
+# ----------------------------------------------------------------------------
 
 def monday_of_week(d: date) -> date:
     return d - timedelta(days=d.weekday())
@@ -127,145 +368,68 @@ def week_range(start_monday: date):
 def today() -> date:
     return date.today()
 
-def get_week_key(week_start: date) -> str:
-    return pd.Timestamp(week_start).strftime("%Y-%m-%d")
-
-def get_frozen_weekly_targets(week_start: date, live_targets: dict) -> dict:
-    """
-    Retorna as metas 'congeladas' dessa semana (se existirem); se não, congela agora com base nos live_targets.
-    Usa st.session_state["frozen_targets"] (dict[str -> dict]).
-    """
-    if "frozen_targets" not in st.session_state:
-        st.session_state["frozen_targets"] = {}
-    wk = get_week_key(week_start)
-    if wk not in st.session_state["frozen_targets"]:
-        # cria snapshot inicial com os alvos atuais da sidebar
-        st.session_state["frozen_targets"][wk] = {
-            k: float(live_targets.get(k, 0.0) or 0.0) for k in MODALIDADES
-        }
-    return st.session_state["frozen_targets"][wk]
-
-def set_frozen_weekly_targets(week_start: date, targets: dict):
-    if "frozen_targets" not in st.session_state:
-        st.session_state["frozen_targets"] = {}
-    wk = get_week_key(week_start)
-    st.session_state["frozen_targets"][wk] = {
-        k: float(targets.get(k, 0.0) or 0.0) for k in MODALIDADES
-    }
-
-def init_csv_if_needed():
-    ensure_dirs()
-    if not os.path.exists(CSV_PATH):
-        df = pd.DataFrame(columns=SCHEMA_COLS)
-        df.to_csv(CSV_PATH, index=False)
-
-# ----------------------------------------------------------------------------
-# 2. Correção: Adicionar @st.cache_data e lógica de cache
-# ----------------------------------------------------------------------------
-@st.cache_data(show_spinner=False)
-def load_all() -> pd.DataFrame:
-    init_csv_if_needed()
-    df = pd.read_csv(CSV_PATH, dtype=str).fillna("")
-    if not df.empty:
-        df["Data"] = pd.to_datetime(df["Data"]).dt.date
-        df["WeekStart"] = pd.to_datetime(df["WeekStart"], errors="coerce").dt.date
-        for col in ["Volume","RPE","adj"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-        for col in ["ChangeLog","Detalhamento","Observações"]:
-            df[col] = df[col].astype(str)
-        # Unidade coerente por modalidade (autocorreção leve)
-        for i, r in df.iterrows():
-            mod = r.get("Modalidade","")
-            if mod in UNITS_ALLOWED and r.get("Unidade","") != UNITS_ALLOWED[mod]:
-                df.at[i,"Unidade"] = UNITS_ALLOWED[mod]
-    return df
-
-def save_all(df: pd.DataFrame):
-    df_out = df.copy()
-    df_out["Data"] = pd.to_datetime(df_out["Data"]).dt.date.astype(str)
-    if "WeekStart" in df_out.columns:
-        df_out["WeekStart"] = pd.to_datetime(df_out["WeekStart"]).dt.date.astype(str)
-    df_out.to_csv(CSV_PATH, index=False)
-    # 3. Correção: Limpar o cache após salvar
-    load_all.clear()
-
-def default_week_df(week_start: date) -> pd.DataFrame:
-    recs = []
-    for d in week_range(week_start):
-        recs.append({
-            "Data": d,
-            "Modalidade": "",
-            "Tipo de Treino": "",
-            "Volume": 0.0,
-            "Unidade": "",
-            "RPE": 0,
-            "Detalhamento": "",
-            "Observações": "",
-            "Status": "Planejado",
-            "adj": 0.0,
-            "AdjAppliedAt": "",
-            "ChangeLog": "[]",
-            "LastEditedAt": "",
-            "WeekStart": week_start
-        })
-    return pd.DataFrame(recs, columns=SCHEMA_COLS)
-
-def lock_unit(modalidade: str) -> str:
-    return UNITS_ALLOWED.get(modalidade, "")
-
-def unit_is_valid(mod: str, unit: str) -> bool:
-    return UNITS_ALLOWED.get(mod, None) == unit
-
 def normalize_volume_for_load(mod: str, vol: float, unit: str) -> float:
     if mod == "Natação":
         km = (vol or 0.0) / 1000.0
         return km * LOAD_COEFF.get(mod, 1.0)
-    elif mod in ("Força/Calistenia","Mobilidade"):
+    elif mod in ("Força/Calistenia", "Mobilidade"):
         return (vol or 0.0) * LOAD_COEFF.get(mod, 1.0)
     else:
         return (vol or 0.0) * LOAD_COEFF.get(mod, 1.0)
 
 def week_slice(df: pd.DataFrame, start: date) -> pd.DataFrame:
     end = start + timedelta(days=7)
-    return df[(df["Data"]>=start) & (df["Data"]<end)].copy()
+    return df[(df["Data"] >= start) & (df["Data"] < end)].copy()
 
-def prev_week_slice(df: pd.DataFrame, start: date) -> pd.DataFrame:
-    return week_slice(df, start - timedelta(days=7))
+def parse_iso(dt_str: str):
+    if not dt_str:
+        return None
+    try:
+        return datetime.fromisoformat(dt_str.replace("Z", ""))
+    except Exception:
+        return None
 
 def append_changelog(old_row: pd.Series, new_row: pd.Series) -> str:
     try:
-        log = json.loads(old_row.get("ChangeLog","[]") or "[]")
+        log = json.loads(old_row.get("ChangeLog", "[]") or "[]")
     except Exception:
         log = []
     changes = {}
-    for col in ["Modalidade","Tipo de Treino","Volume","Unidade","RPE","Detalhamento","Observações","Status","adj"]:
-        if str(old_row.get(col,"")) != str(new_row.get(col,"")):
-            changes[col] = {"old": str(old_row.get(col,"")), "new": str(new_row.get(col,""))}
+    for col in [
+        "Modalidade", "Tipo de Treino", "Volume", "Unidade", "RPE",
+        "Detalhamento", "Observações", "Status", "adj",
+        "Start", "End", "Data"
+    ]:
+        if str(old_row.get(col, "")) != str(new_row.get(col, "")):
+            changes[col] = {
+                "old": str(old_row.get(col, "")),
+                "new": str(new_row.get(col, "")),
+            }
     if changes:
         log.append({"at": datetime.now().isoformat(timespec="seconds"), "changes": changes})
     return json.dumps(log, ensure_ascii=False)
 
-# -----------------------
-# Prescrição (templates parametrizados)
-# -----------------------
+# ----------------------------------------------------------------------------
+# Prescrição / distribuição
+# ----------------------------------------------------------------------------
+
 def _unit_step(unit: str) -> float:
-    if unit == "m": return 50.0
-    if unit == "km": return 0.1
+    if unit == "m":
+        return 50.0
+    if unit == "km":
+        return 0.1
     return 1.0
 
 def _round_to_step_sum(total: float, unit: str) -> float:
     step = _unit_step(unit)
     v = float(total)
-    if step == 50.0: return round(v / step) * step
-    if step == 0.1: return round(v, 1)
+    if step == 50.0:
+        return round(v / step) * step
+    if step == 0.1:
+        return round(v, 1)
     return round(v, 0)
 
 def prescribe_detail(mod, tipo, volume, unit, paces):
-    """
-    Gera detalhamento com séries, usando volume e paces alvos:
-      paces = {"run_pace_min_per_km": 5.0, "swim_sec_per_100m": 110, "bike_kmh": 32}
-    """
     vol = float(volume or 0)
     rp = paces.get("run_pace_min_per_km", 0)
     sp = paces.get("swim_sec_per_100m", 0)
@@ -273,70 +437,99 @@ def prescribe_detail(mod, tipo, volume, unit, paces):
 
     if mod == "Corrida":
         if tipo == "Regenerativo":
-            dur_min = math.ceil(vol * rp) if unit=="km" and rp>0 else ""
-            return f"Regenerativo Z1/Z2 {vol:g} km (~{dur_min} min). Cadência solta, respiração fácil."
+            dur = math.ceil(vol * rp) if unit == "km" and rp > 0 else ""
+            return f"Regenerativo Z1/Z2 {vol:g} km (~{dur} min)."
         if tipo == "Força":
-            reps = max(6, min(12, int(vol)))  # aproxima # de tiros pela km
-            return f"Força em subida: {reps}×(60s forte Z4/Z5) rec 2min trote. Aquecer 10min, desaquecer 10min."
+            reps = max(6, min(12, int(vol)))
+            return f"Força em subida: {reps}×(60s forte) rec 2min."
         if tipo == "Longão":
-            dur_min = math.ceil(vol * rp) if unit=="km" and rp>0 else ""
-            return f"Longão contínuo {vol:g} km (Z2/Z3) ~{dur_min} min. Hidratação a cada 20min."
+            dur = math.ceil(vol * rp) if unit == "km" and rp > 0 else ""
+            return f"Longão {vol:g} km (Z2/Z3) ~{dur} min."
         if tipo == "Tempo Run":
-            bloco = max(20, min(40, int(vol*6)))  # 20-40min
-            return f"Tempo Run: {bloco}min em Z3/Z4. Aquecer 10min, desaquecer 10min."
+            bloco = max(20, min(40, int(vol * 6)))
+            return f"Tempo Run {bloco}min Z3/Z4."
+
     if mod == "Ciclismo":
         if tipo == "Endurance":
-            dur_h = vol/ (bk if bk>0 else 28)
-            return f"Endurance {vol:g} km (~{dur_h:.1f} h a {bk or 28} km/h). Z2 constante; nutrição 20–30min."
+            vel = bk if bk > 0 else 28
+            dur_h = vol / vel if vel > 0 else 0
+            return f"Endurance {vol:g} km (~{dur_h:.1f}h Z2)."
         if tipo == "Intervalado":
-            blocos = max(4, min(6, int(vol/5)))  # 1 bloco ~5km útil
-            return f"Intervalado: {blocos}×(6min Z4) rec 3min Z1/Z2. Cadência estável."
+            blocos = max(4, min(6, int(vol / 5)))
+            return f"{blocos}×(6min Z4) rec 3min."
         if tipo == "Cadência":
-            return "Cadência: 5×(3min @100–110rpm) com 2min leve. Postura e fluidez."
+            return "5×(3min 100–110rpm) rec 2min."
         if tipo == "Força/Subida":
-            return "Torque/Força: 6×(4min baixa cadência 60–70rpm Z3/Z4) rec 3min."
+            return "6×(4min 60–70rpm Z3/Z4) rec 3min."
+
     if mod == "Natação":
         if tipo == "Técnica":
-            return "Drills: respiração bilateral, 'polegar na coxa', EVF; 8×50m educativos, pausas 20s."
+            return "Drills técnicos + 8×50m educativos."
         if tipo == "Ritmo":
-            reps = max(6, min(10, int(vol/200)))  # 200m reps
-            return f"{reps}×200m pace sustentável (desc 20–30s). Foco em alinhamento."
+            reps = max(6, min(10, int(vol / 200)))
+            return f"{reps}×200m ritmo controlado."
         if tipo == "Intervalado":
-            reps = max(12, min(20, int(vol/50)))
+            reps = max(12, min(20, int(vol / 50)))
             alvo = f"{(sp and int(sp)) or '—'} s/100m"
-            return f"{reps}×50m forte (desc 20–30s). Alvo ~{alvo}."
+            return f"{reps}×50m forte. Alvo ~{alvo}."
         if tipo == "Contínuo":
-            km = vol/1000.0
-            return f"Contínuo {km:.1f} km Z2/Z3. Braçada eficiente, respiração relaxada."
+            km = vol / 1000.0
+            return f"{km:.1f} km contínuos Z2/Z3."
+
     if mod == "Força/Calistenia":
         if tipo == "Força máxima":
-            return "Força: 5×3 (barra, paralela, agacho) rec 2–3min. Foco em progressão de carga."
+            return "5×3 básicos pesados."
         if tipo == "Resistência muscular":
-            return "Resistência: 4×12–20 (empurrar/puxar/perna). Circuito com 60s de descanso."
+            return "4×12–20 em circuito."
         if tipo == "Core/Estabilidade":
-            return "Core: circuito pranchas/anti-rotação/hollow 15–20min. 30s on / 15s off."
+            return "Core 15–20min."
         if tipo == "Mobilidade/Recuperação":
-            return "Mobilidade ativa 15–25min. Foco em quadril e ombros."
+            return "Mobilidade 15–25min."
+
     if mod == "Mobilidade":
         if tipo == "Soltura":
-            return "Soltura 15–25min com alongamentos dinâmicos. Antes do treino."
+            return "Soltura dinâmica 15–25min."
         if tipo == "Recuperação":
-            return "Respiração + alongamentos leves 10–20min. Pós-treino ou à noite."
+            return "Alongamentos leves 10–20min."
         if tipo == "Prevenção":
-            return "Mobilidade ombro/quadril/torácica 15–20min. Foco em pontos fracos."
+            return "Mobilidade ombro/quadril 15–20min."
+
     return ""
 
-# ---------- NOVO: utilitário para expandir listas ao tamanho n ----------
 def _expand_to_n(pattern_list, n):
-    """Repete o padrão até atingir n itens (preservando ordem)."""
     if n <= 0:
         return []
     if not pattern_list:
-        return [1.0 / n] * n  # fallback numérico quando usado com pesos
+        return [1.0 / n] * n
     k = len(pattern_list)
     reps = n // k
     rem = n % k
     return pattern_list * reps + pattern_list[:rem]
+
+def default_week_df(week_start: date, user_id: str) -> pd.DataFrame:
+    recs = []
+    for d in week_range(week_start):
+        recs.append({
+            "UserID": user_id,
+            "UID": generate_uid(user_id),
+            "Data": d,
+            "Start": "",
+            "End": "",
+            "Modalidade": "Descanso",
+            "Tipo de Treino": "Ativo/Passivo",
+            "Volume": 0.0,
+            "Unidade": "min",
+            "RPE": 0,
+            "Detalhamento": "Dia de descanso. Foco em recuperação.",
+            "Observações": "",
+            "Status": "Planejado",
+            "adj": 0.0,
+            "AdjAppliedAt": "",
+            "ChangeLog": "[]",
+            "LastEditedAt": "",
+            "WeekStart": week_start,
+        })
+    return pd.DataFrame(recs, columns=SCHEMA_COLS)
 
 def distribute_week_by_targets(
     week_start: date,
@@ -344,38 +537,38 @@ def distribute_week_by_targets(
     sessions_per_mod: dict,
     key_sessions: dict,
     paces: dict,
-    user_preferred_days: dict | None = None,
+    user_preferred_days: dict | None,
+    user_id: str,
 ) -> pd.DataFrame:
-    """Generate a weekly plan given targets and number of sessions per modality."""
     days = week_range(week_start)
     rows = []
+
     weights = {
-        "Corrida": [0.25, 0.20, 0.55], # 3 sessões: Regenerativo, Força, Longão
-        "Ciclismo": [0.40, 0.35, 0.25], # 3 sessões: Endurance, Intervalado, Cadência/Força
-        "Natação": [0.60, 0.40], # 2 sessões: Técnica, Ritmo/Intervalado
-        "Força/Calistenia": [0.60, 0.40], # 2 sessões: Força/Resistência, Core/Mobilidade
-        "Mobilidade": [0.60, 0.40], # 2 sessões: Soltura, Recuperação
+        "Corrida": [0.25, 0.20, 0.55],
+        "Ciclismo": [0.40, 0.35, 0.25],
+        "Natação": [0.60, 0.40],
+        "Força/Calistenia": [0.60, 0.40],
+        "Mobilidade": [0.60, 0.40],
     }
     default_days = {
-        "Corrida": [2, 4, 6],  # Wed, Fri, Sun
-        "Ciclismo": [1, 3, 5], # Tue, Thu, Sat
-        "Natação": [0, 2],     # Mon, Wed
-        "Força/Calistenia": [1, 4], # Tue, Fri
-        "Mobilidade": [0, 6],  # Mon, Sun
+        "Corrida": [2, 4, 6],
+        "Ciclismo": [1, 3, 5],
+        "Natação": [0, 2],
+        "Força/Calistenia": [1, 4],
+        "Mobilidade": [0, 6],
     }
-    
-    # 1. Calcular a carga total e a distribuição de volume
+
     mod_volumes = {}
     for mod, weekly_vol in weekly_targets.items():
-        weekly_vol = float(weekly_vol or 0)
+        weekly_vol = float(weekly_vol or 0.0)
         n = int(sessions_per_mod.get(mod, 0))
         if weekly_vol <= 0 or n <= 0:
             continue
+
         unit = UNITS_ALLOWED[mod]
         target_total = _round_to_step_sum(weekly_vol, unit)
 
-        # --- PATCH: expandir pesos para exatamente n e normalizar ---
-        w_template = weights.get(mod, None)
+        w_template = weights.get(mod)
         if w_template is None:
             w = [1.0 / n] * n
         else:
@@ -384,8 +577,6 @@ def distribute_week_by_targets(
             w = [1.0 / n] * n if s == 0 else [x / s for x in w]
 
         volumes = [_round_to_step_sum(target_total * wi, unit) for wi in w]
-
-        # Ajuste fino para garantir soma exata após arredondamentos
         diff = target_total - sum(volumes)
         if abs(diff) > 1e-9:
             max_idx = max(range(len(volumes)), key=lambda i: volumes[i])
@@ -393,47 +584,44 @@ def distribute_week_by_targets(
 
         mod_volumes[mod] = volumes
 
-    # 2. Atribuir sessões aos dias
-    session_assignments = {i: [] for i in range(7)} # {day_index: [(mod, vol, tipo)]}
+    session_assignments = {i: [] for i in range(7)}
     for mod, volumes in mod_volumes.items():
         n = len(volumes)
         prefs = (user_preferred_days or {}).get(mod, default_days.get(mod, list(range(7))))
-        # completa a lista de dias com os restantes e limita a n
         day_idx = prefs + [i for i in range(7) if i not in prefs]
         day_idx = day_idx[:n]
 
-        # --- PATCH: expandir tipos para exatamente n ---
         tipos_base = TIPOS_MODALIDADE.get(mod, ["Treino"])
         tipos = _expand_to_n(tipos_base, n)
 
-        # se houver treino chave definido, posicione-o na maior sessão (opcional)
         key_tipo = (key_sessions or {}).get(mod, "")
         if key_tipo and key_tipo in tipos:
             max_i = max(range(n), key=lambda i: volumes[i])
             tipos[max_i] = key_tipo
 
         for i in range(n):
-            day = day_idx[i]
-            vol = volumes[i]
-            tipo = tipos[i]
-            session_assignments[day].append((mod, vol, tipo))
+            session_assignments[day_idx[i]].append((mod, volumes[i], tipos[i]))
 
-    # 3. Criar o DataFrame final
     for i in range(7):
         d = days[i]
-        # Ordenar as sessões do dia (ex: Corrida > Ciclismo > Natação > Força > Mobilidade)
-        day_sessions = sorted(session_assignments[i], key=lambda x: MODALIDADES.index(x[0]) if x[0] in MODALIDADES else 99)
-        
+        day_sessions = sorted(
+            session_assignments[i],
+            key=lambda x: MODALIDADES.index(x[0]) if x[0] in MODALIDADES else 99,
+        )
+
         if not day_sessions:
-            # Dia de descanso
             rows.append({
+                "UserID": user_id,
+                "UID": generate_uid(user_id),
                 "Data": d,
+                "Start": "",
+                "End": "",
                 "Modalidade": "Descanso",
                 "Tipo de Treino": "Ativo/Passivo",
                 "Volume": 0.0,
                 "Unidade": "min",
                 "RPE": 0,
-                "Detalhamento": "Dia de descanso. Foco em recuperação e nutrição.",
+                "Detalhamento": "Dia de descanso. Foco em recuperação.",
                 "Observações": "",
                 "Status": "Planejado",
                 "adj": 0.0,
@@ -443,13 +631,16 @@ def distribute_week_by_targets(
                 "WeekStart": week_start,
             })
             continue
-            
+
         for mod, vol, tipo in day_sessions:
             unit = UNITS_ALLOWED[mod]
             detail = prescribe_detail(mod, tipo, vol, unit, paces)
-            
             rows.append({
+                "UserID": user_id,
+                "UID": generate_uid(user_id),
                 "Data": d,
+                "Start": "",
+                "End": "",
                 "Modalidade": mod,
                 "Tipo de Treino": tipo,
                 "Volume": vol,
@@ -464,400 +655,661 @@ def distribute_week_by_targets(
                 "LastEditedAt": "",
                 "WeekStart": week_start,
             })
-            
+
     return pd.DataFrame(rows, columns=SCHEMA_COLS)
 
-# -----------------------
-# Periodização
-# -----------------------
-PHASES = ["Base", "Build", "Peak", "Recovery"]
+# ----------------------------------------------------------------------------
+# Horários x disponibilidade
+# ----------------------------------------------------------------------------
+
+def assign_times_to_week(week_df: pd.DataFrame, slots, use_availability: bool):
+    df = week_df.copy()
+    if "Start" not in df.columns:
+        df["Start"] = ""
+    if "End" not in df.columns:
+        df["End"] = ""
+
+    free = normalize_slots(slots) if use_availability else slots
+    dur = timedelta(minutes=DEFAULT_TRAINING_DURATION_MIN)
+
+    for idx, row in df.iterrows():
+        if row["Modalidade"] == "Descanso":
+            df.at[idx, "Start"] = ""
+            df.at[idx, "End"] = ""
+            continue
+
+        if use_availability:
+            assigned = False
+            for si, slot in enumerate(free):
+                if slot["start"].date() != row["Data"]:
+                    continue
+                if slot["end"] - slot["start"] >= dur:
+                    start_dt = slot["start"]
+                    end_dt = start_dt + dur
+                    df.at[idx, "Start"] = start_dt.isoformat()
+                    df.at[idx, "End"] = end_dt.isoformat()
+                    if slot["end"] == end_dt:
+                        free.pop(si)
+                    else:
+                        free[si]["start"] = end_dt
+                    assigned = True
+                    break
+            if not assigned:
+                s = datetime.combine(row["Data"], time(6, 0))
+                df.at[idx, "Start"] = s.isoformat()
+                df.at[idx, "End"] = (s + dur).isoformat()
+        else:
+            s = datetime.combine(row["Data"], time(6, 0))
+            df.at[idx, "Start"] = s.isoformat()
+            df.at[idx, "End"] = (s + dur).isoformat()
+
+    return df, (free if use_availability else slots)
+
+def subtract_trainings_from_slots(week_df: pd.DataFrame, slots):
+    trainings = []
+    for _, r in week_df.iterrows():
+        if r["Modalidade"] == "Descanso":
+            continue
+        s = parse_iso(r.get("Start", ""))
+        e = parse_iso(r.get("End", ""))
+        if s and e and e > s:
+            trainings.append({"start": s, "end": e})
+
+    if not trainings or not slots:
+        return normalize_slots(slots)
+
+    trainings = sorted(trainings, key=lambda x: x["start"])
+    new_slots = []
+    for slot in normalize_slots(slots):
+        segs = [slot]
+        for t in trainings:
+            tmp = []
+            for seg in segs:
+                s, e = seg["start"], seg["end"]
+                ts, te = t["start"], t["end"]
+                if te <= s or ts >= e:
+                    tmp.append(seg)
+                else:
+                    if ts <= s and te >= e:
+                        pass
+                    elif ts <= s < te < e:
+                        tmp.append({"start": te, "end": e})
+                    elif s < ts < e <= te:
+                        tmp.append({"start": s, "end": ts})
+                    elif s < ts and te < e:
+                        tmp.append({"start": s, "end": ts})
+                        tmp.append({"start": te, "end": e})
+            segs = tmp
+        new_slots.extend(segs)
+    return normalize_slots(new_slots)
+
+def update_availability_from_current_week(user_id: str, week_start: date):
+    slots = get_week_availability(user_id, week_start)
+    if not slots:
+        return
+    df = st.session_state.get("df", pd.DataFrame()).copy()
+    if df.empty:
+        return
+    week_df = week_slice(df[df["UserID"] == user_id], week_start)
+    new_slots = subtract_trainings_from_slots(week_df, slots)
+    set_week_availability(user_id, week_start, new_slots)
+
+# ----------------------------------------------------------------------------
+# Exportações
+# ----------------------------------------------------------------------------
+
+def generate_ics(df: pd.DataFrame) -> str:
+    ics = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//TriPlano//Planner//EN\n"
+    for _, row in df.iterrows():
+        start = row["StartDT"]
+        end = row["EndDT"]
+        summary = f"{row['Modalidade']} - {row['Tipo de Treino']}"
+        vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
+        description = (
+            f"Volume: {vol_val:g} {row['Unidade']}\n"
+            f"{row['Detalhamento']}\n"
+            f"Status: {row['Status']}"
+        )
+        ics += "BEGIN:VEVENT\n"
+        ics += f"UID:{start.strftime('%Y%m%d%H%M%S')}-{hash(summary)}@triplano.app\n"
+        ics += f"DTSTAMP:{datetime.now().strftime('%Y%m%dT%H%M%SZ')}\n"
+        ics += f"DTSTART:{start.strftime('%Y%m%dT%H%M%S')}\n"
+        ics += f"DTEND:{end.strftime('%Y%m%dT%H%M%S')}\n"
+        ics += f"SUMMARY:{summary}\n"
+        ics += f"DESCRIPTION:{description}\n"
+        ics += "END:VEVENT\n"
+    ics += "END:VCALENDAR\n"
+    return ics
+
+class PDF(FPDF):
+    def header(self):
+        if self.page_no() == 1:
+            self.set_font("Arial", "B", 15)
+            self.cell(0, 10, pdf_safe("Plano de Treino Semanal"), 0, 1, "C")
+            self.ln(5)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("Arial", "I", 8)
+        self.cell(
+            0,
+            10,
+            pdf_safe(
+                f"Página {self.page_no()}/{{nb}} | Gerado em {datetime.now().strftime('%d/%m/%Y')}"
+            ),
+            0,
+            0,
+            "C",
+        )
+
+def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
+    if df.empty:
+        pdf = PDF()
+        pdf.alias_nb_pages()
+        pdf.add_page()
+        pdf.set_font("Arial", "", 10)
+        pdf.cell(0, 10, pdf_safe("Sem treinos para esta semana."), 0, 1, "L")
+        return pdf.output(dest="S").encode("latin-1")
+
+    df = df.copy()
+    df = df.sort_values(["Data", "StartDT"]).reset_index(drop=True)
+
+    pdf = PDF()
+    pdf.alias_nb_pages()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+
+    pdf.set_font("Arial", "", 10)
+    pdf.cell(
+        0,
+        5,
+        pdf_safe(
+            f"Semana: {week_start.strftime('%d/%m/%Y')} a "
+            f"{(week_start + timedelta(days=6)).strftime('%d/%m/%Y')}"
+        ),
+        0,
+        1,
+    )
+    pdf.ln(5)
+
+    # Página 1: tabela com horários
+    col_widths = [22, 16, 16, 26, 32, 16, 12, 70]
+    headers = ["Data", "Início", "Fim", "Modalidade", "Tipo", "Volume", "Unid.", "Detalhamento"]
+
+    pdf.set_font("Arial", "B", 9)
+    pdf.set_fill_color(220, 220, 220)
+    for i, h in enumerate(headers):
+        pdf.cell(col_widths[i], 7, pdf_safe(h), 1, 0, "C", 1)
+    pdf.ln()
+
+    pdf.set_font("Arial", "", 8)
+    for _, row in df.iterrows():
+        vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
+        mod = row["Modalidade"]
+        if mod == "Descanso" and vol_val <= 0:
+            continue
+
+        color = MODALITY_COLORS.get(mod, (255, 255, 255))
+        data_val = row["Data"]
+        if isinstance(data_val, str):
+            try:
+                data_val = datetime.fromisoformat(data_val).date()
+            except Exception:
+                data_val = week_start
+
+        data_str = data_val.strftime("%d/%m (%a)")
+        ini_str = row["StartDT"].strftime("%H:%M")
+        fim_str = row["EndDT"].strftime("%H:%M")
+        tipo = str(row["Tipo de Treino"])
+        vol = f"{vol_val:g}"
+        unit = row["Unidade"]
+        detail = str(row["Detalhamento"])
+
+        text_color = MODALITY_TEXT_COLORS.get(mod, (0, 0, 0))
+        line_h = 5
+
+        pdf.set_fill_color(*color)
+        pdf.set_text_color(*text_color)
+        pdf.cell(col_widths[0], line_h, pdf_safe(data_str), 1, 0, "L", 1)
+        pdf.cell(col_widths[1], line_h, pdf_safe(ini_str), 1, 0, "C", 1)
+        pdf.cell(col_widths[2], line_h, pdf_safe(fim_str), 1, 0, "C", 1)
+        pdf.cell(col_widths[3], line_h, pdf_safe(mod), 1, 0, "L", 1)
+        pdf.cell(col_widths[4], line_h, pdf_safe(tipo), 1, 0, "L", 1)
+        pdf.cell(col_widths[5], line_h, pdf_safe(vol), 1, 0, "R", 1)
+        pdf.cell(col_widths[6], line_h, pdf_safe(unit), 1, 0, "C", 1)
+
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_fill_color(255, 255, 255)
+        x = pdf.get_x()
+        y = pdf.get_y()
+        pdf.multi_cell(col_widths[7], line_h, pdf_safe(detail), 1, "L")
+        pdf.set_xy(10, y + line_h)
+        pdf.ln(0)
+
+    # Página 2: calendário visual alinhado ao timeGridWeek
+    if not df.empty:
+        pdf.add_page(orientation="L")
+        pdf.set_auto_page_break(auto=False)
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 8, pdf_safe("Calendário Semanal (visual)"), 0, 1, "C")
+        pdf.ln(2)
+
+        left_margin = 10
+        top_margin = 18
+        right_margin = 10
+        bottom_margin = 10
+
+        page_w = pdf.w
+        page_h = pdf.h
+
+        grid_left = left_margin
+        grid_top = top_margin + 6
+        grid_right = page_w - right_margin
+        grid_bottom = page_h - bottom_margin
+
+        grid_w = grid_right - grid_left
+        grid_h = grid_bottom - grid_top
+
+        days = week_range(week_start)
+        n_days = 7
+        col_w = grid_w / n_days
+
+        start_hour = 5
+        end_hour = 21
+        hours_range = end_hour - start_hour
+        if hours_range <= 0:
+            hours_range = 1
+
+        pdf.set_font("Arial", "B", 8)
+        for i, d in enumerate(days):
+            x = grid_left + i * col_w
+            pdf.set_xy(x, top_margin)
+            label = d.strftime("%a %d/%m")
+            pdf.cell(col_w, 6, pdf_safe(label), 0, 0, "C")
+
+        pdf.set_draw_color(230, 230, 230)
+
+        for h in range(start_hour, end_hour + 1):
+            y = grid_top + (h - start_hour) / hours_range * grid_h
+            pdf.line(grid_left, y, grid_right, y)
+            pdf.set_font("Arial", "", 6)
+            pdf.set_xy(grid_left - 8, y - 2)
+            pdf.cell(7, 4, f"{h:02d}h", 0, 0, "R")
+
+        for i in range(n_days + 1):
+            x = grid_left + i * col_w
+            pdf.line(x, grid_top, x, grid_bottom)
+
+        pdf.set_font("Arial", "", 6)
+        for _, row in df.iterrows():
+            vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
+            mod = row["Modalidade"]
+            if mod == "Descanso" and vol_val <= 0:
+                continue
+
+            start = row["StartDT"]
+            end = row["EndDT"]
+            day_idx = (start.date() - week_start).days
+            if day_idx < 0 or day_idx >= 7:
+                continue
+
+            s_hour = start.hour + start.minute / 60
+            e_hour = end.hour + end.minute / 60
+            if e_hour <= start_hour or s_hour >= end_hour:
+                continue
+            s_hour = max(s_hour, start_hour)
+            e_hour = min(e_hour, end_hour)
+            if e_hour <= s_hour:
+                e_hour = s_hour + 0.25
+
+            y1 = grid_top + (s_hour - start_hour) / hours_range * grid_h
+            y2 = grid_top + (e_hour - start_hour) / hours_range * grid_h
+            x1 = grid_left + day_idx * col_w + 0.7
+            w = col_w - 1.4
+            h = max(y2 - y1, 2)
+
+            tipo = str(row["Tipo de Treino"])
+            unit = row["Unidade"]
+            txt_vol = f"{vol_val:g}{unit}" if vol_val > 0 else ""
+            title = f"{mod} {tipo} {txt_vol}".strip()
+
+            color = MODALITY_COLORS.get(mod, (200, 200, 200))
+            pdf.set_fill_color(*color)
+            pdf.set_draw_color(255, 255, 255)
+            pdf.rect(x1, y1, w, h, "F")
+
+            txt_color = MODALITY_TEXT_COLORS.get(mod, (255, 255, 255))
+            pdf.set_text_color(*txt_color)
+            pdf.set_xy(x1 + 0.8, y1 + 0.6)
+            max_chars = int(w / 1.7)
+            pdf.multi_cell(w - 1, 3, pdf_safe(title[:max_chars]), 0, "L")
+
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_draw_color(0, 0, 0)
+
+    return pdf.output(dest="S").encode("latin-1")
+
+# ----------------------------------------------------------------------------
+# Métricas & Dashboard
+# ----------------------------------------------------------------------------
+
+def calculate_metrics(df: pd.DataFrame):
+    if df.empty:
+        return pd.DataFrame(), df
+
+    df = df.copy()
+    df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce").fillna(0.0)
+    df["Load"] = df.apply(
+        lambda r: normalize_volume_for_load(r["Modalidade"], r["Volume"], r["Unidade"]),
+        axis=1,
+    )
+    weekly = df.groupby("WeekStart").agg(
+        TotalLoad=("Load", "sum"),
+        TotalVolume=("Volume", "sum"),
+        NumSessions=("Data", "count"),
+    ).reset_index()
+    weekly = weekly.sort_values("WeekStart").reset_index(drop=True)
+    weekly["CTL"] = weekly["TotalLoad"].rolling(window=6, min_periods=1).mean()
+    weekly["ATL"] = weekly["TotalLoad"].rolling(window=2, min_periods=1).mean()
+    weekly["TSB"] = weekly["CTL"] - weekly["ATL"]
+    return weekly, df
+
+def plot_load_chart(weekly_metrics: pd.DataFrame):
+    if weekly_metrics.empty:
+        st.warning("Sem dados de carga para gerar o gráfico.")
+        return
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(weekly_metrics["WeekStart"], weekly_metrics["CTL"], label="CTL")
+    ax.plot(weekly_metrics["WeekStart"], weekly_metrics["ATL"], label="ATL")
+    ax2 = ax.twinx()
+    ax2.bar(
+        weekly_metrics["WeekStart"],
+        weekly_metrics["TSB"],
+        alpha=0.3,
+        width=5,
+        label="TSB",
+    )
+    ax.set_xlabel("Semana")
+    ax.set_ylabel("Carga")
+    ax2.set_ylabel("TSB")
+    ax.legend(loc="upper left")
+    ax2.legend(loc="upper right")
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    st.pyplot(fig)
+
+# ----------------------------------------------------------------------------
+# Periodização — generate_cycle
+# ----------------------------------------------------------------------------
 
 def generate_cycle(
-    start_week: date,
+    cycle_start_week: date,
     num_weeks: int,
     base_load: float,
     phase_proportions: dict,
     sessions_per_mod: dict,
     paces: dict,
-    user_preferred_days: dict | None = None,
-    key_sessions: dict | None = None,
+    user_preferred_days: dict,
+    key_sessions: dict,
+    user_id: str,
 ) -> pd.DataFrame:
-    """
-    Gera um ciclo de treinamento (multi-semanas) com periodização.
-    
-    base_load: Carga proxy total da semana 1 (Base).
-    phase_proportions: {Modalidade: {Fase: proporção_da_carga_total}}
-    """
-    all_weeks_df = []
-    current_week_start = start_week
-    
-    # 1. Definir a progressão da carga semanal (ex: 3 semanas de carga, 1 de recuperação)
-    load_progression = []
-    for i in range(num_weeks):
-        phase_idx = i % len(PHASES)
-        phase = PHASES[phase_idx]
-        
-        # Fator de progressão (ex: Base: 1.0, Build: 1.1, Peak: 1.2, Recovery: 0.7)
-        if phase == "Base":
-            factor = 1.0
-        elif phase == "Build":
-            factor = 1.0 + (i // len(PHASES)) * 0.05 # Aumenta 5% a cada ciclo Base/Build/Peak
-        elif phase == "Peak":
-            factor = 1.0 + (i // len(PHASES)) * 0.05 + 0.05
-        elif phase == "Recovery":
-            factor = 0.7
-        
-        load_progression.append((phase, factor))
-        
-    # 2. Gerar cada semana
-    for i in range(num_weeks):
-        phase, factor = load_progression[i]
-        week_load = base_load * factor
-        
-        # 3. Distribuir a carga total da semana (week_load) pelas modalidades
+    all_weeks = []
+    for w in range(num_weeks):
+        ws = cycle_start_week + timedelta(days=7 * w)
+        phase = PHASES[w % 4]
+
         weekly_targets = {}
-        total_load_check = 0.0
-        
         for mod in MODALIDADES:
-            # Proporção da carga total para esta modalidade nesta fase
             prop = phase_proportions.get(mod, {}).get(phase, 0.0)
-            if prop <= 0: continue
-            
-            # Carga proxy para a modalidade
-            mod_load = week_load * prop
-            
-            # Converter carga proxy de volta para volume (km/m/min)
-            coeff = LOAD_COEFF.get(mod, 1.0)
-            if coeff == 0: continue
-            
-            volume = mod_load / coeff
-            unit = UNITS_ALLOWED[mod]
-            
-            # Ajuste para Natação (volume está em km, precisa ser em metros)
-            if mod == "Natação":
-                volume *= 1000.0
-            
-            # Arredondar para o passo da unidade
-            volume = _round_to_step_sum(volume, unit)
-            
-            if volume > 0:
-                weekly_targets[mod] = volume
-                total_load_check += normalize_volume_for_load(mod, volume, unit)
-        
-        # Gerar a semana com os targets calculados
-        key_sessions = {mod: st.session_state.get(f"key_sess_{mod}", "") for mod in MODALIDADES}
+            weekly_targets[mod] = base_load * float(prop)
+
         week_df = distribute_week_by_targets(
-            current_week_start,
+            ws,
             weekly_targets,
             sessions_per_mod,
             key_sessions,
             paces,
             user_preferred_days,
+            user_id,
         )
-        
-        # Adicionar metadados da periodização
-        week_df["Phase"] = phase
-        week_df["LoadFactor"] = factor
-        week_df["WeekLoad"] = total_load_check # Carga real após arredondamento
-        
-        all_weeks_df.append(week_df)
-        current_week_start += timedelta(days=7)
-        
-    return pd.concat(all_weeks_df, ignore_index=True)
+        week_df, _ = assign_times_to_week(week_df, [], use_availability=False)
+        all_weeks.append(week_df)
 
-# -----------------------
-# Funções de Exportação
-# -----------------------
+    if not all_weeks:
+        return pd.DataFrame(columns=SCHEMA_COLS)
+    return pd.concat(all_weeks, ignore_index=True)[SCHEMA_COLS]
 
-def generate_ics(df: pd.DataFrame, filename: str) -> str:
-    """Gera o conteúdo do arquivo .ics a partir do DataFrame."""
-    ics_content = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Manus//TriathlonPlanner//EN\n"
-    
-    for _, row in df.iterrows():
-        if row["Volume"] <= 0 and row["Modalidade"] != "Descanso":
-            continue
-            
-        dt_start = datetime.combine(row["Data"], datetime.min.time())
-        dt_end = dt_start + timedelta(hours=1) # Duração padrão de 1h
-        
-        summary = f"{row['Modalidade']} - {row['Tipo de Treino']}"
-        description = f"Volume: {row['Volume']:g} {row['Unidade']}\nDetalhes: {row['Detalhamento']}\nStatus: {row['Status']}"
-        
-        ics_content += "BEGIN:VEVENT\n"
-        ics_content += f"UID:{dt_start.strftime('%Y%m%d%H%M%S')}-{hash(summary)}@triathlonplanner.com\n"
-        ics_content += f"DTSTAMP:{datetime.now().strftime('%Y%m%dT%H%M%SZ')}\n"
-        ics_content += f"DTSTART;VALUE=DATE:{dt_start.strftime('%Y%m%d')}\n"
-        ics_content += f"DTEND;VALUE=DATE:{dt_end.strftime('%Y%m%d')}\n"
-        ics_content += f"SUMMARY:{summary}\n"
-        ics_content += f"DESCRIPTION:{description}\n"
-        ics_content += "END:VEVENT\n"
-        
-    ics_content += "END:VCALENDAR\n"
-    return ics_content
+# ----------------------------------------------------------------------------
+# Helper: df canônico da semana (fonte única para calendário / PDF / ICS)
+# ----------------------------------------------------------------------------
 
-class PDF(FPDF):
-    def header(self):
-        self.set_font("Arial", "B", 15)
-        self.cell(0, 10, pdf_safe("Plano de Treino Semanal"), 0, 1, "C")
-        self.ln(5)
+def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
+    """
+    Fonte ÚNICA de verdade da semana:
+    - Lê st.session_state["df"]
+    - Garante tipos
+    - Garante UID persistido (se criar novo, salva no df base)
+    - Cria StartDT / EndDT consistentes
+    - Remove Descanso 0
+    """
+    if "df" not in st.session_state or st.session_state["df"].empty:
+        return pd.DataFrame(columns=SCHEMA_COLS + ["StartDT", "EndDT"])
 
-    def footer(self):
-        self.set_y(-15)
-        self.set_font("Arial", "I", 8)
-        self.cell(0, 10, pdf_safe(f"Página {self.page_no()}/{{nb}} | Gerado em {datetime.now().strftime('%d/%m/%Y')}"), 0, 0, "C")
+    base_df = st.session_state["df"].copy()
 
-def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
-    """Gera o PDF da semana com cores por modalidade."""
-    pdf = PDF()
-    pdf.alias_nb_pages()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    
-    pdf.set_font("Arial", "", 10)
-    pdf.cell(0, 5, pdf_safe(f"Semana: {week_start.strftime('%d/%m/%Y')} a {(week_start + timedelta(days=6)).strftime('%d/%m/%Y')}"), 0, 1)
-    pdf.ln(5)
-    
-    # Tabela de treinos
-    col_widths = [20, 25, 35, 15, 15, 80]
-    headers = ["Data", "Modalidade", "Tipo", "Volume", "Unid.", "Detalhamento"]
-    
-    pdf.set_font("Arial", "B", 9)
-    pdf.set_fill_color(220, 220, 220) # Cor de fundo para o cabeçalho
-    for i, header in enumerate(headers):
-        pdf.cell(col_widths[i], 7, pdf_safe(header), 1, 0, "C", 1)
-    pdf.ln()
-    
-    pdf.set_font("Arial", "", 8)
-    for _, row in df.iterrows():
-        if row["Volume"] <= 0 and row["Modalidade"] != "Descanso":
-            continue
-            
-        mod = row["Modalidade"]
-        color = MODALITY_COLORS.get(mod, (255, 255, 255)) # Cor de fundo da linha
-        pdf.set_fill_color(*color)
-        
-        data = row["Data"].strftime("%d/%m (%a)")
-        tipo = row["Tipo de Treino"]
-        vol = f"{row['Volume']:g}"
-        unit = row["Unidade"]
-        detail = row["Detalhamento"]
-        
-        # Altura da célula baseada no detalhamento
-        detail_lines = pdf.get_string_width(pdf_safe(detail)) / col_widths[5]
-        line_height = 5
-        cell_height = max(line_height, line_height * math.ceil(detail_lines))
-        
-        # Coluna 1-5 (fixas)
-        # Cor do texto
-        text_color = MODALITY_TEXT_COLORS.get(mod, (0, 0, 0)) # Preto padrão
-        pdf.set_text_color(*text_color)
+    if not np.issubdtype(base_df["Data"].dtype, np.datetime64):
+        base_df["Data"] = pd.to_datetime(base_df["Data"], errors="coerce").dt.date
 
-        pdf.cell(col_widths[0], cell_height, pdf_safe(data), 1, 0, "L", 1)
-        pdf.cell(col_widths[1], cell_height, pdf_safe(mod), 1, 0, "L", 1)
-        pdf.cell(col_widths[2], cell_height, pdf_safe(tipo), 1, 0, "L", 1)
-        pdf.cell(col_widths[3], cell_height, pdf_safe(vol), 1, 0, "R", 1)
-        pdf.cell(col_widths[4], cell_height, pdf_safe(unit), 1, 0, "C", 1)
-
-        # Restaura a cor do texto para preto para o detalhamento
-        pdf.set_text_color(0, 0, 0)
-        
-        # Coluna 6 (multiline)
-        pdf.set_fill_color(255, 255, 255) # Detalhamento sem cor de fundo
-        x = pdf.get_x()
-        y = pdf.get_y()
-        pdf.multi_cell(col_widths[5], line_height, pdf_safe(detail), 1, "L")
-        
-        # Retorna para a próxima linha da tabela
-        pdf.set_xy(10, y + cell_height)
-        pdf.ln(0)
-        
-    # Geração do PDF em memória
-    return pdf.output(dest="S").encode("latin-1")
-
-
-# -----------------------
-# Funções de Análise e Dashboard
-# -----------------------
-
-def calculate_metrics(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Calcula métricas semanais e rolling 4-week load."""
-    
-    # 1. Carga Semanal (Load)
-    df["Load"] = df.apply(
-        lambda row: normalize_volume_for_load(row["Modalidade"], row["Volume"], row["Unidade"]),
-        axis=1
+    week_end = week_start + timedelta(days=7)
+    mask = (
+        (base_df["UserID"] == user_id) &
+        (base_df["Data"] >= week_start) &
+        (base_df["Data"] < week_end)
     )
-    
-    # Agrupar por semana
-    weekly_metrics = df.groupby("WeekStart").agg(
-        TotalLoad=("Load", "sum"),
-        TotalVolume=("Volume", "sum"), # Volume total sem normalização (apenas para referência)
-        NumSessions=("Data", "count"),
-    ).reset_index()
-    
-    # 2. Rolling 4-week Load (ATL, CTL, TSB)
-    # Ordenar por WeekStart
-    weekly_metrics = weekly_metrics.sort_values("WeekStart").reset_index(drop=True)
-    
-    # Constantes (ajustáveis)
-    ATL_TAU = 7 # Acute Training Load (curto prazo)
-    CTL_TAU = 42 # Chronic Training Load (longo prazo)
-    
-    # Simplificação: usar rolling mean (aproximação)
-    weekly_metrics["CTL"] = weekly_metrics["TotalLoad"].rolling(window=6, min_periods=1).mean()
-    weekly_metrics["ATL"] = weekly_metrics["TotalLoad"].rolling(window=2, min_periods=1).mean()
-    
-    # TSB (Training Stress Balance) = CTL - ATL
-    weekly_metrics["TSB"] = weekly_metrics["CTL"] - weekly_metrics["ATL"]
-    
-    return weekly_metrics, df
+    week_df = base_df[mask].copy()
+    if week_df.empty:
+        return pd.DataFrame(columns=SCHEMA_COLS + ["StartDT", "EndDT"])
 
-def plot_load_chart(weekly_metrics: pd.DataFrame):
-    """Gera o gráfico de carga (CTL, ATL, TSB)."""
-    
-    if weekly_metrics.empty:
-        st.warning("Sem dados de carga para gerar o gráfico.")
-        return
-        
-    fig, ax = plt.subplots(figsize=(10, 4))
-    
-    # CTL e ATL
-    ax.plot(weekly_metrics["WeekStart"], weekly_metrics["CTL"], label="CTL (Carga Crônica)")
-    ax.plot(weekly_metrics["WeekStart"], weekly_metrics["ATL"], label="ATL (Carga Aguda)")
-    
-    # TSB (em barras)
-    ax2 = ax.twinx()
-    ax2.bar(weekly_metrics["WeekStart"], weekly_metrics["TSB"], label="TSB (Balanço)", alpha=0.3, width=5)
-    
-    ax.set_xlabel("Semana")
-    ax.set_ylabel("Carga (Proxy Load)")
-    ax2.set_ylabel("TSB")
-    
-    ax.legend(loc="upper left")
-    ax2.legend(loc="upper right")
-    
-    plt.title("Métricas de Carga de Treinamento (CTL, ATL, TSB)")
-    plt.xticks(rotation=45, ha="right")
-    plt.tight_layout()
-    st.pyplot(fig)
-    
-    st.markdown("""
-    **Explicação das Métricas de Carga:**
-    - **Carga Proxy (Load):** É uma estimativa da carga interna do treino, combinando volume e intensidade. A fórmula usada é:
-      - Corrida: km * 1.0
-      - Ciclismo: km * 0.6
-      - Natação: metros/1000 * 1.2
-      - Força/Calistenia: minutos * 0.3
-      - Mobilidade: minutos * 0.2
-    - **CTL (Chronic Training Load):** Representa a sua **aptidão** (fitness) de longo prazo. É a média ponderada da carga das últimas 6 semanas. Um CTL crescente indica que você está ficando mais apto.
-    - **ATL (Acute Training Load):** Representa a sua **fadiga** (fatigue) de curto prazo. É a média ponderada da carga da última semana. Um ATL alto indica fadiga recente.
-    - **TSB (Training Stress Balance):** É o **balanço** entre aptidão e fadiga (CTL - ATL).
-      - **TSB Positivo:** Indica que você está descansado e pronto para competir (peaking).
-      - **TSB Negativo:** Indica que você está em uma fase de treinamento pesado (overreaching funcional).
-    """)
+    # Garante UID estável e persiste no df base
+    changed = False
+    for idx in week_df.index[week_df["UID"] == ""]:
+        new_uid = generate_uid(user_id)
+        week_df.at[idx, "UID"] = new_uid
+        base_df.at[idx, "UID"] = new_uid
+        changed = True
 
-# -----------------------
-# Interface Streamlit
-# -----------------------
+    if changed:
+        save_user_df(user_id, base_df)
+        base_df = st.session_state["df"].copy()
+        week_df = base_df[mask].copy()
+
+    # Volume numérico
+    week_df["Volume"] = pd.to_numeric(week_df["Volume"], errors="coerce").fillna(0.0)
+
+    # StartDT / EndDT a partir de Start/End ou default
+    week_df["StartDT"] = week_df["Start"].apply(parse_iso)
+    week_df["EndDT"] = week_df["End"].apply(parse_iso)
+
+    def _fix_start(row):
+        if isinstance(row["StartDT"], datetime):
+            return row["StartDT"]
+        return datetime.combine(row["Data"], time(6, 0))
+
+    def _fix_end(row):
+        if isinstance(row["EndDT"], datetime) and row["EndDT"] > row["StartDT"]:
+            return row["EndDT"]
+        return row["StartDT"] + timedelta(minutes=DEFAULT_TRAINING_DURATION_MIN)
+
+    week_df["StartDT"] = week_df.apply(_fix_start, axis=1)
+    week_df["EndDT"] = week_df.apply(_fix_end, axis=1)
+
+    # Remove descanso puro
+    week_df = week_df[~((week_df["Modalidade"] == "Descanso") & (week_df["Volume"] <= 0))]
+
+    if week_df.empty:
+        return pd.DataFrame(columns=SCHEMA_COLS + ["StartDT", "EndDT"])
+
+    week_df = week_df.sort_values(["Data", "StartDT"]).reset_index(drop=True)
+    return week_df
+
+# ----------------------------------------------------------------------------
+# MAIN
+# ----------------------------------------------------------------------------
 
 def main():
     st.set_page_config(
-        page_title="Triathlon Planner",
+        page_title="TriPlano - Planner de Treinos",
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    
-    # Inicialização de estado
+
+    st.markdown(
+        """
+        <style>
+        html, body, [class*="css"]  {
+            font-family: "Open Sans", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    ensure_dirs()
+    init_users_if_needed()
+    init_csv_if_needed()
+    init_availability_if_needed()
+
+    # LOGIN
+    if "user_id" not in st.session_state:
+        st.title("TriPlano 🌀")
+        st.subheader("Entre ou crie sua conta para montar seus treinos.")
+
+        email = st.text_input("E-mail", key="login_email").strip().lower()
+        nome = st.text_input("Nome (para criar conta nova)", key="login_nome")
+        modo = st.radio("O que você deseja?", ["Entrar", "Criar conta"], horizontal=True)
+
+        if st.button("Continuar"):
+            if not email:
+                st.error("Informe seu e-mail.")
+            else:
+                user = get_user(email)
+                if modo == "Entrar":
+                    if user is None:
+                        st.error("Usuário não encontrado. Verifique ou crie uma conta.")
+                    else:
+                        st.session_state["user_id"] = user["user_id"]
+                        st.session_state["user_name"] = user["nome"]
+                        safe_rerun()
+                else:
+                    if user is not None:
+                        st.warning("E-mail já cadastrado. Use Entrar.")
+                    elif not nome:
+                        st.error("Informe seu nome para criar a conta.")
+                    else:
+                        if create_user(email, nome):
+                            st.session_state["user_id"] = email
+                            st.session_state["user_name"] = nome
+                            st.success("Conta criada com sucesso!")
+                            safe_rerun()
+                        else:
+                            st.error("Erro ao criar conta.")
+        st.stop()
+
+    # CONTEXTO
+    user_id = st.session_state["user_id"]
+    user_name = st.session_state.get("user_name", user_id)
+
+    if "all_df" not in st.session_state:
+        st.session_state["all_df"] = load_all()
     if "df" not in st.session_state:
-        st.session_state["df"] = load_all()
+        all_df = st.session_state["all_df"]
+        st.session_state["df"] = all_df[all_df["UserID"] == user_id].copy()
+
     if "current_week_start" not in st.session_state:
         st.session_state["current_week_start"] = monday_of_week(today())
     if "frozen_targets" not in st.session_state:
         st.session_state["frozen_targets"] = {}
-        
+
     df = st.session_state["df"]
-    
-    # -----------------------
-    # Sidebar (Apenas Navegação)
-    # -----------------------
-    st.sidebar.title("🏊‍♂️🚴‍♀️🏃‍♀️ Triathlon Planner")
-    
-    # Navegação
-    menu = st.sidebar.radio("Navegação", ["📅 Planejamento Semanal", "📈 Dashboard", "⚙️ Periodização"], index=0)
-    
+
+    # SIDEBAR
+    st.sidebar.title("TriPlano 🌀")
+    st.sidebar.markdown(f"👤 **{user_name}**  \n`{user_id}`")
+    if st.sidebar.button("Sair"):
+        logout()
+
+    menu = st.sidebar.radio(
+        "Navegação",
+        ["📅 Planejamento Semanal", "📈 Dashboard", "⚙️ Periodização"],
+        index=0,
+    )
     st.sidebar.markdown("---")
-    st.sidebar.markdown("Desenvolvido por [Matheus Vianna](https://matheusvianna.com)")
-    
-    # -----------------------
-    # Conteúdo Principal
-    # -----------------------
-    
+    st.sidebar.markdown("Desenvolvido por **Matheus Vianna**")
+
+    # ---------------- PLANEJAMENTO SEMANAL ----------------
     if menu == "📅 Planejamento Semanal":
         st.header("📅 Planejamento Semanal")
-        
-        # Controles movidos para o corpo principal
-        
+
+        # 1. Paces
         st.subheader("1. Parâmetros de Prescrição")
-        
-        col_pace1, col_pace2, col_pace3 = st.columns(3)
+        col_p1, col_p2, col_p3 = st.columns(3)
         paces = {
-            "run_pace_min_per_km": col_pace1.number_input("Corrida (min/km)", value=5.0, min_value=3.0, max_value=10.0, step=0.1, format="%.1f"),
-            "swim_sec_per_100m": col_pace2.number_input("Natação (seg/100m)", value=110, min_value=60, max_value=200, step=5),
-            "bike_kmh": col_pace3.number_input("Ciclismo (km/h)", value=32.0, min_value=15.0, max_value=50.0, step=0.5, format="%.1f"),
+            "run_pace_min_per_km": col_p1.number_input(
+                "Corrida (min/km)", value=5.0, min_value=3.0, max_value=10.0, step=0.1, format="%.1f"
+            ),
+            "swim_sec_per_100m": col_p2.number_input(
+                "Natação (seg/100m)", value=110, min_value=60, max_value=200, step=5
+            ),
+            "bike_kmh": col_p3.number_input(
+                "Ciclismo (km/h)", value=32.0, min_value=15.0, max_value=50.0, step=0.5, format="%.1f"
+            ),
         }
-        
-        st.subheader("2. Metas Semanais (Volume e Sessões)")
-        
+
+        # 2. Metas
+        st.subheader("2. Metas Semanais (Volume, Sessões, Preferências)")
         weekly_targets = {}
         sessions_per_mod = {}
-        
-        # Layout para as metas e sessões
         cols_mod = st.columns(len(MODALIDADES))
         cols_sess = st.columns(len(MODALIDADES))
-        
+
+        dias_semana_options = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4, "Sáb": 5, "Dom": 6}
+        default_days = {
+            "Corrida": [2, 4, 6],
+            "Ciclismo": [1, 3, 5],
+            "Natação": [0, 2],
+            "Força/Calistenia": [1, 4],
+            "Mobilidade": [0, 6],
+        }
+
         for i, mod in enumerate(MODALIDADES):
             unit = UNITS_ALLOWED[mod]
-            
-            # Volume
+
             weekly_targets[mod] = cols_mod[i].number_input(
-                f"Volume {mod} ({unit})",
-                value=float(st.session_state.get(f"target_{mod}", 0.0)), # Mantém o valor anterior se existir
+                f"{mod} ({unit})/sem",
+                value=float(st.session_state.get(f"target_{mod}", 0.0)),
                 min_value=0.0,
                 step=_unit_step(unit),
                 format="%.1f" if unit == "km" else "%g",
-                key=f"target_{mod}"
+                key=f"target_{mod}",
             )
 
-            # Dias preferidos e Treino Chave
-            dias_semana_options = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4, "Sáb": 5, "Dom": 6}
-            default_days = {
-                "Corrida": [2, 4, 6],  # Qua, Sex, Dom
-                "Ciclismo": [1, 3, 5], # Ter, Qui, Sáb
-                "Natação": [0, 2], # Seg, Qua
-                "Força/Calistenia": [1, 4], # Ter, Sex
-                "Mobilidade": [0, 6], # Seg, Dom
-            }
-            
-            # Mapeia os dias padrão para as abreviações em português
-            default_selected_days = [
-                abrev for abrev, index in dias_semana_options.items() 
-                if index in default_days.get(mod, [])
+            default_selected = [
+                abrev for abrev, idx in dias_semana_options.items()
+                if idx in default_days.get(mod, [])
             ]
-            
             cols_mod[i].multiselect(
-                f"Dias Preferidos {mod}",
+                f"Dias {mod}",
                 options=list(dias_semana_options.keys()),
                 key=f"pref_days_{mod}",
-                default=default_selected_days
+                default=default_selected,
             )
-            
+
             cols_sess[i].selectbox(
-                f"Treino Chave {mod}",
+                f"Treino chave {mod}",
                 options=[""] + TIPOS_MODALIDADE.get(mod, []),
-                key=f"key_sess_{mod}"
+                key=f"key_sess_{mod}",
             )
-            
-            # Sessões
+
             default_sessions = 3 if mod in ["Corrida", "Ciclismo"] else 2
             sessions_per_mod[mod] = cols_sess[i].number_input(
                 f"Sessões {mod}",
@@ -865,45 +1317,46 @@ def main():
                 min_value=0,
                 max_value=5,
                 step=1,
-                key=f"sess_{mod}"
+                key=f"sess_{mod}",
             )
-            
+
         st.markdown("---")
-        
-        # Seletor de semana
+
+        # 3. Semana atual
         col1, col2, col3 = st.columns([1, 2, 1])
-        
-        if col1.button("⬅️ Semana Anterior"):
+        if col1.button("⬅️ Semana anterior"):
             st.session_state["current_week_start"] -= timedelta(days=7)
             safe_rerun()
-            
         week_start = st.session_state["current_week_start"]
         col2.subheader(f"Semana de {week_start.strftime('%d/%m/%Y')}")
-        
-        if col3.button("Semana Seguinte ➡️"):
+        if col3.button("Semana seguinte ➡️"):
             st.session_state["current_week_start"] += timedelta(days=7)
             safe_rerun()
-            
-        # Carregar dados da semana
-        week_df = week_slice(df, week_start)
-        
-        # Se a semana estiver vazia, criar o template
-        if week_df.empty:
-            week_df = default_week_df(week_start)
-            
-        # Congelar metas para esta semana (se ainda não estiverem congeladas)
-        frozen_targets = get_frozen_weekly_targets(week_start, weekly_targets)
-        
+
+        week_df_raw = week_slice(df, week_start)
+        if week_df_raw.empty:
+            week_df_raw = default_week_df(week_start, user_id)
+
+        week_slots = get_week_availability(user_id, week_start)
+
+        # 3.1 Modo de agendamento
+        st.subheader("3. Como encaixar os treinos?")
+        modo_agendamento = st.radio(
+            "Opção de agendamento",
+            ["Usar horários livres", "Ignorar horários livres"],
+            horizontal=True,
+        )
+
         st.markdown("---")
-        
-        # Botões de Ação
-        col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
-        
-        # Botão Gerar Semana
-        if col_btn1.button("📆 Gerar Semana (Prescrição Automática)", help="Gera o plano semanal com base nas metas definidas acima."):
-            # 1. Gerar o novo DF
-            dias_semana_map = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4, "Sáb": 5, "Dom": 6}
-            current_preferred_days = {mod: [dias_semana_map[d] for d in st.session_state.get(f"pref_days_{mod}", [])] for mod in MODALIDADES}
+
+        # 4. Gerar semana automática
+        col_btn1, _, _ = st.columns(3)
+        if col_btn1.button("📆 Gerar Semana Automática"):
+            dias_map = dias_semana_options
+            current_preferred_days = {
+                mod: [dias_map[d] for d in st.session_state.get(f"pref_days_{mod}", [])]
+                for mod in MODALIDADES
+            }
             key_sessions = {mod: st.session_state.get(f"key_sess_{mod}", "") for mod in MODALIDADES}
 
             new_week_df = distribute_week_by_targets(
@@ -913,363 +1366,464 @@ def main():
                 key_sessions,
                 paces,
                 current_preferred_days,
+                user_id,
             )
-            
-            # 2. Mesclar com o DF principal (substituir a semana)
-            df_before = df[df["WeekStart"] != week_start]
-            df_new = pd.concat([df_before, new_week_df], ignore_index=True)
-            
-            # 3. Salvar e recarregar
-            save_all(df_new)
-            st.session_state["df"] = load_all()
-            set_frozen_weekly_targets(week_start, weekly_targets) # Congela as metas usadas
-            st.success(f"Semana de {week_start.strftime('%d/%m')} gerada e salva com sucesso!")
-            safe_rerun()
-            
-        # Botão Salvar Edições
-        if col_btn2.button("💾 Salvar Edições Manuais", help="Salva as alterações feitas diretamente na tabela."):
-            st.info("As edições são salvas automaticamente ao interagir com a tabela.")
-            
-        # Botão Exportar ICS
-        if col_btn3.download_button(
-            label="📤 Exportar .ICS",
-            data=generate_ics(week_df, f"treino_{week_start.strftime('%Y%m%d')}.ics"),
-            file_name=f"treino_{week_start.strftime('%Y%m%d')}.ics",
-            mime="text/calendar",
-            help="Exporta o plano semanal para o formato de calendário (.ics)."
-        ):
-            st.info("Arquivo .ICS gerado com sucesso!")
-            
-        # Botão Exportar PDF
-        pdf_bytes = generate_pdf(week_df, week_start)
-        if col_btn4.download_button(
-            label="📕 Exportar PDF",
-            data=pdf_bytes,
-            file_name=f"treino_{week_start.strftime('%Y%m%d')}.pdf",
-            mime="application/pdf",
-            help="Exporta o plano semanal para PDF."
-        ):
-            st.info("PDF gerado com sucesso!")
-            
-        st.markdown("---")
-        
-        # Tabela de Treinos (Data Editor)
-        
-        # Colunas editáveis
-        editable_cols = {
-            "Modalidade": st.column_config.SelectboxColumn(
-                "Modalidade",
-                options=MODALIDADES + ["Descanso"],
-                required=True,
-            ),
-            "Tipo de Treino": st.column_config.SelectboxColumn(
-                "Tipo de Treino",
-                options=sum(TIPOS_MODALIDADE.values(), ["Ativo/Passivo"]),
-            ),
-            "Volume": st.column_config.NumberColumn(
-                "Volume",
-                min_value=0.0,
-                format="%.1f",
-            ),
-            "Unidade": st.column_config.TextColumn("Unidade"),
-            "RPE": st.column_config.NumberColumn(
-                "RPE",
-                min_value=0,
-                max_value=10,
-                step=1,
-            ),
-            "Detalhamento": st.column_config.TextColumn("Detalhamento"),
-            "Observações": st.column_config.TextColumn("Observações"),
-            "Status": st.column_config.SelectboxColumn(
-                "Status",
-                options=STATUS_CHOICES,
-            ),
-        }
-        
-        # Callback para salvar as edições do data_editor
-        def handle_editor_change():
-            if st.session_state.get("editor_key"):
-                changes = st.session_state["editor_key"]["edited_rows"]
-                if changes:
-                    df_current = st.session_state["df"].copy()
-                    week_df_current = week_slice(df_current, week_start)
-                    
-                    for idx, new_values in changes.items():
-                        old_row = week_df_current.iloc[idx]
-                        
-                        # Aplicar as mudanças
-                        for col, val in new_values.items():
-                            week_df_current.at[week_df_current.index[idx], col] = val
-                            
-                        # Atualizar ChangeLog e LastEditedAt
-                        new_row = week_df_current.iloc[idx]
-                        week_df_current.at[week_df_current.index[idx], "ChangeLog"] = append_changelog(old_row, new_row)
-                        week_df_current.at[week_df_current.index[idx], "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
-                        
-                        # Garantir unidade correta
-                        mod = new_row["Modalidade"]
-                        unit = lock_unit(mod)
-                        if unit:
-                            week_df_current.at[week_df_current.index[idx], "Unidade"] = unit
-                            
-                    # Mesclar de volta ao DF principal
-                    df_before = df_current[df_current["WeekStart"] != week_start]
-                    df_new = pd.concat([df_before, week_df_current], ignore_index=True)
-                    
-                    # Salvar e recarregar
-                    save_all(df_new)
-                    st.session_state["df"] = load_all()
-                    st.success("Edições salvas com sucesso!")
-                    safe_rerun() # Recarrega para mostrar o DF atualizado
-                    
-        # Exibir o editor
-        dias_semana = {"Mon": "Seg", "Tue": "Ter", "Wed": "Qua", "Thu": "Qui", "Fri": "Sex", "Sat": "Sáb", "Sun": "Dom"}
-        week_df_display = week_df.copy()
-        week_df_display["Data"] = week_df_display["Data"].apply(lambda d: f"{d.strftime('%d/%m')} ({dias_semana.get(d.strftime('%a'), '')})")
 
-        edited_df = st.data_editor(
-            week_df_display,
-            column_config=editable_cols,
-            hide_index=True,
-            num_rows="fixed",
-            key="editor_key",
-            on_change=handle_editor_change,
+            use_avail = (modo_agendamento == "Usar horários livres")
+            new_week_df, updated_slots = assign_times_to_week(
+                new_week_df,
+                week_slots,
+                use_avail,
+            )
+
+            if use_avail:
+                updated_slots = subtract_trainings_from_slots(new_week_df, updated_slots)
+                set_week_availability(user_id, week_start, updated_slots)
+
+            user_df = st.session_state["df"]
+            others = user_df[user_df["WeekStart"] != week_start]
+            user_df_new = pd.concat([others, new_week_df], ignore_index=True)
+            save_user_df(user_id, user_df_new)
+            st.success("Semana gerada e salva!")
+            safe_rerun()
+
+        st.markdown("---")
+
+        # Recarrega df do usuário após geração
+        df = st.session_state["df"]
+
+        # 5. Calendário: usa df canônico (MESMO dataset do PDF/ICS)
+        st.subheader("4. Calendário da Semana")
+
+        week_df_can = canonical_week_df(user_id, week_start)
+        events = []
+
+        # Treinos
+        for _, row in week_df_can.iterrows():
+            uid = row["UID"]
+            vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
+
+            title = f"{row['Modalidade']} - {row['Tipo de Treino']}"
+            if vol_val > 0:
+                title += f" ({vol_val:g} {row['Unidade']})"
+
+            start_dt = row["StartDT"]
+            end_dt = row["EndDT"]
+
+            color_rgb = MODALITY_COLORS.get(row["Modalidade"])
+            color = "#{:02X}{:02X}{:02X}".format(*color_rgb) if color_rgb else None
+
+            ev = {
+                "id": uid,
+                "title": title,
+                "start": start_dt.isoformat(),
+                "end": end_dt.isoformat(),
+                "extendedProps": {
+                    "uid": uid,
+                    "type": "treino",
+                },
+            }
+            if color:
+                ev["color"] = color
+            events.append(ev)
+
+        # Slots livres
+        for i, s in enumerate(week_slots):
+            events.append({
+                "id": f"free-{i}",
+                "title": "Livre",
+                "start": s["start"].isoformat(),
+                "end": s["end"].isoformat(),
+                "color": "#27AE60",
+                "extendedProps": {
+                    "type": "free",
+                    "slot_index": i,
+                },
+            })
+
+        options = {
+            "initialView": "timeGridWeek",
+            "locale": "pt-br",
+            "firstDay": 1,
+            "slotMinTime": "05:00:00",
+            "slotMaxTime": "21:00:00",
+            "allDaySlot": False,
+            "selectable": True,
+            "editable": True,
+            "eventDurationEditable": True,
+            "headerToolbar": {"left": "", "center": "", "right": ""},
+            "height": "650px",
+        }
+
+        cal_state = calendar(
+            events=events,
+            options=options,
+            key=f"cal_semana_{get_week_key(week_start)}",
         )
-        
-        # Exibir as metas congeladas
+
+        # 5.1 Seleção -> Livre
+        if cal_state and "select" in cal_state:
+            sel = cal_state["select"]
+            s = parse_iso(sel.get("start"))
+            e = parse_iso(sel.get("end"))
+            if s and e and e > s:
+                conflito = False
+                for _, r in week_df_can.iterrows():
+                    ts = r["StartDT"]
+                    te = r["EndDT"]
+                    if ts and te and not (te <= s or ts >= e):
+                        conflito = True
+                        break
+                if not conflito:
+                    week_slots.append({"start": s, "end": e})
+                    set_week_availability(user_id, week_start, week_slots)
+                    safe_rerun()
+
+        # 5.2 Drag/resize treinos -> atualiza df base (logo afeta canonical e PDF/ICS)
+        def handle_move_or_resize(ev_dict, action_label):
+            ev = ev_dict.get("event", {}) if ev_dict else {}
+            ext = ev.get("extendedProps", {}) or {}
+            if ext.get("type") != "treino":
+                return
+            uid = ext.get("uid")
+            start = parse_iso(ev.get("start"))
+            end = parse_iso(ev.get("end"))
+            if not uid or not start or not end or end <= start:
+                return
+
+            df_current = st.session_state["df"].copy()
+            mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
+            if not mask.any():
+                return
+            idx = df_current[mask].index[0]
+            old_row = df_current.loc[idx].copy()
+
+            df_current.at[idx, "Start"] = start.isoformat()
+            df_current.at[idx, "End"] = end.isoformat()
+            df_current.at[idx, "Data"] = start.date()
+            df_current.at[idx, "WeekStart"] = monday_of_week(start.date())
+            df_current.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
+            df_current.at[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
+
+            save_user_df(user_id, df_current)
+
+            ws_old = monday_of_week(old_row["Data"]) if not isinstance(old_row["Data"], str) else monday_of_week(datetime.fromisoformat(old_row["Data"]).date())
+            ws_new = monday_of_week(start.date())
+            update_availability_from_current_week(user_id, ws_old)
+            update_availability_from_current_week(user_id, ws_new)
+
+            safe_rerun()
+
+        if cal_state and "eventDrop" in cal_state:
+            handle_move_or_resize(cal_state["eventDrop"], "movido")
+
+        if cal_state and "eventResize" in cal_state:
+            handle_move_or_resize(cal_state["eventResize"], "redimensionado")
+
+        # 5.3 Clique eventos
+        if cal_state and "eventClick" in cal_state:
+            ev = cal_state["eventClick"]["event"]
+            ext = ev.get("extendedProps", {}) or {}
+            etype = ext.get("type")
+
+            # Clique em Livre -> remove slot
+            if etype == "free":
+                s = parse_iso(ev.get("start"))
+                e = parse_iso(ev.get("end"))
+                new_slots = [
+                    sl for sl in week_slots
+                    if not (sl["start"] == s and sl["end"] == e)
+                ]
+                set_week_availability(user_id, week_start, new_slots)
+                safe_rerun()
+
+            # Clique em treino -> popup edita treino e salva no df base (canonical lê daqui)
+            if etype == "treino":
+                uid = ext.get("uid")
+                df_current = st.session_state["df"].copy()
+                mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
+                if not mask.any():
+                    st.error("Treino não encontrado.")
+                else:
+                    idx = df_current[mask].index[0]
+                    r = df_current.loc[idx]
+
+                    st.markdown("---")
+                    with st.container(border=True):
+                        st.markdown("### 📝 Detalhes do treino")
+
+                        start_dt = parse_iso(r.get("Start", "")) or datetime.combine(r["Data"], time(6, 0))
+                        end_dt = parse_iso(r.get("End", "")) or (start_dt + timedelta(minutes=DEFAULT_TRAINING_DURATION_MIN))
+                        dur_min = int((end_dt - start_dt).total_seconds() / 60)
+
+                        current_mod = r.get("Modalidade", "Corrida")
+                        mod_options = MODALIDADES + ["Descanso"]
+                        if current_mod not in mod_options:
+                            current_mod = "Corrida"
+
+                        new_mod = st.selectbox(
+                            "Modalidade realizada",
+                            options=mod_options,
+                            index=mod_options.index(current_mod),
+                            key=f"mod_{uid}",
+                        )
+
+                        tipos_opcoes = TIPOS_MODALIDADE.get(new_mod, ["Treino"])
+                        current_tipo = r.get("Tipo de Treino", tipos_opcoes[0] if tipos_opcoes else "")
+                        if current_tipo not in tipos_opcoes:
+                            current_tipo = tipos_opcoes[0] if tipos_opcoes else ""
+
+                        new_tipo = st.selectbox(
+                            "Tipo de treino",
+                            options=tipos_opcoes,
+                            index=tipos_opcoes.index(current_tipo) if current_tipo in tipos_opcoes else 0,
+                            key=f"tipo_{uid}",
+                        )
+
+                        unit = UNITS_ALLOWED.get(new_mod, r.get("Unidade", ""))
+                        default_vol = float(r.get("Volume", 0.0) or 0.0)
+                        new_vol = st.number_input(
+                            f"Volume ({unit})",
+                            min_value=0.0,
+                            value=default_vol,
+                            step=_unit_step(unit),
+                            key=f"vol_{uid}",
+                        )
+
+                        st.markdown(
+                            f"📅 **{start_dt.strftime('%d/%m/%Y')}** | "
+                            f"⏰ {start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}"
+                        )
+
+                        col_dt1, col_dt2 = st.columns(2)
+                        new_date = col_dt1.date_input(
+                            "Data do treino",
+                            value=start_dt.date(),
+                            key=f"dt_{uid}",
+                        )
+                        new_time = col_dt2.time_input(
+                            "Horário de início",
+                            value=start_dt.time(),
+                            key=f"tm_{uid}",
+                        )
+                        new_dur = st.number_input(
+                            "Duração (min)",
+                            min_value=15,
+                            max_value=300,
+                            value=dur_min,
+                            step=5,
+                            key=f"dur_{uid}",
+                        )
+
+                        new_start = datetime.combine(new_date, new_time)
+                        new_end = new_start + timedelta(minutes=int(new_dur))
+
+                        new_rpe = st.slider(
+                            "RPE (esforço percebido)",
+                            0, 10,
+                            int(r.get("RPE", 0) or 0),
+                            key=f"rpe_{uid}",
+                        )
+
+                        new_obs = st.text_area(
+                            "Comentário rápido",
+                            value=str(r.get("Observações", "")),
+                            key=f"obs_{uid}",
+                        )
+
+                        col_feito, col_nao, col_salvar = st.columns(3)
+
+                        def apply_update(status_override=None):
+                            df_upd = st.session_state["df"].copy()
+                            mask2 = (df_upd["UserID"] == user_id) & (df_upd["UID"] == uid)
+                            if not mask2.any():
+                                return
+                            i2 = df_upd[mask2].index[0]
+                            old_row = df_upd.loc[i2].copy()
+
+                            df_upd.at[i2, "Modalidade"] = new_mod
+                            df_upd.at[i2, "Tipo de Treino"] = new_tipo
+                            df_upd.at[i2, "Volume"] = new_vol
+                            df_upd.at[i2, "Unidade"] = UNITS_ALLOWED.get(new_mod, old_row.get("Unidade", ""))
+
+                            df_upd.at[i2, "Start"] = new_start.isoformat()
+                            df_upd.at[i2, "End"] = new_end.isoformat()
+                            df_upd.at[i2, "Data"] = new_start.date()
+                            df_upd.at[i2, "WeekStart"] = monday_of_week(new_start.date())
+
+                            df_upd.at[i2, "RPE"] = new_rpe
+                            df_upd.at[i2, "Observações"] = new_obs
+
+                            if status_override is not None:
+                                df_upd.at[i2, "Status"] = status_override
+
+                            df_upd.at[i2, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
+                            df_upd.at[i2, "ChangeLog"] = append_changelog(old_row, df_upd.loc[i2])
+
+                            save_user_df(user_id, df_upd)
+
+                            ws_old = monday_of_week(old_row["Data"]) if not isinstance(old_row["Data"], str) else monday_of_week(datetime.fromisoformat(old_row["Data"]).date())
+                            ws_new = monday_of_week(new_start.date())
+                            update_availability_from_current_week(user_id, ws_old)
+                            update_availability_from_current_week(user_id, ws_new)
+
+                            safe_rerun()
+
+                        if col_feito.button("✅ FEITO", key=f"feito_{uid}"):
+                            apply_update("Realizado")
+                        if col_nao.button("❌ NÃO FEITO", key=f"naofeito_{uid}"):
+                            apply_update("Cancelado")
+                        if col_salvar.button("💾 Salvar", key=f"save_{uid}"):
+                            apply_update(None)
+
+        # 5.4 Botão salvar semana (reforça persistência; canonical já lê direto de df)
+        st.markdown("---")
+        if st.button("💾 Salvar Semana Atual"):
+            save_user_df(user_id, st.session_state["df"])
+            st.success("Semana atual salva.")
+
+        # 6. Exportações — usam SEMPRE o df canônico (mesmo do calendário)
+        st.subheader("5. Exportar Semana Atual")
+
+        week_df_export = canonical_week_df(user_id, week_start)
+        col_exp1, col_exp2 = st.columns(2)
+
+        if not week_df_export.empty:
+            if col_exp1.download_button(
+                "📤 Exportar .ICS",
+                data=generate_ics(week_df_export),
+                file_name=f"treino_{week_start.strftime('%Y%m%d')}.ics",
+                mime="text/calendar",
+            ):
+                st.info("ICS gerado a partir do calendário atual.")
+
+            pdf_bytes = generate_pdf(week_df_export, week_start)
+            if col_exp2.download_button(
+                "📕 Exportar PDF",
+                data=pdf_bytes,
+                file_name=f"treino_{week_start.strftime('%Y%m%d')}.pdf",
+                mime="application/pdf",
+            ):
+                st.info("PDF gerado a partir do calendário atual.")
+        else:
+            st.info("Nenhum treino (além de descanso) nesta semana.")
+
+        # Metas congeladas (placeholder)
         st.markdown("---")
         st.subheader("Metas da Semana (Congeladas)")
-        
-        col_t1, col_t2, col_t3, col_t4, col_t5 = st.columns(5)
-        cols_t = [col_t1, col_t2, col_t3, col_t4, col_t5]
-        
+        frozen = st.session_state["frozen_targets"].get(get_week_key(week_start), {})
+        cols_t = st.columns(len(MODALIDADES))
         for i, mod in enumerate(MODALIDADES):
-            vol = frozen_targets.get(mod, 0.0)
+            vol = frozen.get(mod, 0.0)
             unit = UNITS_ALLOWED[mod]
             cols_t[i].metric(mod, f"{vol:g} {unit}")
-            
-        # Exibir a carga proxy da semana
-        week_load = week_df["Load"].sum() if "Load" in week_df.columns else 0.0
-        st.info(f"**Carga Proxy Planejada:** {week_load:.1f}")
+
+    # ---------------- DASHBOARD ----------------
     elif menu == "📈 Dashboard":
         st.header("📈 Dashboard de Análise")
-        
-        # Calcular métricas
         weekly_metrics, df_with_load = calculate_metrics(df)
-        
-        # Gráfico de Carga
         plot_load_chart(weekly_metrics)
-        
+
         st.markdown("---")
-        
-        # Tabela de Métricas Semanais
-        st.subheader("Métricas Semanais")
-        st.dataframe(
-            weekly_metrics.sort_values("WeekStart", ascending=False).head(12),
-            column_config={
-                "WeekStart": st.column_config.DateColumn("Semana", format="DD/MM/YYYY"),
-                "TotalLoad": st.column_config.NumberColumn("Carga Total", format="%.1f"),
-                "CTL": st.column_config.NumberColumn("CTL", format="%.1f"),
-                "ATL": st.column_config.NumberColumn("ATL", format="%.1f"),
-                "TSB": st.column_config.NumberColumn("TSB", format="%.1f"),
-                "NumSessions": st.column_config.NumberColumn("Sessões"),
-            },
-            hide_index=True,
-        )
-        
+        st.subheader("Métricas Semanais (últimas 12)")
+        if not weekly_metrics.empty:
+            st.dataframe(
+                weekly_metrics.sort_values("WeekStart", ascending=False).head(12),
+                hide_index=True,
+            )
+        else:
+            st.info("Gere ou registre semanas para ver as métricas.")
+
         st.markdown("---")
-        st.subheader("Registro de Treinos Realizados (Edição de Status)")
-        
-        # Colunas visíveis e editáveis no Dashboard
-        dashboard_cols = [
-            "Data", "Modalidade", "Tipo de Treino", "Volume", "Unidade", "Status", "RPE", "Observações"
-        ]
-        
-        # Configuração de colunas para o editor do Dashboard
-        dashboard_col_config = {
-            "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY", disabled=True),
-            "Modalidade": st.column_config.TextColumn("Modalidade", disabled=True),
-            "Tipo de Treino": st.column_config.TextColumn("Tipo de Treino", disabled=True),
-            "Volume": st.column_config.NumberColumn("Volume", disabled=True),
-            "Unidade": st.column_config.TextColumn("Unidade", disabled=True),
-            "Status": st.column_config.SelectboxColumn(
-                "Status",
-                options=STATUS_CHOICES,
-                required=True,
-            ),
-            "RPE": st.column_config.NumberColumn(
-                "RPE",
-                min_value=0,
-                max_value=10,
-                step=1,
-            ),
-            "Observações": st.column_config.TextColumn("Observações"),
-        }
-        
-        # Callback para salvar as edições do data_editor do Dashboard
-        def handle_dashboard_editor_change():
-            if st.session_state.get("dashboard_editor_key"):
-                changes = st.session_state["dashboard_editor_key"]["edited_rows"]
-                if changes:
-                    df_current = st.session_state["df"].copy()
-                    
-                    for idx, new_values in changes.items():
-                        # Mapeamento simples: assume mesma ordenação/linhas visíveis (OK para este fluxo)
-                        original_index = df_current.index[idx]
-                        old_row = df_current.loc[original_index]
-                        
-                        # Aplicar as mudanças
-                        for col, val in new_values.items():
-                            df_current.at[original_index, col] = val
-                            
-                        # Atualizar ChangeLog e LastEditedAt
-                        new_row = df_current.loc[original_index]
-                        df_current.at[original_index, "ChangeLog"] = append_changelog(old_row, new_row)
-                        df_current.at[original_index, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
-                        
-                    # Salvar e recarregar
-                    save_all(df_current)
-                    st.session_state["df"] = load_all()
-                    st.success("Status e observações salvas com sucesso!")
-                    safe_rerun() # Recarrega para mostrar o DF atualizado e recalcular métricas
-        
-        # Exibir o editor no Dashboard
-        st.data_editor(
-            df_with_load[dashboard_cols].sort_values("Data", ascending=False),
-            column_config=dashboard_col_config,
-            hide_index=True,
-            num_rows="fixed",
-            key="dashboard_editor_key",
-            on_change=handle_dashboard_editor_change,
-        )
-        
+        st.subheader("Registro de Treinos (Status, RPE, Observações)")
+        if df_with_load.empty:
+            st.info("Sem treinos ainda.")
+        else:
+            view_cols = [
+                "Data", "Modalidade", "Tipo de Treino",
+                "Volume", "Unidade", "Status", "RPE", "Observações",
+            ]
+            st.dataframe(
+                df_with_load[view_cols].sort_values("Data", ascending=False),
+                hide_index=True,
+            )
+
+    # ---------------- PERIODIZAÇÃO ----------------
     elif menu == "⚙️ Periodização":
         st.header("⚙️ Periodização (Ciclo Multi-Semanal)")
-        
-        st.markdown("""
-        Use esta seção para gerar um ciclo de treinamento de múltiplas semanas (ex: 4, 8, 12 semanas)
-        com progressão de carga e distribuição de volume por fase (Base, Build, Peak, Recovery).
-        """)
-        
-        st.markdown("---")
-        
-        # Parâmetros do Ciclo
         col_p1, col_p2, col_p3 = st.columns(3)
-        
-        cycle_start_week = col_p1.date_input("Semana de Início do Ciclo", value=monday_of_week(today()))
-        num_weeks = col_p2.number_input("Número de Semanas no Ciclo", value=4, min_value=4, max_value=12, step=4)
-        
-        # Carga Proxy Total (Base) - Movido da sidebar
-        total_load_target = col_p3.number_input("Carga Proxy Total (Base)", value=100.0, min_value=0.0, step=5.0)
-        
+        cycle_start_week = monday_of_week(col_p1.date_input(
+            "Semana de Início do Ciclo", value=monday_of_week(today())
+        ))
+        num_weeks = col_p2.number_input(
+            "Número de Semanas", value=4, min_value=4, max_value=24, step=4
+        )
+        base_load = col_p3.number_input(
+            "Carga Proxy Base (semana 1)", value=100.0, min_value=0.0, step=5.0
+        )
+
         st.subheader("Distribuição de Carga por Fase (%)")
-        
-        # Explicação da Carga Proxy
-        st.info(f"""
-        **Carga Proxy (Base):** Combina volume e intensidade. Os coeficientes são:
-        - Corrida: 1 km = **1.0**
-        - Ciclismo: 1 km = **0.6**
-        - Natação: 1000 m = **1.2**
-        - Força/Calistenia: 60 min = **0.3**
-        - Mobilidade: 60 min = **0.2**
-        
-        A **Carga Proxy Total (Base)** ({total_load_target:.1f}) é a carga da primeira semana (Fase Base).
-        As frações abaixo definem como essa carga será distribuída entre as modalidades ao longo do ciclo.
-        """)
-        
-        # Tabela de Proporções por Modalidade e Fase
         phase_proportions = {}
-        
         for mod in MODALIDADES:
             st.markdown(f"**{mod}**")
             cols = st.columns(len(PHASES))
-            
             phase_proportions[mod] = {}
-            total_mod_prop = 0
-            
             for i, phase in enumerate(PHASES):
-                default_val = 0
                 if mod in ["Corrida", "Ciclismo", "Natação"]:
-                    if phase in ["Base", "Build", "Peak"]: default_val = 25
-                    if phase == "Recovery": default_val = 5
-                elif mod in ["Força/Calistenia", "Mobilidade"]:
-                    if phase in ["Base", "Build"]: default_val = 40
-                    if phase in ["Peak", "Recovery"]: default_val = 10
-                    
-                prop = cols[i].number_input(
+                    default_val = 25 if phase != "Recovery" else 5
+                else:
+                    default_val = 40 if phase in ["Base", "Build"] else 10
+                val = cols[i].number_input(
                     f"{phase} (%)",
                     value=default_val,
                     min_value=0,
                     max_value=100,
                     step=5,
-                    key=f"prop_{mod}_{phase}"
+                    key=f"prop_{mod}_{phase}",
                 )
-                phase_proportions[mod][phase] = prop / 100.0
-                total_mod_prop += prop
-                
-            if total_mod_prop != 100:
-                st.warning(f"Soma das proporções de {mod}: {total_mod_prop}%. Ajuste para 100%.")
-                
-        st.markdown("---")
-        
-        # Botão Gerar Ciclo
-        if st.button("📈 Gerar Ciclo (Multi-Semanal)", help="Gera o plano para o número de semanas e periodização definidos."):
-            
-            # 1. Gerar o novo DF do ciclo
-            dias_semana_map = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4, "Sáb": 5, "Dom": 6}
-            current_preferred_days = {mod: [dias_semana_map[d] for d in st.session_state.get(f"pref_days_{mod}", [])] for mod in MODALIDADES}
-            key_sessions = {mod: st.session_state.get(f"key_sess_{mod}", "") for mod in MODALIDADES}
+                phase_proportions[mod][phase] = val / 100.0
 
-            current_sessions_per_mod = {mod: st.session_state.get(f"sess_{mod}", 0) for mod in MODALIDADES}
-            current_paces = {
-                "run_pace_min_per_km": st.session_state.get("target_Corrida", 5.0),
-                "swim_sec_per_100m": st.session_state.get("target_Natação", 110),
-                "bike_kmh": st.session_state.get("target_Ciclismo", 32.0),
+        if st.button("📈 Gerar Ciclo (Multi-Semanal)"):
+            dias_map = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4, "Sáb": 5, "Dom": 6}
+            current_preferred_days = {
+                mod: [dias_map[d] for d in st.session_state.get(f"pref_days_{mod}", [])]
+                for mod in MODALIDADES
             }
-            
+            key_sessions = {mod: st.session_state.get(f"key_sess_{mod}", "") for mod in MODALIDADES}
+            sessions_pm = {mod: st.session_state.get(f"sess_{mod}", 0) for mod in MODALIDADES}
+
             cycle_df = generate_cycle(
                 cycle_start_week,
-                num_weeks,
-                total_load_target,
+                int(num_weeks),
+                float(base_load),
                 phase_proportions,
-                current_sessions_per_mod,
-                current_paces,
-                current_preferred_days,
-                key_sessions,
+                sessions_pm,
+                paces={
+                    "run_pace_min_per_km": 5.0,
+                    "swim_sec_per_100m": 110,
+                    "bike_kmh": 32.0,
+                },
+                user_preferred_days=current_preferred_days,
+                key_sessions=key_sessions,
+                user_id=user_id,
             )
-            
-            # 2. Mesclar com o DF principal (substituir as semanas do ciclo)
-            cycle_end_week = cycle_start_week + timedelta(days=7 * num_weeks)
-            df_before = df[df["WeekStart"] < cycle_start_week]
-            df_after = df[df["WeekStart"] >= cycle_end_week]
-            
-            df_new = pd.concat([df_before, cycle_df, df_after], ignore_index=True)
-            
-            # 3. Salvar e recarregar
-            save_all(df_new)
-            st.session_state["df"] = load_all()
-            st.success(f"Ciclo de {num_weeks} semanas gerado e salvo com sucesso!")
-            
-            # Redirecionar para a primeira semana do ciclo
+
+            cycle_end = cycle_start_week + timedelta(days=7 * int(num_weeks))
+
+            user_df = st.session_state["df"]
+            before = user_df[user_df["WeekStart"] < cycle_start_week]
+            after = user_df[user_df["WeekStart"] >= cycle_end]
+            new_user_df = pd.concat([before, cycle_df, after], ignore_index=True)
+            save_user_df(user_id, new_user_df)
+
             st.session_state["current_week_start"] = cycle_start_week
+            st.success("Ciclo gerado e salvo!")
             safe_rerun()
-            
-        st.markdown("---")
-        
-        # Pré-visualização do ciclo (opcional)
-        if "cycle_df_preview" not in st.session_state:
-            st.session_state["cycle_df_preview"] = pd.DataFrame()
-            
-        # Exibir o plano do ciclo gerado
-        if not st.session_state["cycle_df_preview"].empty:
-            st.subheader("Pré-visualização do Ciclo Gerado")
-            st.dataframe(st.session_state["cycle_df_preview"])
+
+# ----------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Garantir que o diretório de dados exista antes de qualquer operação de arquivo
     ensure_dirs()
-    
-    # O Streamlit precisa que a função principal seja chamada
     try:
         main()
     except Exception as e:
