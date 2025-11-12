@@ -1653,13 +1653,20 @@ def main():
 
         # 5.4 Botão salvar semana (reforça persistência; canonical já lê direto de df)
         st.markdown("---")
-        if st.button("💾 Salvar Semana Atual"):
+        if st.button("💾 Salvar Semana Atual", key="save_week_changes"):
             try:
-            # Acessa o DataFrame do usuário que está em memória (com as alterações)
-                _df_to_save = st.session_state["df"]
-                user
+                # CORREÇÃO: Recuperar user_id do session_state para garantir o escopo
+                current_user_id = st.session_state.get("user_id")
+                
+                if not current_user_id:
+                    st.error("Erro: ID do usuário não encontrado na sessão. Por favor, faça login novamente.")
+                    return
+
+                # Acessa o DataFrame do usuário que está em memória (com as alterações)
+                user_df_to_save = st.session_state["df"]
+                
                 # Salva o DataFrame completo no CSV
-                save_user_df(user_id, user_df_to_save)
+                save_user_df(current_user_id, user_df_to_save)
                 
                 st.success("As alterações da semana foram salvas com sucesso no CSV!")
                 
