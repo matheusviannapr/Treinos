@@ -1468,27 +1468,17 @@ def main():
 
             # Log de debug
             st.toast(f"DEBUG: {action_label} treino {uid}. De {old_row['Start']} para {start.isoformat()}")
-
+            new_row = old_row.copy()    
             # Atualiza os dados no DataFrame do session_state
             # Usamos .loc para garantir a escrita no DataFrame
-            df_current.loc[idx, "Start"] = start.isoformat()
-            df_current.loc[idx, "End"] = end.isoformat()
-            df_current.loc[idx, "Data"] = start.date()
-            df_current.loc[idx, "WeekStart"] = monday_of_week(start.date())
-            df_current.loc[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
-            df_current.loc[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
+            new_row["Start"] = start.isoformat()
+            new_row["End"] = end.isoformat()
+            new_row["Data"] = start.date()
+            new_row["WeekStart"] = monday_of_week(start.date())
+            new_row["LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
+            new_row["ChangeLog"] = append_changelog(old_row, new_row)
 
-            if "Modalidade" in df_current:
-                df_current["Modalidade"] = df_current["Modalidade"].astype(MODALIDADE_DTYPE)
-            if "Status" in df_current:
-                df_current["Status"] = df_current["Status"].astype(STATUS_DTYPE)
-            if "Tipo" in df_current:
-                df_current["Tipo"] = df_current["Tipo"].astype(TIPO_DTYPE)
-            if "Unidade" in df_current:
-                df_current["Unidade"] = df_current["Unidade"].astype(UNIDADE_DTYPE)
-
-            # Salva o DataFrame atualizado no CSV e recarrega o session_state["df"]
-            # A função save_user_df atualiza o st.session_state["df"]
+            df_current.loc[idx] = new_row
             save_user_df(user_id, df_current)
             st.toast(f"SUCESSO: Treino {uid} {action_label} e salvo no CSV.")
 
