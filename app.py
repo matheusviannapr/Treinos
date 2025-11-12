@@ -1448,11 +1448,13 @@ def main():
             ext = ev.get("extendedProps", {}) or {}
             if ext.get("type") != "treino":
                 return
+
             uid = ext.get("uid")
             start = parse_iso(ev.get("start"))
             end = parse_iso(ev.get("end"))
+
             if not uid or not start or not end or end <= start:
-                st.toast(f"ERRO: Dados inválidos para {action_label} ({uid}).")
+                st.toast(f"ERRO: Dados inválidos para {action_label} ({uid}).", icon="🚨")
                 return
 
             # Acessa o DataFrame do session_state
@@ -1460,33 +1462,23 @@ def main():
             mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
             
             if not mask.any():
-                st.toast(f"ERRO: Treino {uid} não encontrado no DataFrame.")
+                st.toast(f"ERRO: Treino {uid} não encontrado no DataFrame.", icon="🚨")
                 return
             
             idx = df_current[mask].index[0]
             old_row = df_current.loc[idx].copy()
 
-            # Log de debug
-            st.toast(f"DEBUG: {action_label} treino {uid}. De {old_row['Start']} para {start.isoformat()}")
-            new_row = old_row.copy()    
             # Atualiza os dados no DataFrame do session_state
-            # Usamos .loc para garantir a escrita no DataFrame
-            new_row["Start"] = start.isoformat()
-            new_row["End"] = end.isoformat()
-            new_row["Data"] = start.date()
-            new_row["WeekStart"] = monday_of_week(start.date())
-            new_row["LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
-            new_row["ChangeLog"] = append_changelog(old_row, new_row)
+            df_current.loc[idx, "Start"] = start.isoformat()
+            df_current.loc[idx, "End"] = end.isoformat()
+            df_current.loc[idx, "Data"] = start.date()
+            df_current.loc[idx, "WeekStart"] = monday_of_week(start.date())
+            df_current.loc[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
+            df_current.loc[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
 
-            df_current.loc[idx] = new_row
-            save_user_df(user_id, df_current)
-            st.toast(f"SUCESSO: Treino {uid} {action_label} e salvo no CSV.")
-
-            # Atualiza a disponibilidade, pois o treino pode ter mudado de semana
-            ws_old = monday_of_week(old_row["Data"]) if not isinstance(old_row["Data"], str) else monday_of_week(datetime.fromisoformat(old_row["Data"]).date())
-            ws_new = monday_of_week(start.date())
-            update_availability_from_current_week(user_id, ws_old)
-            update_availability_from_current_week(user_id, ws_new)
+            # Apenas atualiza o estado na memória. O salvamento será explícito.
+            st.session_state["df"] = df_current
+            st.toast(f"Treino {uid} {action_label}. Clique em 'Salvar Semana' para persistir.", icon="💾")
 
             # Limpa o cache e força o Streamlit a redesenhar a página
             canonical_week_df.clear()
@@ -1662,11 +1654,23 @@ def main():
         # 5.4 Botão salvar semana (reforça persistência; canonical já lê direto de df)
         st.markdown("---")
         if st.button("💾 Salvar Semana Atual"):
-            save_user_df(user_id, st.session_state["df"])
-            st.success("Semana atual salva com sucesso!")
-            # Limpa o cache para forçar o recarregamento dos dados na próxima exibição
+            try:
+            # Acessa o DataFrame do usuário que está em memória (com as alterações)
+            user_df_to_save = st.session_state["df"]
+            
+            # Salva o DataFrame completo no CSV
+            save_user_df(user_id, user_df_to_save)
+            
+            st.success("As alterações da semana foram salvas com sucesso no CSV!")
+            
+            # Limpa o cache para forçar o recarregamento dos dados a partir do CSV na próxima interação
             canonical_week_df.clear()
-            st.toast("Dados persistidos no servidor.")
+            load_all.clear()
+            safe_rerun()
+
+        except Exception as e:
+            st.error(f"Ocorreu um erro ao salvar a semana: {e}")
+
 
         # 6. Exportações — usam SEMPRE o df canônico (mesmo do calendário)
         st.subheader("5. Exportar Semana Atual")
