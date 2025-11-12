@@ -1434,8 +1434,10 @@ def main():
             options=options,
             key=f"cal_semana_{get_week_key(week_start)}",
         )
-        st.session_state["calendar_snapshot"] = events
-        
+        if cal_state and "eventsSet" in cal_state:
+            eventos_visuais = cal_state["eventsSet"]["events"]
+            st.session_state["calendar_snapshot"] = eventos_visuais
+
         if st.session_state.get("calendar_forcar_snapshot", False):
             eventos = cal_state.get("events", [])
 
@@ -1709,7 +1711,41 @@ def main():
         # 5.4 Botão salvar semana (reforça persistência; canonical já lê direto de df)
         st.markdown("---")
         if st.button("💾 Salvar Semana Atual"):
-            st.session_state["calendar_forcar_snapshot"] = True
+            eventos = st.session_state.get("calendar_snapshot", [])
+
+            if not eventos:
+                st.warning("⚠️ Nenhum evento encontrado para salvar.")
+            else:
+                df_current = st.session_state["df"].copy()
+
+                for ev in eventos:
+                    ext = ev.get("extendedProps", {})
+                    if ext.get("type") != "treino":
+                        continue
+
+                    uid = ext.get("uid") or ev.get("id")
+                    if not uid:
+                        continue
+
+                    mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
+                    if not mask.any():
+                        continue
+
+                    idx = df_current[mask].index[0]
+                    old_row = df_current.loc[idx].copy()
+                    start = parse_iso(ev.get("start"))
+                    end = parse_iso(ev.get("end"))
+
+                    df_current.at[idx, "Start"] = start.isoformat()
+                    df_current.at[idx, "End"] = end.isoformat()
+                    df_current.at[idx, "Data"] = start.date()
+                    df_current.at[idx, "WeekStart"] = monday_of_week(start.date())
+                    df_current.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
+                    df_current.at[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
+
+                save_user_df(user_id, df_current)
+                st.session_state["df"] = df_current
+                st.success("✅ Semana salva com sucesso!")
 
 
         # 6. Exportações — usam SEMPRE o df canônico (mesmo do calendário)
