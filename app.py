@@ -281,7 +281,9 @@ def save_user_df(user_id: str, user_df: pd.DataFrame):
         user_df.at[i, "UID"] = generate_uid(user_id)
 
     others = all_df[all_df["UserID"] != user_id]
-    merged = pd.concat([others, user_df[SCHEMA_COLS]], ignore_index=True)
+    # Correção do FutureWarning: Garante que apenas DataFrames não vazios sejam concatenados
+    to_concat = [df for df in [others, user_df[SCHEMA_COLS]] if not df.empty]
+    merged = pd.concat(to_concat, ignore_index=True) if to_concat else pd.DataFrame(columns=SCHEMA_COLS)
     save_all(merged)
 
     st.session_state["all_df"] = merged
@@ -1389,7 +1391,9 @@ def main():
 
             user_df = st.session_state["df"]
             others = user_df[user_df["WeekStart"] != week_start]
-            user_df_new = pd.concat([others, new_week_df], ignore_index=True)
+            # Correção do FutureWarning: Garante que apenas DataFrames não vazios sejam concatenados
+            to_concat = [df for df in [others, new_week_df] if not df.empty]
+            user_df_new = pd.concat(to_concat, ignore_index=True) if to_concat else pd.DataFrame(columns=SCHEMA_COLS)
             save_user_df(user_id, user_df_new)
             safe_rerun()
 
