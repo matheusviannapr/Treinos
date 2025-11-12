@@ -1502,6 +1502,10 @@ def main():
             df_current.at[idx, "WeekStart"] = monday_of_week(start.date())
             df_current.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
             df_current.at[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
+            df_current["Modalidade"] = df_current["Modalidade"].astype(MODALIDADE_DTYPE)
+            df_current["Status"] = df_current["Status"].astype(STATUS_DTYPE)
+            df_current["Tipo"] = df_current["Tipo"].astype(TIPO_DTYPE)
+            df_current["Unidade"] = df_current["Unidade"].astype(UNIDADE_DTYPE)
 
             save_user_df(user_id, df_current)
 
