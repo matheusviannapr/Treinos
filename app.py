@@ -1,30 +1,16 @@
-# app.py — TriPlano (evolução do TriCiclo Planner)
+# app.py — TriPlano (evolução do TriCiclo Planner) - versão com calendário ↔ popup ↔ PDF/ICS sincronizados
 # ----------------------------------------------------------------------------
-# Funcionalidades:
-# - Login/cadastro multiusuário (CSV)
-# - Treinos multiusuário com UserID + UID estável
-# - Metas, sessões, preferências por modalidade
-# - Geração automática de semana
-# - Periodização multi-semanal (generate_cycle)
-# - Exportações: PDF / ICS
-# - Disponibilidade persistida em availability.csv
-# - Calendário semanal (streamlit-calendar):
-#     - Seleção cria slots "Livre"
-#     - Clique em "Livre" remove slot
-#     - Uso opcional dos horários livres ou ignorar
-#     - Treinos com UID estável, drag & drop e resize atualizam horários
-#     - Pop-up do treino:
-#           - Editar Modalidade, Tipo, Volume
-#           - Editar data/hora/duração
-#           - RPE, Comentário
-#           - Marcar FEITO / NÃO FEITO / salvar
-# - Quando um horário Livre é ocupado por treino, o slot é removido/ajustado.
-# - Botão "Salvar Semana Atual" para persistir qualquer ajuste.
-# - PDF:
-#     - Página 1: tabela colorida com horários
-#     - Página 2: calendário semanal em paisagem (timeGridWeek-like).
-# - ICS e PDF usam EXATAMENTE o mesmo conjunto de treinos exibidos no calendário.
-# - Descanso com volume 0 nunca aparece no calendário/ICS/PDF.
+# Pontos-chave desta versão:
+# - Usa streamlit-calendar (FullCalendar) como fonte da verdade visual.
+# - Treinos são identificados por UID estável.
+# - Toda alteração vinda do calendário (drag/resize via eventChange/eventDrop/eventResize)
+#   atualiza st.session_state["df"] e o CSV.
+# - O pop-up (eventClick) SEMPRE lê direto de st.session_state["df"] pelo UID,
+#   então já abre com horário atualizado.
+# - PDF e ICS usam canonical_week_df(), que é derivado de st.session_state["df"],
+#   então refletem exatamente o que está no calendário.
+# - Slots "Livre" são persistidos em availability.csv.
+# - Eventos de "Descanso" com volume 0 não aparecem em calendário/ICS/PDF.
 # ----------------------------------------------------------------------------
 
 import os
@@ -762,8 +748,12 @@ def generate_ics(df: pd.DataFrame) -> str:
     for _, row in df.iterrows():
         start = row["StartDT"]
         end = row["EndDT"]
-        summary = f"{row['Modalidade']} - {row['Tipo de Treino']}"
+        mod = row["Modalidade"]
         vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
+        if mod == "Descanso" and vol_val <= 0:
+            continue
+
+        summary = f"{mod} - {row['Tipo de Treino']}"
         description = (
             f"Volume: {vol_val:g} {row['Unidade']}\n"
             f"{row['Detalhamento']}\n"
@@ -902,7 +892,7 @@ def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
         pdf.set_xy(10, y + line_h)
         pdf.ln(0)
 
-    # Página 2: calendário visual
+    # Página 2: calendário visual alinhado ao timeGridWeek
     if not df.empty:
         pdf.add_page(orientation="L")
         pdf.set_auto_page_break(auto=False)
@@ -1096,21 +1086,16 @@ def generate_cycle(
     return pd.concat(all_weeks, ignore_index=True)[SCHEMA_COLS]
 
 # ----------------------------------------------------------------------------
-# Helper: df canônico da semana (usado por calendário / PDF / ICS)
+# Helper canônico: base para calendário / popup / PDF / ICS
 # ----------------------------------------------------------------------------
 
 def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
     base_df = st.session_state.get("df", pd.DataFrame())
-    if base_df.empty:
-        return pd.DataFrame(columns=SCHEMA_COLS)
-
     week_df = week_slice(base_df[base_df["UserID"] == user_id], week_start).copy()
     if week_df.empty:
         return pd.DataFrame(columns=SCHEMA_COLS)
 
-    if not np.issubdtype(week_df["Data"].dtype, np.datetime64):
-        week_df["Data"] = pd.to_datetime(week_df["Data"]).dt.date
-
+    week_df["Data"] = pd.to_datetime(week_df["Data"], errors="coerce").dt.date
     week_df["Volume"] = pd.to_numeric(week_df["Volume"], errors="coerce").fillna(0.0)
 
     week_df["StartDT"] = week_df["Start"].apply(parse_iso)
@@ -1124,9 +1109,11 @@ def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
         axis=1,
     )
 
+    # Remover Descanso puro
     mask = ~((week_df["Modalidade"] == "Descanso") & (week_df["Volume"] <= 0))
     week_df = week_df[mask]
 
+    # Garantir UID
     for idx, r in week_df[week_df["UID"] == ""].iterrows():
         week_df.at[idx, "UID"] = generate_uid(user_id)
 
@@ -1365,21 +1352,20 @@ def main():
             others = user_df[user_df["WeekStart"] != week_start]
             user_df_new = pd.concat([others, new_week_df], ignore_index=True)
             save_user_df(user_id, user_df_new)
-            st.success("Semana gerada e salva!")
             safe_rerun()
 
         st.markdown("---")
 
-        # Recarrega df após geração/edição
+        # Atualiza df após possíveis mudanças
         df = st.session_state["df"]
 
-        # 5. Calendário: usa df canônico (mesmo dataset do PDF/ICS)
+        # 5. Calendário: usa df canônico
         st.subheader("4. Calendário da Semana")
 
         week_df_can = canonical_week_df(user_id, week_start)
         events = []
 
-        # Treinos (df canônico)
+        # Treinos
         for _, row in week_df_can.iterrows():
             uid = row["UID"]
             vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
@@ -1442,44 +1428,20 @@ def main():
             key=f"cal_semana_{get_week_key(week_start)}",
         )
 
-        # 5.1 Seleção -> Livre
-        if cal_state and "select" in cal_state:
-            sel = cal_state["select"]
-            s = parse_iso(sel.get("start"))
-            e = parse_iso(sel.get("end"))
-            if s and e and e > s:
-                conflito = False
-                for _, r in week_df_can.iterrows():
-                    ts = r["StartDT"]
-                    te = r["EndDT"]
-                    if ts and te and not (te <= s or ts >= e):
-                        conflito = True
-                        break
-                if not conflito:
-                    week_slots.append({"start": s, "end": e})
-                    set_week_availability(user_id, week_start, week_slots)
-                    safe_rerun()
+        # ------------ Callbacks do streamlit-calendar (FullCalendar) ------------
 
-        # 5.2 Drag/resize treinos -> atualizar base + disponibilidade
-        def handle_move_or_resize(ev_dict, action_label):
-            if not ev_dict:
+        def update_event_from_calendar_event(event_obj):
+            """Atualiza df a partir de um evento (drag/resize via eventChange/eventDrop/eventResize)."""
+            if not event_obj:
                 return
-
-            raw_ev = ev_dict.get("event", ev_dict)
-
-            # Pode vir dict completo ou só id
-            if isinstance(raw_ev, dict):
-                ext = raw_ev.get("extendedProps", {}) or {}
-                etype = ext.get("type")
-                uid = ext.get("uid") or raw_ev.get("id")
-                start = parse_iso(raw_ev.get("start"))
-                end = parse_iso(raw_ev.get("end"))
-            else:
-                # Se for só id, não temos info suficiente -> ignora
-                return
-
+            ext = event_obj.get("extendedProps", {}) or {}
+            etype = ext.get("type")
             if etype != "treino":
                 return
+
+            uid = ext.get("uid") or event_obj.get("id")
+            start = parse_iso(event_obj.get("start"))
+            end = parse_iso(event_obj.get("end"))
             if not uid or not start or not end or end <= start:
                 return
 
@@ -1487,6 +1449,7 @@ def main():
             mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
             if not mask.any():
                 return
+
             idx = df_current[mask].index[0]
             old_row = df_current.loc[idx].copy()
 
@@ -1506,184 +1469,205 @@ def main():
 
             safe_rerun()
 
-        if cal_state and "eventDrop" in cal_state:
-            handle_move_or_resize(cal_state["eventDrop"], "movido")
+        if cal_state:
+            cb = cal_state.get("callback")
 
-        if cal_state and "eventResize" in cal_state:
-            handle_move_or_resize(cal_state["eventResize"], "redimensionado")
-
-        # 5.3 Clique em eventos (robusto: string ou dict)
-        if cal_state and "eventClick" in cal_state:
-            ev_click = cal_state["eventClick"]
-
-            # Normalizar formato
-            if isinstance(ev_click, dict):
-                ev_data = ev_click.get("event", ev_click)
-            else:
-                ev_id = str(ev_click)
-                ev_data = next((evt for evt in events if str(evt.get("id")) == ev_id), None)
-
-            if ev_data:
-                ext = ev_data.get("extendedProps", {}) or {}
-                etype = ext.get("type")
-
-                # Clique em Livre -> remover slot
-                if etype == "free":
-                    s = parse_iso(ev_data.get("start"))
-                    e = parse_iso(ev_data.get("end"))
-                    if s and e:
-                        new_slots = [
-                            sl for sl in week_slots
-                            if not (sl["start"] == s and sl["end"] == e)
-                        ]
-                        set_week_availability(user_id, week_start, new_slots)
+            # select -> cria slot Livre
+            if cb == "select" and "select" in cal_state:
+                sel = cal_state["select"]
+                s = parse_iso(sel.get("start"))
+                e = parse_iso(sel.get("end"))
+                if s and e and e > s:
+                    conflito = False
+                    for _, r in week_df_can.iterrows():
+                        ts = r["StartDT"]
+                        te = r["EndDT"]
+                        if ts and te and not (te <= s or ts >= e):
+                            conflito = True
+                            break
+                    if not conflito:
+                        week_slots.append({"start": s, "end": e})
+                        set_week_availability(user_id, week_start, week_slots)
                         safe_rerun()
 
-                # Clique em treino -> pop-up sincronizado com df
+            # eventChange (FullCalendar v5+) -> drag/resize
+            if cb == "eventChange" and "eventChange" in cal_state:
+                ev_change = cal_state["eventChange"]
+                event_obj = ev_change.get("event") or {}
+                update_event_from_calendar_event(event_obj)
+
+            # Suporte adicional se versão emitir eventDrop/eventResize
+            if "eventDrop" in cal_state:
+                evd = cal_state["eventDrop"].get("event", {})
+                update_event_from_calendar_event(evd)
+
+            if "eventResize" in cal_state:
+                evr = cal_state["eventResize"].get("event", {})
+                update_event_from_calendar_event(evr)
+
+            # eventClick -> popup treino / remover Livre
+            if cb == "eventClick" and "eventClick" in cal_state:
+                ev = cal_state["eventClick"]["event"]
+                ext = ev.get("extendedProps", {}) or {}
+                etype = ext.get("type")
+
+                # Clique em Livre -> remove slot
+                if etype == "free":
+                    s = parse_iso(ev.get("start"))
+                    e = parse_iso(ev.get("end"))
+                    new_slots = [
+                        sl for sl in week_slots
+                        if not (sl["start"] == s and sl["end"] == e)
+                    ]
+                    set_week_availability(user_id, week_start, new_slots)
+                    safe_rerun()
+
+                # Clique em treino -> popup baseado no df ATUALIZADO
                 if etype == "treino":
-                    uid = ext.get("uid") or ev_data.get("id")
-                    if uid:
-                        df_current = st.session_state["df"].copy()
-                        mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
-                        if mask.any():
-                            idx = df_current[mask].index[0]
-                            r = df_current.loc[idx]
+                    uid = ext.get("uid") or ev.get("id")
+                    df_current = st.session_state["df"].copy()
+                    mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
+                    if not mask.any():
+                        st.error("Treino não encontrado.")
+                    else:
+                        idx = df_current[mask].index[0]
+                        r = df_current.loc[idx]
 
-                            st.markdown("---")
-                            with st.container(border=True):
-                                st.markdown("### 📝 Detalhes do treino")
+                        st.markdown("---")
+                        with st.container(border=True):
+                            st.markdown("### 📝 Detalhes do treino")
 
-                                start_dt = parse_iso(r.get("Start", "")) or datetime.combine(r["Data"], time(6, 0))
-                                end_dt = parse_iso(r.get("End", "")) or (start_dt + timedelta(minutes=DEFAULT_TRAINING_DURATION_MIN))
-                                dur_min = int((end_dt - start_dt).total_seconds() / 60)
+                            start_dt = parse_iso(r.get("Start", "")) or datetime.combine(r["Data"], time(6, 0))
+                            end_dt = parse_iso(r.get("End", "")) or (start_dt + timedelta(minutes=DEFAULT_TRAINING_DURATION_MIN))
+                            dur_min = int((end_dt - start_dt).total_seconds() / 60)
 
-                                current_mod = r.get("Modalidade", "Corrida")
-                                mod_options = MODALIDADES + ["Descanso"]
-                                if current_mod not in mod_options:
-                                    current_mod = "Corrida"
+                            current_mod = r.get("Modalidade", "Corrida")
+                            mod_options = MODALIDADES + ["Descanso"]
+                            if current_mod not in mod_options:
+                                current_mod = "Corrida"
 
-                                new_mod = st.selectbox(
-                                    "Modalidade realizada",
-                                    options=mod_options,
-                                    index=mod_options.index(current_mod),
-                                    key=f"mod_{uid}",
-                                )
+                            new_mod = st.selectbox(
+                                "Modalidade realizada",
+                                options=mod_options,
+                                index=mod_options.index(current_mod),
+                                key=f"mod_{uid}",
+                            )
 
-                                tipos_opcoes = TIPOS_MODALIDADE.get(new_mod, ["Treino"])
-                                current_tipo = r.get("Tipo de Treino", tipos_opcoes[0] if tipos_opcoes else "")
-                                if current_tipo not in tipos_opcoes:
-                                    current_tipo = tipos_opcoes[0] if tipos_opcoes else ""
+                            tipos_opcoes = TIPOS_MODALIDADE.get(new_mod, ["Treino"])
+                            current_tipo = r.get("Tipo de Treino", tipos_opcoes[0] if tipos_opcoes else "")
+                            if current_tipo not in tipos_opcoes:
+                                current_tipo = tipos_opcoes[0] if tipos_opcoes else ""
 
-                                new_tipo = st.selectbox(
-                                    "Tipo de treino",
-                                    options=tipos_opcoes,
-                                    index=tipos_opcoes.index(current_tipo) if current_tipo in tipos_opcoes else 0,
-                                    key=f"tipo_{uid}",
-                                )
+                            new_tipo = st.selectbox(
+                                "Tipo de treino",
+                                options=tipos_opcoes,
+                                index=tipos_opcoes.index(current_tipo) if current_tipo in tipos_opcoes else 0,
+                                key=f"tipo_{uid}",
+                            )
 
-                                unit = UNITS_ALLOWED.get(new_mod, r.get("Unidade", ""))
-                                default_vol = float(r.get("Volume", 0.0) or 0.0)
-                                new_vol = st.number_input(
-                                    f"Volume ({unit})",
-                                    min_value=0.0,
-                                    value=default_vol,
-                                    step=_unit_step(unit),
-                                    key=f"vol_{uid}",
-                                )
+                            unit = UNITS_ALLOWED.get(new_mod, r.get("Unidade", ""))
+                            default_vol = float(r.get("Volume", 0.0) or 0.0)
+                            new_vol = st.number_input(
+                                f"Volume ({unit})",
+                                min_value=0.0,
+                                value=default_vol,
+                                step=_unit_step(unit),
+                                key=f"vol_{uid}",
+                            )
 
-                                st.markdown(
-                                    f"📅 **{start_dt.strftime('%d/%m/%Y')}** | "
-                                    f"⏰ {start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}"
-                                )
+                            st.markdown(
+                                f"📅 **{start_dt.strftime('%d/%m/%Y')}** | "
+                                f"⏰ {start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}"
+                            )
 
-                                col_dt1, col_dt2 = st.columns(2)
-                                new_date = col_dt1.date_input(
-                                    "Data do treino",
-                                    value=start_dt.date(),
-                                    key=f"dt_{uid}",
-                                )
-                                new_time = col_dt2.time_input(
-                                    "Horário de início",
-                                    value=start_dt.time(),
-                                    key=f"tm_{uid}",
-                                )
-                                new_dur = st.number_input(
-                                    "Duração (min)",
-                                    min_value=15,
-                                    max_value=300,
-                                    value=dur_min,
-                                    step=5,
-                                    key=f"dur_{uid}",
-                                )
+                            col_dt1, col_dt2 = st.columns(2)
+                            new_date = col_dt1.date_input(
+                                "Data do treino",
+                                value=start_dt.date(),
+                                key=f"dt_{uid}",
+                            )
+                            new_time = col_dt2.time_input(
+                                "Horário de início",
+                                value=start_dt.time(),
+                                key=f"tm_{uid}",
+                            )
+                            new_dur = st.number_input(
+                                "Duração (min)",
+                                min_value=15,
+                                max_value=300,
+                                value=dur_min,
+                                step=5,
+                                key=f"dur_{uid}",
+                            )
 
-                                new_start = datetime.combine(new_date, new_time)
-                                new_end = new_start + timedelta(minutes=int(new_dur))
+                            new_start = datetime.combine(new_date, new_time)
+                            new_end = new_start + timedelta(minutes=int(new_dur))
 
-                                new_rpe = st.slider(
-                                    "RPE (esforço percebido)",
-                                    0, 10,
-                                    int(r.get("RPE", 0) or 0),
-                                    key=f"rpe_{uid}",
-                                )
+                            new_rpe = st.slider(
+                                "RPE (esforço percebido)",
+                                0, 10,
+                                int(r.get("RPE", 0) or 0),
+                                key=f"rpe_{uid}",
+                            )
 
-                                new_obs = st.text_area(
-                                    "Comentário rápido",
-                                    value=str(r.get("Observações", "")),
-                                    key=f"obs_{uid}",
-                                )
+                            new_obs = st.text_area(
+                                "Comentário rápido",
+                                value=str(r.get("Observações", "")),
+                                key=f"obs_{uid}",
+                            )
 
-                                col_feito, col_nao, col_salvar = st.columns(3)
+                            col_feito, col_nao, col_salvar = st.columns(3)
 
-                                def apply_update(status_override=None):
-                                    df_upd = st.session_state["df"].copy()
-                                    mask2 = (df_upd["UserID"] == user_id) & (df_upd["UID"] == uid)
-                                    if not mask2.any():
-                                        return
-                                    i2 = df_upd[mask2].index[0]
-                                    old_row = df_upd.loc[i2].copy()
+                            def apply_update(status_override=None):
+                                df_upd = st.session_state["df"].copy()
+                                mask2 = (df_upd["UserID"] == user_id) & (df_upd["UID"] == uid)
+                                if not mask2.any():
+                                    return
+                                i2 = df_upd[mask2].index[0]
+                                old_row = df_upd.loc[i2].copy()
 
-                                    df_upd.at[i2, "Modalidade"] = new_mod
-                                    df_upd.at[i2, "Tipo de Treino"] = new_tipo
-                                    df_upd.at[i2, "Volume"] = new_vol
-                                    df_upd.at[i2, "Unidade"] = UNITS_ALLOWED.get(new_mod, old_row.get("Unidade", ""))
+                                df_upd.at[i2, "Modalidade"] = new_mod
+                                df_upd.at[i2, "Tipo de Treino"] = new_tipo
+                                df_upd.at[i2, "Volume"] = new_vol
+                                df_upd.at[i2, "Unidade"] = UNITS_ALLOWED.get(new_mod, old_row.get("Unidade", ""))
 
-                                    df_upd.at[i2, "Start"] = new_start.isoformat()
-                                    df_upd.at[i2, "End"] = new_end.isoformat()
-                                    df_upd.at[i2, "Data"] = new_start.date()
-                                    df_upd.at[i2, "WeekStart"] = monday_of_week(new_start.date())
+                                df_upd.at[i2, "Start"] = new_start.isoformat()
+                                df_upd.at[i2, "End"] = new_end.isoformat()
+                                df_upd.at[i2, "Data"] = new_start.date()
+                                df_upd.at[i2, "WeekStart"] = monday_of_week(new_start.date())
 
-                                    df_upd.at[i2, "RPE"] = new_rpe
-                                    df_upd.at[i2, "Observações"] = new_obs
+                                df_upd.at[i2, "RPE"] = new_rpe
+                                df_upd.at[i2, "Observações"] = new_obs
 
-                                    if status_override is not None:
-                                        df_upd.at[i2, "Status"] = status_override
+                                if status_override is not None:
+                                    df_upd.at[i2, "Status"] = status_override
 
-                                    df_upd.at[i2, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
-                                    df_upd.at[i2, "ChangeLog"] = append_changelog(old_row, df_upd.loc[i2])
+                                df_upd.at[i2, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
+                                df_upd.at[i2, "ChangeLog"] = append_changelog(old_row, df_upd.loc[i2])
 
-                                    save_user_df(user_id, df_upd)
+                                save_user_df(user_id, df_upd)
 
-                                    ws_old = monday_of_week(old_row["Data"])
-                                    ws_new = monday_of_week(new_start.date())
-                                    update_availability_from_current_week(user_id, ws_old)
-                                    update_availability_from_current_week(user_id, ws_new)
+                                ws_old = monday_of_week(old_row["Data"])
+                                ws_new = monday_of_week(new_start.date())
+                                update_availability_from_current_week(user_id, ws_old)
+                                update_availability_from_current_week(user_id, ws_new)
 
-                                    safe_rerun()
+                                safe_rerun()
 
-                                if col_feito.button("✅ FEITO", key=f"feito_{uid}"):
-                                    apply_update("Realizado")
-                                if col_nao.button("❌ NÃO FEITO", key=f"naofeito_{uid}"):
-                                    apply_update("Cancelado")
-                                if col_salvar.button("💾 Salvar", key=f"save_{uid}"):
-                                    apply_update(None)
+                            if col_feito.button("✅ FEITO", key=f"feito_{uid}"):
+                                apply_update("Realizado")
+                            if col_nao.button("❌ NÃO FEITO", key=f"naofeito_{uid}"):
+                                apply_update("Cancelado")
+                            if col_salvar.button("💾 Salvar", key=f"save_{uid}"):
+                                apply_update(None)
 
-        # 5.4 Botão salvar semana
+        # 5.4 Botão salvar semana (reforça persistência)
         st.markdown("---")
         if st.button("💾 Salvar Semana Atual"):
             save_user_df(user_id, st.session_state["df"])
             st.success("Semana atual salva.")
 
-        # 6. Exportações — usam SEMPRE o df canônico
+        # 6. Exportações — usam df canônico (mesmo do calendário)
         st.subheader("5. Exportar Semana Atual")
 
         week_df_can = canonical_week_df(user_id, week_start)
