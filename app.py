@@ -1174,17 +1174,13 @@ def main():
                         else:
                             st.error("Erro ao criar conta.")
         st.stop()
-        
+    user_id = st.session_state["user_id"]
+    user_name = st.session_state.get("user_name", user_id)
     if "all_df" not in st.session_state:
         all_df = load_all()
         st.session_state["all_df"] = all_df
         st.session_state["df"] = all_df[all_df["UserID"] == user_id].copy()
     # CONTEXTO
-    user_id = st.session_state["user_id"]
-    user_name = st.session_state.get("user_name", user_id)
-
-    if "all_df" not in st.session_state:
-        st.session_state["all_df"] = load_all()
     if "df" not in st.session_state:
         all_df = st.session_state["all_df"]
         st.session_state["df"] = all_df[all_df["UserID"] == user_id].copy()
