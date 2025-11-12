@@ -165,8 +165,19 @@ def load_users_df() -> pd.DataFrame:
     return pd.read_csv(USERS_CSV_PATH, dtype=str).fillna("")
 
 def save_users_df(df: pd.DataFrame):
-    df.to_csv(USERS_CSV_PATH, index=False)
-    load_users_df.clear()
+    """Salva os dados atualizados do usuário no CSV."""
+    all_df = load_all()
+
+    # Remove linhas antigas desse usuário
+    all_df = all_df[all_df["UserID"] != user_id]
+
+    # Junta com dados novos
+    updated_df = pd.concat([all_df, user_df], ignore_index=True)
+    updated_df.to_csv(CSV_PATH, index=False)
+
+    # Atualiza session_state
+    st.session_state["all_df"] = updated_df
+    st.session_state["df"] = updated_df[updated_df["UserID"] == user_id].copy()
 
 def get_user(user_id: str):
     df = load_users_df()
