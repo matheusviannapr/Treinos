@@ -1673,7 +1673,6 @@ def main():
                 # Limpa o cache para forçar o recarregamento dos dados a partir do CSV na próxima interação
                 canonical_week_df.clear()
                 load_all.clear()
-                safe_rerun()
 
             except Exception as e:
                 st.error(f"Ocorreu um erro ao salvar a semana: {e}")
