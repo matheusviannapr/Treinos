@@ -1665,34 +1665,15 @@ def main():
         # 5.4 Botão salvar semana (reforça persistência; canonical já lê direto de df)
         st.markdown("---")
         if st.button("💾 Salvar Semana Atual", key="save_week_changes"):
-            try:
-                # CORREÇÃO: Recuperar user_id do session_state para garantir o escopo
-                current_user_id = st.session_state.get("user_id")
-                
-                if not current_user_id:
-                    st.error("Erro: ID do usuário não encontrado na sessão. Por favor, faça login novamente.")
-                    return
+            user_df_to_save = st.session_state["df"].copy()
+            save_user_df(user_id, user_df_to_save)
 
-                # Acessa o DataFrame do usuário que está em memória (com as alterações)
-                user_df_to_save = st.session_state["df"]
-                
-                save_user_df(current_user_id, user_df_to_save)
+            # Recarrega do disco após salvar
+            df_from_csv = load_all()
+            st.session_state["df"] = df_from_csv[df_from_csv["UserID"] == user_id].copy()
+            st.session_state["all_df"] = df_from_csv
 
-                # Após salvar, recarrega CSV para garantir que a memória reflita o disco
-                df_from_csv = load_all()
-                st.session_state["df"] = df_from_csv[df_from_csv["UserID"] == current_user_id].copy()
-                st.session_state["all_df"] = df_from_csv
-                # Salva o DataFrame completo no CSV
-                
-                
-                st.success("As alterações da semana foram salvas com sucesso no CSV!")
-                
-                # Limpa o cache para forçar o recarregamento dos dados a partir do CSV na próxima interação
-                canonical_week_df.clear()
-                load_all.clear()
-
-            except Exception as e:
-                st.error(f"Ocorreu um erro ao salvar a semana: {e}")
+            st.success("Semana salva com sucesso!")
 
 
         # 6. Exportações — usam SEMPRE o df canônico (mesmo do calendário)
