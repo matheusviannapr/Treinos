@@ -1656,20 +1656,20 @@ def main():
         if st.button("💾 Salvar Semana Atual"):
             try:
             # Acessa o DataFrame do usuário que está em memória (com as alterações)
-            user_df_to_save = st.session_state["df"]
-            
-            # Salva o DataFrame completo no CSV
-            save_user_df(user_id, user_df_to_save)
-            
-            st.success("As alterações da semana foram salvas com sucesso no CSV!")
-            
-            # Limpa o cache para forçar o recarregamento dos dados a partir do CSV na próxima interação
-            canonical_week_df.clear()
-            load_all.clear()
-            safe_rerun()
+                _df_to_save = st.session_state["df"]
+                user
+                # Salva o DataFrame completo no CSV
+                save_user_df(user_id, user_df_to_save)
+                
+                st.success("As alterações da semana foram salvas com sucesso no CSV!")
+                
+                # Limpa o cache para forçar o recarregamento dos dados a partir do CSV na próxima interação
+                canonical_week_df.clear()
+                load_all.clear()
+                safe_rerun()
 
-        except Exception as e:
-            st.error(f"Ocorreu um erro ao salvar a semana: {e}")
+            except Exception as e:
+                st.error(f"Ocorreu um erro ao salvar a semana: {e}")
 
 
         # 6. Exportações — usam SEMPRE o df canônico (mesmo do calendário)
