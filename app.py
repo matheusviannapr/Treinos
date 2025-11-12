@@ -28,6 +28,33 @@ import unicodedata
 from streamlit_calendar import calendar  # pip install streamlit-calendar
 
 # ----------------------------------------------------------------------------
+# Correção do Bug: 'values' is not ordered...
+# ----------------------------------------------------------------------------
+
+# Ordem correta das Modalidades
+MODALIDADES_ORDEM = [
+    "Corrida",
+    "Ciclismo",
+    "Natação",
+    "Força/Calistenia",
+    "Mobilidade",
+    "Descanso",
+]
+
+# Tipo categórico ordenado para a coluna 'Modalidade'
+MODALIDADE_DTYPE = pd.CategoricalDtype(
+    categories=MODALIDADES_ORDEM, ordered=True
+)
+
+# Ordem correta dos Status
+STATUS_ORDEM = ["Planejado", "Realizado", "Adiado", "Cancelado"]
+
+# Tipo categórico ordenado para a coluna 'Status'
+STATUS_DTYPE = pd.CategoricalDtype(
+    categories=STATUS_ORDEM, ordered=True
+)
+
+# ----------------------------------------------------------------------------
 # Utilitários básicos
 # ----------------------------------------------------------------------------
 
@@ -1020,6 +1047,18 @@ def calculate_metrics(df: pd.DataFrame):
     weekly["TSB"] = weekly["CTL"] - weekly["ATL"]
     return weekly, df
 
+# ----------------------------------------------------------------------------
+# Funções de Auxílio para Colunas Derivadas (Onde a correção deve ser aplicada)
+# ----------------------------------------------------------------------------
+
+def _add_derived_cols(df: pd.DataFrame) -> pd.DataFrame:
+    # Aplica a correção para Modalidade e Status
+    if "Modalidade" in df.columns:
+        df["Modalidade"] = df["Modalidade"].astype(MODALIDADE_DTYPE)
+    if "Status" in df.columns:
+        df["Status"] = df["Status"].astype(STATUS_DTYPE)
+    return df
+
 def plot_load_chart(weekly_metrics: pd.DataFrame):
     if weekly_metrics.empty:
         st.warning("Sem dados de carga para gerar o gráfico.")
@@ -1706,7 +1745,7 @@ def main():
     # ---------------- DASHBOARD ----------------
     elif menu == "📈 Dashboard":
         st.header("📈 Dashboard de Análise")
-        weekly_metrics, df_with_load = calculate_metrics(df)
+        weekly_metrics, df_with_load = calculate_metrics(_add_derived_cols(df))
         plot_load_chart(weekly_metrics)
 
         st.markdown("---")
