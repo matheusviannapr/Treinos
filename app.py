@@ -1434,6 +1434,48 @@ def main():
             options=options,
             key=f"cal_semana_{get_week_key(week_start)}",
         )
+        if st.session_state.get("calendar_forcar_snapshot", False):
+            eventos = cal_state.get("events", [])
+
+            if eventos:
+                df_current = st.session_state["df"].copy()
+
+                for ev in eventos:
+                    ext = ev.get("extendedProps", {})
+                    if ext.get("type") != "treino":
+                        continue
+
+                    uid = ext.get("uid") or ev.get("id")
+                    if not uid:
+                        continue
+
+                    mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
+                    if not mask.any():
+                        continue
+
+                    idx = df_current[mask].index[0]
+                    old_row = df_current.loc[idx].copy()
+                    start = parse_iso(ev.get("start"))
+                    end = parse_iso(ev.get("end"))
+
+                    df_current.at[idx, "Start"] = start.isoformat()
+                    df_current.at[idx, "End"] = end.isoformat()
+                    df_current.at[idx, "Data"] = start.date()
+                    df_current.at[idx, "WeekStart"] = monday_of_week(start.date())
+                    df_current.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
+                    df_current.at[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
+
+                save_user_df(user_id, df_current)
+
+                df_from_csv = load_all()
+                st.session_state["df"] = df_from_csv[df_from_csv["UserID"] == user_id].copy()
+                st.session_state["all_df"] = df_from_csv
+
+                st.success("✅ Semana salva com os horários visuais do calendário.")
+            else:
+                st.warning("⚠️ Nenhum evento encontrado para salvar.")
+
+            st.session_state["calendar_forcar_snapshot"] = False
 
         if cal_state and "select" in cal_state:
             sel = cal_state["select"]
@@ -1665,45 +1707,9 @@ def main():
         # 5.4 Botão salvar semana (reforça persistência; canonical já lê direto de df)
         st.markdown("---")
         if st.button("💾 Salvar Semana Atual"):
-            if cal_state and cal_state.get("events"):
-                updated_df = st.session_state["df"].copy()
-                eventos = cal_state["events"]
+            st.session_state["calendar_forcar_snapshot"] = True
 
-                for ev in eventos:
-                    ev_uid = ev.get("id") or ev.get("extendedProps", {}).get("uid")
-                    if not ev_uid:
-                        continue
-
-                    start = parse_iso(ev.get("start"))
-                    end = parse_iso(ev.get("end"))
-                    if not start or not end:
-                        continue
-
-                    # Tenta localizar o evento no df pelo UID
-                    mask = (updated_df["UserID"] == user_id) & (updated_df["UID"] == ev_uid)
-                    if not mask.any():
-                        continue
-
-                    idx = updated_df[mask].index[0]
-                    updated_df.at[idx, "Start"] = start.isoformat()
-                    updated_df.at[idx, "End"] = end.isoformat()
-                    updated_df.at[idx, "Data"] = start.date()
-                    updated_df.at[idx, "WeekStart"] = monday_of_week(start.date())
-                    updated_df.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
-
-                # Salva no CSV
-                save_user_df(user_id, updated_df)
-
-                # Recarrega o df do disco
-                df_from_csv = load_all()
-                st.session_state["df"] = df_from_csv[df_from_csv["UserID"] == user_id].copy()
-                st.session_state["all_df"] = df_from_csv
-
-                st.success("✅ Semana salva com os horários do calendário.")
-            else:
-                st.warning("⚠️ Nenhum evento encontrado no calendário para salvar.")
-
-
+            
         # 6. Exportações — usam SEMPRE o df canônico (mesmo do calendário)
         st.subheader("5. Exportar Semana Atual")
 
