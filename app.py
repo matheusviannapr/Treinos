@@ -1665,15 +1665,36 @@ def main():
         # 5.4 Botão salvar semana (reforça persistência; canonical já lê direto de df)
         st.markdown("---")
         if st.button("💾 Salvar Semana Atual", key="save_week_changes"):
-            user_df_to_save = st.session_state["df"].copy()
-            save_user_df(user_id, user_df_to_save)
+            if cal_state and "events" in cal_state:
+                updated_df = st.session_state["df"].copy()
+                for ev in cal_state["events"]:
+                    uid = ev.get("id") or ev.get("extendedProps", {}).get("uid")
+                    start = parse_iso(ev.get("start"))
+                    end = parse_iso(ev.get("end"))
 
-            # Recarrega do disco após salvar
+                    if not uid or not start or not end:
+                        continue
+
+                    mask = (updated_df["UserID"] == user_id) & (updated_df["UID"] == uid)
+                    if mask.any():
+                        idx = updated_df[mask].index[0]
+                        updated_df.at[idx, "Start"] = start.isoformat()
+                        updated_df.at[idx, "End"] = end.isoformat()
+                        updated_df.at[idx, "Data"] = start.date()
+                        updated_df.at[idx, "WeekStart"] = monday_of_week(start.date())
+                        updated_df.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
+
+            else:
+                updated_df = st.session_state["df"].copy()
+
+            save_user_df(user_id, updated_df)
+
+            # Recarrega o CSV para sincronizar tudo
             df_from_csv = load_all()
             st.session_state["df"] = df_from_csv[df_from_csv["UserID"] == user_id].copy()
             st.session_state["all_df"] = df_from_csv
 
-            st.success("Semana salva com sucesso!")
+            st.success("✅ Semana salva com os horários atualizados!")
 
 
         # 6. Exportações — usam SEMPRE o df canônico (mesmo do calendário)
