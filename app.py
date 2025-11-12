@@ -1666,35 +1666,39 @@ def main():
         st.markdown("---")
         if st.button("💾 Salvar Semana Atual", key="save_week_changes"):
             if cal_state and "events" in cal_state:
-                updated_df = st.session_state["df"].copy()
+                updated_rows = []
                 for ev in cal_state["events"]:
-                    uid = ev.get("id") or ev.get("extendedProps", {}).get("uid")
-                    start = parse_iso(ev.get("start"))
-                    end = parse_iso(ev.get("end"))
-
-                    if not uid or not start or not end:
+                    ext = ev.get("extendedProps", {})
+                    if ext.get("type") != "treino":
+                        continue
+                    uid = ext.get("uid") or ev.get("id")
+                    treino_antigo = st.session_state["df"][st.session_state["df"]["UID"] == uid]
+                    if treino_antigo.empty:
                         continue
 
-                    mask = (updated_df["UserID"] == user_id) & (updated_df["UID"] == uid)
-                    if mask.any():
-                        idx = updated_df[mask].index[0]
-                        updated_df.at[idx, "Start"] = start.isoformat()
-                        updated_df.at[idx, "End"] = end.isoformat()
-                        updated_df.at[idx, "Data"] = start.date()
-                        updated_df.at[idx, "WeekStart"] = monday_of_week(start.date())
-                        updated_df.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
+                    row = treino_antigo.iloc[0].copy()
+                    row["Start"] = parse_iso(ev.get("start")).isoformat()
+                    row["End"] = parse_iso(ev.get("end")).isoformat()
+                    row["Data"] = parse_iso(ev.get("start")).date()
+                    row["WeekStart"] = monday_of_week(row["Data"])
+                    row["LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
+                    updated_rows.append(row)
 
-            else:
-                updated_df = st.session_state["df"].copy()
+                if updated_rows:
+                    df_updated = pd.DataFrame(updated_rows)
+                    df_updated["Modalidade"] = df_updated["Modalidade"].astype(MODALIDADE_DTYPE)
+                    df_updated["Status"] = df_updated["Status"].astype(STATUS_DTYPE)
+                    df_updated["Tipo"] = df_updated["Tipo"].astype(TIPO_DTYPE)
+                    df_updated["Unidade"] = df_updated["Unidade"].astype(UNIDADE_DTYPE)
+                    save_user_df(user_id, df_updated)
 
-            save_user_df(user_id, updated_df)
-
-            # Recarrega o CSV para sincronizar tudo
-            df_from_csv = load_all()
-            st.session_state["df"] = df_from_csv[df_from_csv["UserID"] == user_id].copy()
-            st.session_state["all_df"] = df_from_csv
-
-            st.success("✅ Semana salva com os horários atualizados!")
+                    # recarrega sincronizado com CSV
+                    df_from_csv = load_all()
+                    st.session_state["df"] = df_from_csv[df_from_csv["UserID"] == user_id].copy()
+                    st.session_state["all_df"] = df_from_csv
+                    st.success("✅ Semana salva com base no calendário.")
+                else:
+                    st.warning("⚠️ Nenhum evento de treino encontrado para salvar.")
 
 
         # 6. Exportações — usam SEMPRE o df canônico (mesmo do calendário)
