@@ -1434,6 +1434,8 @@ def main():
             options=options,
             key=f"cal_semana_{get_week_key(week_start)}",
         )
+        st.session_state["calendar_snapshot"] = events
+        
         if st.session_state.get("calendar_forcar_snapshot", False):
             eventos = cal_state.get("events", [])
 
@@ -1709,7 +1711,7 @@ def main():
         if st.button("💾 Salvar Semana Atual"):
             st.session_state["calendar_forcar_snapshot"] = True
 
-            
+
         # 6. Exportações — usam SEMPRE o df canônico (mesmo do calendário)
         st.subheader("5. Exportar Semana Atual")
 
