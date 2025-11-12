@@ -1356,7 +1356,7 @@ def main():
             user_df = st.session_state["df"]
             others = user_df[user_df["WeekStart"] != week_start]
             user_df_new = pd.concat([others, new_week_df], ignore_index=True)
-            save_user_df(user_id, user_df_new)
+            save_users_df(user_id, user_df_new)
             st.success("Semana gerada e salva!")
             canonical_week_df.clear()
             safe_rerun()
@@ -1469,7 +1469,7 @@ def main():
                     df_current.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
                     df_current.at[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
 
-                save_user_df(user_id, df_current)
+                save_users_df(user_id, df_current)
 
                 df_from_csv = load_all()
                 st.session_state["df"] = df_from_csv[df_from_csv["UserID"] == user_id].copy()
@@ -1691,7 +1691,7 @@ def main():
                             df_upd.loc[i2, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
                             df_upd.loc[i2, "ChangeLog"] = append_changelog(old_row, df_upd.loc[i2])
 
-                            save_user_df(user_id, df_upd)
+                            save_users_df(user_id, df_upd)
 
                             ws_old = monday_of_week(old_row["Data"]) if not isinstance(old_row["Data"], str) else monday_of_week(datetime.fromisoformat(old_row["Data"]).date())
                             ws_new = monday_of_week(new_start.date())
@@ -1743,7 +1743,7 @@ def main():
                     df_current.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
                     df_current.at[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
 
-                save_user_df(user_id, df_current)
+                save_users_df(user_id, df_current)
                 st.session_state["df"] = df_current
                 st.success("✅ Semana salva com sucesso!")
 
@@ -1847,7 +1847,7 @@ def main():
                 ]
                 
                 final_df = pd.concat([df_outside_cycle, new_cycle_df], ignore_index=True)
-                save_user_df(user_id, final_df)
+                save_users_df(user_id, final_df)
                 st.success(f"{num_weeks} semanas de treino geradas e salvas!")
                 canonical_week_df.clear()
                 safe_rerun()
