@@ -1174,7 +1174,11 @@ def main():
                         else:
                             st.error("Erro ao criar conta.")
         st.stop()
-
+        
+    if "all_df" not in st.session_state:
+        all_df = load_all()
+        st.session_state["all_df"] = all_df
+        st.session_state["df"] = all_df[all_df["UserID"] == user_id].copy()
     # CONTEXTO
     user_id = st.session_state["user_id"]
     user_name = st.session_state.get("user_name", user_id)
@@ -1665,8 +1669,14 @@ def main():
                 # Acessa o DataFrame do usuário que está em memória (com as alterações)
                 user_df_to_save = st.session_state["df"]
                 
-                # Salva o DataFrame completo no CSV
                 save_user_df(current_user_id, user_df_to_save)
+
+                # Após salvar, recarrega CSV para garantir que a memória reflita o disco
+                df_from_csv = load_all()
+                st.session_state["df"] = df_from_csv[df_from_csv["UserID"] == current_user_id].copy()
+                st.session_state["all_df"] = df_from_csv
+                # Salva o DataFrame completo no CSV
+                
                 
                 st.success("As alterações da semana foram salvas com sucesso no CSV!")
                 
