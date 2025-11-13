@@ -164,7 +164,28 @@ def load_users_df() -> pd.DataFrame:
     init_users_if_needed()
     return pd.read_csv(USERS_CSV_PATH, dtype=str).fillna("")
 
-def save_users_df(df: pd.DataFrame):
+def save_user_df(user_id: str, user_df: pd.DataFrame):
+    """Salva os treinos de um usuário no CSV (treinos.csv) e atualiza o estado."""
+    all_df = load_all()
+
+    # Remove dados antigos desse usuário
+    all_df = all_df[all_df["UserID"] != user_id]
+
+    # Garante consistência de colunas
+    for col in SCHEMA_COLS:
+        if col not in user_df.columns:
+            user_df[col] = ""
+
+    # Junta com dados novos
+    updated_df = pd.concat([all_df, user_df[SCHEMA_COLS]], ignore_index=True)
+
+    # Grava no CSV
+    updated_df.to_csv(CSV_PATH, index=False)
+
+    # Atualiza caches e sessão
+    load_all.clear()
+    st.session_state["all_df"] = updated_df
+    st.session_state["df"] = updated_df[updated_df["UserID"] == user_id].copy()
     """Salva os dados atualizados do usuário no CSV."""
     all_df = load_all()
 
