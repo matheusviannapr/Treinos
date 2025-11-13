@@ -164,46 +164,43 @@ def load_users_df() -> pd.DataFrame:
     init_users_if_needed()
     return pd.read_csv(USERS_CSV_PATH, dtype=str).fillna("")
 
-def save_user_df(user_id: str, user_df: pd.DataFrame):
-    """Salva os treinos de um usuário no CSV (treinos.csv) e atualiza o estado."""
+def save_users_df(user_id: str, user_df: pd.DataFrame):
     all_df = load_all()
 
-    # Remove dados antigos desse usuário
-    all_df = all_df[all_df["UserID"] != user_id]
-
-    # Garante consistência de colunas
+    # Garante colunas obrigatórias
     for col in SCHEMA_COLS:
         if col not in user_df.columns:
             user_df[col] = ""
 
-    # Junta com dados novos
-    updated_df = pd.concat([all_df, user_df[SCHEMA_COLS]], ignore_index=True)
+    # Garante UserID/UID
+    if "UserID" not in user_df.columns:
+        user_df["UserID"] = user_id
+    else:
+        user_df.loc[user_df["UserID"] == "", "UserID"] = user_id
+    if "UID" not in user_df.columns:
+        user_df["UID"] = ""
+    for i, r in user_df[user_df["UID"] == ""].iterrows():
+        user_df.at[i, "UID"] = generate_uid(user_id)
 
-    # Grava no CSV
-    updated_df.to_csv(CSV_PATH, index=False)
+    others = all_df[all_df["UserID"] != user_id]
+    merged = pd.concat([others, user_df[SCHEMA_COLS]], ignore_index=True)
 
-    # Atualiza caches e sessão
-    load_all.clear()
-    st.session_state["all_df"] = updated_df
-    st.session_state["df"] = updated_df[updated_df["UserID"] == user_id].copy()
-    """Salva os dados atualizados do usuário no CSV."""
-    all_df = load_all()
+    save_all(merged)  # escreve em treinos.csv e limpa cache
 
-    # Remove linhas antigas desse usuário
-    all_df = all_df[all_df["UserID"] != user_id]
-
-    # Junta com dados novos
-    updated_df = pd.concat([all_df, user_df], ignore_index=True)
-    updated_df.to_csv(CSV_PATH, index=False)
-
-    # Atualiza session_state
-    st.session_state["all_df"] = updated_df
-    st.session_state["df"] = updated_df[updated_df["UserID"] == user_id].copy()
+    st.session_state["all_df"] = merged
+    st.session_state["df"] = merged[merged["UserID"] == user_id].copy()
 
 def get_user(user_id: str):
     df = load_users_df()
     row = df[df["user_id"] == user_id]
     return row.iloc[0] if not row.empty else None
+
+def save_users_book(df_users: pd.DataFrame):
+    """Salva APENAS a base de usuários em usuarios.csv."""
+    ensure_dirs()
+    df_out = df_users.copy()
+    df_out.to_csv(USERS_CSV_PATH, index=False)
+    load_users_df.clear()
 
 def create_user(user_id: str, nome: str) -> bool:
     df = load_users_df()
@@ -215,7 +212,7 @@ def create_user(user_id: str, nome: str) -> bool:
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }])
     df = pd.concat([df, new_row], ignore_index=True)
-    save_users_df(df)
+    save_users_book(df)
     return True
 
 def logout():
@@ -288,7 +285,7 @@ def generate_uid(user_id: str) -> str:
     rand = np.random.randint(1000, 9999)
     return f"{user_id}-{ts}-{rand}"
 
-def save_users_df(user_id: str, user_df: pd.DataFrame):
+def save_user_df(user_id: str, user_df: pd.DataFrame):
     all_df = load_all()
 
     if "UserID" not in user_df.columns:
@@ -1377,7 +1374,7 @@ def main():
             user_df = st.session_state["df"]
             others = user_df[user_df["WeekStart"] != week_start]
             user_df_new = pd.concat([others, new_week_df], ignore_index=True)
-            save_users_df(user_id, user_df_new)
+            save_user_df(user_id, user_df_new)
             st.success("Semana gerada e salva!")
             canonical_week_df.clear()
             safe_rerun()
@@ -1490,7 +1487,7 @@ def main():
                     df_current.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
                     df_current.at[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
 
-                save_users_df(user_id, df_current)
+                save_user_df(user_id, df_current)
 
                 df_from_csv = load_all()
                 st.session_state["df"] = df_from_csv[df_from_csv["UserID"] == user_id].copy()
@@ -1712,7 +1709,7 @@ def main():
                             df_upd.loc[i2, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
                             df_upd.loc[i2, "ChangeLog"] = append_changelog(old_row, df_upd.loc[i2])
 
-                            save_users_df(user_id, df_upd)
+                            save_user_df(user_id, df_upd)
 
                             ws_old = monday_of_week(old_row["Data"]) if not isinstance(old_row["Data"], str) else monday_of_week(datetime.fromisoformat(old_row["Data"]).date())
                             ws_new = monday_of_week(new_start.date())
@@ -1764,7 +1761,7 @@ def main():
                     df_current.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
                     df_current.at[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
 
-                save_users_df(user_id, df_current)
+                save_user_df(user_id, df_current)
                 st.session_state["df"] = df_current
                 st.success("✅ Semana salva com sucesso!")
 
@@ -1868,7 +1865,7 @@ def main():
                 ]
                 
                 final_df = pd.concat([df_outside_cycle, new_cycle_df], ignore_index=True)
-                save_users_df(user_id, final_df)
+                save_user_df(user_id, final_df)
                 st.success(f"{num_weeks} semanas de treino geradas e salvas!")
                 canonical_week_df.clear()
                 safe_rerun()
