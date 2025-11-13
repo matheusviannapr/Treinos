@@ -288,7 +288,7 @@ def generate_uid(user_id: str) -> str:
     rand = np.random.randint(1000, 9999)
     return f"{user_id}-{ts}-{rand}"
 
-def save_user_df(user_id: str, user_df: pd.DataFrame):
+def save_users_df(user_id: str, user_df: pd.DataFrame):
     all_df = load_all()
 
     if "UserID" not in user_df.columns:
