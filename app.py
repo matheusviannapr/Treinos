@@ -406,6 +406,12 @@ def _to_wall_naive(dt: datetime) -> datetime | None:
         return None
     return dt.replace(tzinfo=None) if getattr(dt, "tzinfo", None) else dt
 
+
+def to_naive(dt):
+    if dt is None:
+        return None
+    return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
+
 def parse_iso(dt_str: str):
     if not dt_str:
         return None
