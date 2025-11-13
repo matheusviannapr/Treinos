@@ -367,8 +367,8 @@ def set_week_availability(user_id: str, week_start: date, slots):
         rows.append({
             "UserID": user_id,
             "WeekStart": week_start,
-            "Start": s["start"],
-            "End": s["end"],
+            "Start": _to_wall_naive(s["start"]),
+            "End": _to_wall_naive(s["end"]),
         })
     if rows:
         all_df = pd.concat([all_df, pd.DataFrame(rows)], ignore_index=True)
@@ -400,13 +400,11 @@ def normalize_volume_for_load(mod: str, vol: float, unit: str) -> float:
 def week_slice(df: pd.DataFrame, start: date) -> pd.DataFrame:
     end = start + timedelta(days=7)
     return df[(df["Data"] >= start) & (df["Data"] < end)].copy()
-def to_naive(dt):
+def _to_wall_naive(dt: datetime) -> datetime | None:
+    """Remove tzinfo mantendo a HORA VISUAL (sem converter para UTC)."""
     if dt is None:
         return None
-    # Converte para UTC e remove tzinfo para padronizar
-    if dt.tzinfo is not None:
-        return dt.astimezone(timezone.utc).replace(tzinfo=None)
-    return dt
+    return dt.replace(tzinfo=None) if getattr(dt, "tzinfo", None) else dt
 
 def parse_iso(dt_str: str):
     if not dt_str:
@@ -415,7 +413,7 @@ def parse_iso(dt_str: str):
         dt = datetime.fromisoformat(dt_str.replace("Z", ""))  # pode vir com Z/+00:00
     except Exception:
         return None
-    return to_naive(dt)
+    return _to_wall_naive(dt)
 
 def append_changelog(old_row: pd.Series, new_row: pd.Series) -> str:
     try:
@@ -1569,7 +1567,7 @@ def main():
             canonical_week_df.clear()
             st.toast(f"Treino {uid} {action_label} e salvo.", icon="💾")
 
-            
+
         if cal_state and "eventDrop" in cal_state:
             handle_move_or_resize(cal_state["eventDrop"], "movido")
 
