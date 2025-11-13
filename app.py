@@ -32,7 +32,7 @@
 import os
 import json
 import math
-from datetime import datetime, date, timedelta, time
+from datetime import datetime, date, timedelta, time, timezone
 
 import pandas as pd
 import numpy as np
@@ -400,14 +400,22 @@ def normalize_volume_for_load(mod: str, vol: float, unit: str) -> float:
 def week_slice(df: pd.DataFrame, start: date) -> pd.DataFrame:
     end = start + timedelta(days=7)
     return df[(df["Data"] >= start) & (df["Data"] < end)].copy()
+def to_naive(dt):
+    if dt is None:
+        return None
+    # Converte para UTC e remove tzinfo para padronizar
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 def parse_iso(dt_str: str):
     if not dt_str:
         return None
     try:
-        return datetime.fromisoformat(dt_str.replace("Z", ""))
+        dt = datetime.fromisoformat(dt_str.replace("Z", ""))  # pode vir com Z/+00:00
     except Exception:
         return None
+    return to_naive(dt)
 
 def append_changelog(old_row: pd.Series, new_row: pd.Series) -> str:
     try:
@@ -724,17 +732,25 @@ def subtract_trainings_from_slots(week_df: pd.DataFrame, slots):
     for _, r in week_df.iterrows():
         if r["Modalidade"] == "Descanso":
             continue
-        s = parse_iso(r.get("Start", ""))
-        e = parse_iso(r.get("End", ""))
+        s = to_naive(parse_iso(r.get("Start", "")))
+        e = to_naive(parse_iso(r.get("End", "")))
         if s and e and e > s:
             trainings.append({"start": s, "end": e})
 
-    if not trainings or not slots:
-        return normalize_slots(slots)
+    # slots -> garantir naive também
+    norm_slots = []
+    for sl in (slots or []):
+        s = to_naive(sl.get("start"))
+        e = to_naive(sl.get("end"))
+        if s and e and e > s:
+            norm_slots.append({"start": s, "end": e})
+
+    if not trainings or not norm_slots:
+        return normalize_slots(norm_slots)
 
     trainings = sorted(trainings, key=lambda x: x["start"])
     new_slots = []
-    for slot in normalize_slots(slots):
+    for slot in normalize_slots(norm_slots):
         segs = [slot]
         for t in trainings:
             tmp = []
@@ -747,12 +763,12 @@ def subtract_trainings_from_slots(week_df: pd.DataFrame, slots):
                     if ts <= s and te >= e:
                         pass
                     elif ts <= s < te < e:
-                        tmp.append({"start": te, "end": e})
+                        tmp.append({"start": to_naive(te), "end": e})
                     elif s < ts < e <= te:
-                        tmp.append({"start": s, "end": ts})
+                        tmp.append({"start": s, "end": to_naive(ts)})
                     elif s < ts and te < e:
-                        tmp.append({"start": s, "end": ts})
-                        tmp.append({"start": te, "end": e})
+                        tmp.append({"start": s, "end": to_naive(ts)})
+                        tmp.append({"start": to_naive(te), "end": e})
             segs = tmp
         new_slots.extend(segs)
     return normalize_slots(new_slots)
@@ -1729,41 +1745,11 @@ def main():
         # 5.4 Botão salvar semana (reforça persistência; canonical já lê direto de df)
         st.markdown("---")
         if st.button("💾 Salvar Semana Atual"):
-            eventos = st.session_state.get("calendar_snapshot", [])
-
-            if not eventos:
-                st.warning("⚠️ Nenhum evento encontrado para salvar.")
-            else:
-                df_current = st.session_state["df"].copy()
-
-                for ev in eventos:
-                    ext = ev.get("extendedProps", {})
-                    if ext.get("type") != "treino":
-                        continue
-
-                    uid = ext.get("uid") or ev.get("id")
-                    if not uid:
-                        continue
-
-                    mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
-                    if not mask.any():
-                        continue
-
-                    idx = df_current[mask].index[0]
-                    old_row = df_current.loc[idx].copy()
-                    start = parse_iso(ev.get("start"))
-                    end = parse_iso(ev.get("end"))
-
-                    df_current.at[idx, "Start"] = start.isoformat()
-                    df_current.at[idx, "End"] = end.isoformat()
-                    df_current.at[idx, "Data"] = start.date()
-                    df_current.at[idx, "WeekStart"] = monday_of_week(start.date())
-                    df_current.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
-                    df_current.at[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
-
-                save_user_df(user_id, df_current)
-                st.session_state["df"] = df_current
-                st.success("✅ Semana salva com sucesso!")
+            # Persiste exatamente o que está no session_state (já atualizado pelos handlers)
+            df_current = st.session_state["df"].copy()
+            save_user_df(user_id, df_current)   # <- grava em treinos.csv
+            canonical_week_df.clear()
+            st.success("✅ Semana salva com sucesso!")
 
 
         # 6. Exportações — usam SEMPRE o df canônico (mesmo do calendário)
