@@ -33,6 +33,7 @@ import os
 import json
 import math
 from datetime import datetime, date, timedelta, time, timezone
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
@@ -57,13 +58,44 @@ def safe_rerun():
             except Exception:
                 pass
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
-EXPORT_DIR = os.path.join(BASE_DIR, "exports")
-CSV_PATH = os.path.join(DATA_DIR, "treinos.csv")
-USERS_CSV_PATH = os.path.join(DATA_DIR, "usuarios.csv")
-AVAIL_CSV_PATH = os.path.join(DATA_DIR, "availability.csv")
-TIMEPATTERN_CSV_PATH = os.path.join(DATA_DIR, "time_patterns.csv")
+def resolve_project_root() -> Path:
+    """Resolve o diretório raiz do projeto, mesmo quando o Streamlit duplica o script."""
+
+    candidate_paths = []
+
+    if "__file__" in globals():
+        candidate_paths.append(Path(__file__).resolve())
+
+    streamlit_script = os.environ.get("STREAMLIT_SCRIPT_RUNNER_FILENAME") or os.environ.get(
+        "STREAMLIT_SCRIPT_PATH"
+    )
+    if streamlit_script:
+        candidate_paths.append(Path(streamlit_script).resolve())
+
+    candidate_paths.append(Path.cwd())
+
+    def iter_parents(path: Path):
+        yield path
+        yield from path.parents
+
+    for path in candidate_paths:
+        for parent in iter_parents(path):
+            data_dir = parent / "data"
+            if data_dir.is_dir() and (data_dir / "treinos.csv").exists():
+                return parent
+            if (parent / ".git").exists():
+                return parent
+
+    return candidate_paths[0]
+
+
+PROJECT_ROOT = resolve_project_root()
+DATA_DIR = PROJECT_ROOT / "data"
+EXPORT_DIR = PROJECT_ROOT / "exports"
+CSV_PATH = DATA_DIR / "treinos.csv"
+USERS_CSV_PATH = DATA_DIR / "usuarios.csv"
+AVAIL_CSV_PATH = DATA_DIR / "availability.csv"
+TIMEPATTERN_CSV_PATH = DATA_DIR / "time_patterns.csv"
 
 SCHEMA_COLS = [
     "UserID",
@@ -148,8 +180,8 @@ DEFAULT_TRAINING_DURATION_MIN = 60
 # ----------------------------------------------------------------------------
 
 def ensure_dirs():
-    os.makedirs(DATA_DIR, exist_ok=True)
-    os.makedirs(EXPORT_DIR, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ----------------------------------------------------------------------------
 # Usuários
@@ -157,7 +189,7 @@ def ensure_dirs():
 
 def init_users_if_needed():
     ensure_dirs()
-    if not os.path.exists(USERS_CSV_PATH):
+    if not USERS_CSV_PATH.exists():
         df = pd.DataFrame(columns=["user_id", "nome", "created_at"])
         df.to_csv(USERS_CSV_PATH, index=False)
 
@@ -232,7 +264,7 @@ def logout():
 
 def init_csv_if_needed():
     ensure_dirs()
-    if not os.path.exists(CSV_PATH):
+    if not CSV_PATH.exists():
         df = pd.DataFrame(columns=SCHEMA_COLS)
         df.to_csv(CSV_PATH, index=False)
 
@@ -313,7 +345,7 @@ def save_user_df(user_id: str, user_df: pd.DataFrame):
 
 def init_availability_if_needed():
     ensure_dirs()
-    if not os.path.exists(AVAIL_CSV_PATH):
+    if not AVAIL_CSV_PATH.exists():
         df = pd.DataFrame(columns=["UserID", "WeekStart", "Start", "End"])
         df.to_csv(AVAIL_CSV_PATH, index=False)
 
@@ -383,7 +415,7 @@ def set_week_availability(user_id: str, week_start: date, slots):
 
 def init_timepattern_if_needed():
     ensure_dirs()
-    if not os.path.exists(TIMEPATTERN_CSV_PATH):
+    if not TIMEPATTERN_CSV_PATH.exists():
         df = pd.DataFrame(columns=["UserID", "PatternJSON"])
         df.to_csv(TIMEPATTERN_CSV_PATH, index=False)
 
