@@ -12,6 +12,7 @@ from sqlalchemy.engine import Engine
 
 load_dotenv()
 
+DATABASE_URL = st.secrets["db"]["url"]
 
 def _extract_url_from_mapping(mapping: Mapping[str, Any]) -> str | None:
     """Extract a database URL from common keys in the provided mapping."""
