@@ -57,8 +57,9 @@ def safe_rerun():
             except Exception:
                 pass
 
-DATA_DIR = "data"
-EXPORT_DIR = "exports"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+EXPORT_DIR = os.path.join(BASE_DIR, "exports")
 CSV_PATH = os.path.join(DATA_DIR, "treinos.csv")
 USERS_CSV_PATH = os.path.join(DATA_DIR, "usuarios.csv")
 AVAIL_CSV_PATH = os.path.join(DATA_DIR, "availability.csv")
