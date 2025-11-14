@@ -7,4 +7,5 @@ matplotlib
 streamlit_calendar
 sqlalchemy
 psycopg[binary]
+psycopg2
 python-dotenv
