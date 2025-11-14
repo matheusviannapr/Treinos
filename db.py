@@ -1,49 +1,26 @@
 import os
-from collections.abc import Mapping
 from contextlib import contextmanager
 from functools import lru_cache
-from typing import Any
 
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.engine.url import make_url
 
 load_dotenv()
 
-DATABASE_URL = st.secrets["db"]["url"]
-
-def _extract_url_from_mapping(mapping: Mapping[str, Any]) -> str | None:
-    """Extract a database URL from common keys in the provided mapping."""
-
-    # Support nested [db] section like the one used by Streamlit secrets.
-    db_section = mapping.get("db")
-    if isinstance(db_section, Mapping):
-        url = db_section.get("url") or db_section.get("DATABASE_URL")
-        if isinstance(url, str) and url:
-            return url
-
-    # Fall back to top-level keys for flexibility.
-    for key in ("DATABASE_URL", "url"):
-        value = mapping.get(key)
-        if isinstance(value, str) and value:
-            return value
-
-    return None
-
 
 def _get_database_url() -> str:
-    """Return the database URL from Streamlit secrets or environment variables."""
-
     secrets_url = None
     try:
-        secrets = getattr(st, "secrets", None)  # type: ignore[attr-defined]
-        if isinstance(secrets, Mapping):
-            secrets_url = _extract_url_from_mapping(secrets)
+        secrets_section = st.secrets.get("db")  # type: ignore[attr-defined]
+        if isinstance(secrets_section, dict):
+            secrets_url = secrets_section.get("url")
     except Exception:
         # st.secrets may not be available outside Streamlit runtime
-        secrets_url = None
+        pass
 
     env_url = os.getenv("DATABASE_URL")
 
@@ -60,7 +37,10 @@ def _get_database_url() -> str:
 def get_engine() -> Engine:
     """Return a cached SQLAlchemy engine."""
     url = _get_database_url()
-    return create_engine(url, pool_pre_ping=True, future=True)
+    parsed = make_url(url)
+    if parsed.drivername == "postgresql":
+        parsed = parsed.set(drivername="postgresql+psycopg")
+    return create_engine(parsed, pool_pre_ping=True, future=True)
 
 
 @contextmanager
