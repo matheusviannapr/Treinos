@@ -169,6 +169,15 @@ def ensure_dirs():
 def initialize_schema(conn: sqlite3.Connection):
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """
+    )
+
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS users (
             user_id TEXT PRIMARY KEY,
             nome TEXT,
@@ -248,11 +257,18 @@ def initialize_schema(conn: sqlite3.Connection):
 
 
 def migrate_from_csv(conn: sqlite3.Connection):
-    def _table_has_data(table: str) -> bool:
-        cur = conn.execute(f"SELECT 1 FROM {table} LIMIT 1")
-        return cur.fetchone() is not None
+    def _already_migrated(key: str) -> bool:
+        cur = conn.execute("SELECT value FROM meta WHERE key = ?", (key,))
+        row = cur.fetchone()
+        return row is not None and str(row["value"]) == "1"
 
-    if os.path.exists(USERS_CSV_PATH) and not _table_has_data("users"):
+    def _mark_migrated(key: str):
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            (key, "1"),
+        )
+
+    if os.path.exists(USERS_CSV_PATH) and not _already_migrated("users"):
         df = pd.read_csv(USERS_CSV_PATH, dtype=str).fillna("")
         if not df.empty:
             records = df.to_dict(orient="records")
@@ -267,8 +283,9 @@ def migrate_from_csv(conn: sqlite3.Connection):
                     for rec in records
                 ],
             )
+        _mark_migrated("users")
 
-    if os.path.exists(CSV_PATH) and not _table_has_data("treinos"):
+    if os.path.exists(CSV_PATH) and not _already_migrated("treinos"):
         df = pd.read_csv(CSV_PATH, dtype=str).fillna("")
         if not df.empty:
             for col in ["Volume", "RPE", "adj"]:
@@ -316,8 +333,9 @@ def migrate_from_csv(conn: sqlite3.Connection):
                     for rec in records
                 ],
             )
+        _mark_migrated("treinos")
 
-    if os.path.exists(AVAIL_CSV_PATH) and not _table_has_data("availability"):
+    if os.path.exists(AVAIL_CSV_PATH) and not _already_migrated("availability"):
         df = pd.read_csv(AVAIL_CSV_PATH, dtype=str).fillna("")
         if not df.empty:
             records = df.to_dict(orient="records")
@@ -336,8 +354,9 @@ def migrate_from_csv(conn: sqlite3.Connection):
                     for rec in records
                 ],
             )
+        _mark_migrated("availability")
 
-    if os.path.exists(TIMEPATTERN_CSV_PATH) and not _table_has_data("time_patterns"):
+    if os.path.exists(TIMEPATTERN_CSV_PATH) and not _already_migrated("time_patterns"):
         df = pd.read_csv(TIMEPATTERN_CSV_PATH, dtype=str).fillna("")
         if not df.empty:
             records = df.to_dict(orient="records")
@@ -354,8 +373,9 @@ def migrate_from_csv(conn: sqlite3.Connection):
                     for rec in records
                 ],
             )
+        _mark_migrated("time_patterns")
 
-    if os.path.exists(PREFERENCES_CSV_PATH) and not _table_has_data("preferences"):
+    if os.path.exists(PREFERENCES_CSV_PATH) and not _already_migrated("preferences"):
         df = pd.read_csv(PREFERENCES_CSV_PATH, dtype=str).fillna("")
         if not df.empty:
             records = df.to_dict(orient="records")
@@ -372,8 +392,9 @@ def migrate_from_csv(conn: sqlite3.Connection):
                     for rec in records
                 ],
             )
+        _mark_migrated("preferences")
 
-    if os.path.exists(DAILY_NOTES_CSV_PATH) and not _table_has_data("daily_notes"):
+    if os.path.exists(DAILY_NOTES_CSV_PATH) and not _already_migrated("daily_notes"):
         df = pd.read_csv(DAILY_NOTES_CSV_PATH, dtype=str).fillna("")
         if not df.empty:
             records = df.to_dict(orient="records")
@@ -392,6 +413,7 @@ def migrate_from_csv(conn: sqlite3.Connection):
                     for rec in records
                 ],
             )
+        _mark_migrated("daily_notes")
 
 
 @st.cache_resource(show_spinner=False)
