@@ -9,6 +9,11 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine.url import make_url
 
+
+class DatabaseConfigError(RuntimeError):
+    """Raised when the Postgres connection string is missing."""
+
+
 load_dotenv()
 
 
@@ -26,9 +31,10 @@ def _get_database_url() -> str:
 
     url = secrets_url or env_url
     if not url:
-        raise RuntimeError(
-            "DATABASE_URL is not configured. Set it in .env for local "
-            "development or in Streamlit secrets under [db]."
+        raise DatabaseConfigError(
+            "DATABASE_URL is not configured. Defina-o em um arquivo .env "
+            "para desenvolvimento local ou em st.secrets['db']['url'] na "
+            "implantação do Streamlit."
         )
     return url
 

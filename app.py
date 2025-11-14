@@ -168,8 +168,21 @@ def ensure_dirs():
 
 def initialize_schema():
     ensure_dirs()
-    db.init_db()
-    migrate_from_csv()
+    try:
+        db.init_db()
+        migrate_from_csv()
+    except db.DatabaseConfigError:
+        st.error("Configuração do banco de dados ausente.")
+        st.info(
+            "Defina a variável DATABASE_URL em um arquivo .env na raiz do projeto "
+            "durante o desenvolvimento ou configure st.secrets['db']['url'] com a "
+            "string de conexão do Neon no Streamlit Cloud."
+        )
+        st.code(
+            """# .env (desenvolvimento)\nDATABASE_URL=postgresql://usuario:senha@host/neondb?sslmode=require\n\n# .streamlit/secrets.toml (produção)\n[db]\nurl = \"postgresql://usuario:senha@host/neondb?sslmode=require\"""",
+            language="toml",
+        )
+        st.stop()
 
 
 def migrate_from_csv():
