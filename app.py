@@ -33,7 +33,6 @@ import os
 import json
 import math
 import calendar as py_calendar
-import sqlite3
 from datetime import datetime, date, timedelta, time, timezone
 
 import pandas as pd
@@ -44,6 +43,8 @@ import matplotlib.pyplot as plt
 import unicodedata
 
 from streamlit_calendar import calendar as st_calendar  # pip install streamlit-calendar
+
+import db
 
 # ----------------------------------------------------------------------------
 # Utilitários básicos
@@ -68,7 +69,6 @@ AVAIL_CSV_PATH = os.path.join(DATA_DIR, "availability.csv")
 TIMEPATTERN_CSV_PATH = os.path.join(DATA_DIR, "time_patterns.csv")
 PREFERENCES_CSV_PATH = os.path.join(DATA_DIR, "preferences.csv")
 DAILY_NOTES_CSV_PATH = os.path.join(DATA_DIR, "daily_notes.csv")
-DB_PATH = os.path.join(DATA_DIR, "treinos.sqlite")
 
 SCHEMA_COLS = [
     "UserID",
@@ -166,120 +166,57 @@ def ensure_dirs():
     os.makedirs(EXPORT_DIR, exist_ok=True)
 
 
-def initialize_schema(conn: sqlite3.Connection):
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS meta (
-            key TEXT PRIMARY KEY,
-            value TEXT
+def initialize_schema():
+    ensure_dirs()
+    try:
+        db.init_db()
+        migrate_from_csv()
+    except db.DatabaseConfigError:
+        st.error("Configuração do banco de dados ausente.")
+        st.info(
+            "Defina a variável DATABASE_URL em um arquivo .env na raiz do projeto "
+            "durante o desenvolvimento ou configure st.secrets['db']['url'] com a "
+            "string de conexão do Neon no Streamlit Cloud."
         )
-        """
-    )
-
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            user_id TEXT PRIMARY KEY,
-            nome TEXT,
-            created_at TEXT
+        st.code(
+            """# .env (desenvolvimento)\nDATABASE_URL=postgresql://usuario:senha@host/neondb?sslmode=require\n\n# .streamlit/secrets.toml (produção)\n[db]\nurl = \"postgresql://usuario:senha@host/neondb?sslmode=require\"""",
+            language="toml",
         )
-        """
-    )
-
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS treinos (
-            "UserID" TEXT NOT NULL,
-            "UID" TEXT PRIMARY KEY,
-            "Data" TEXT,
-            "Start" TEXT,
-            "End" TEXT,
-            "Modalidade" TEXT,
-            "Tipo de Treino" TEXT,
-            "Volume" REAL,
-            "Unidade" TEXT,
-            "RPE" REAL,
-            "Detalhamento" TEXT,
-            "Observações" TEXT,
-            "Status" TEXT,
-            "adj" REAL,
-            "AdjAppliedAt" TEXT,
-            "ChangeLog" TEXT,
-            "LastEditedAt" TEXT,
-            "WeekStart" TEXT
-        )
-        """
-    )
-
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS availability (
-            "UserID" TEXT NOT NULL,
-            "WeekStart" TEXT NOT NULL,
-            "Start" TEXT,
-            "End" TEXT
-        )
-        """
-    )
-
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS time_patterns (
-            "UserID" TEXT PRIMARY KEY,
-            "PatternJSON" TEXT
-        )
-        """
-    )
-
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS preferences (
-            "UserID" TEXT PRIMARY KEY,
-            "PreferencesJSON" TEXT
-        )
-        """
-    )
-
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS daily_notes (
-            "UserID" TEXT NOT NULL,
-            "Date" TEXT NOT NULL,
-            "Note" TEXT,
-            "UpdatedAt" TEXT,
-            PRIMARY KEY ("UserID", "Date")
-        )
-        """
-    )
-
-    migrate_from_csv(conn)
-    conn.commit()
+        st.stop()
 
 
-def migrate_from_csv(conn: sqlite3.Connection):
+def migrate_from_csv():
     def _already_migrated(key: str) -> bool:
-        cur = conn.execute("SELECT value FROM meta WHERE key = ?", (key,))
-        row = cur.fetchone()
-        return row is not None and str(row["value"]) == "1"
+        row = db.fetch_one("SELECT value FROM meta WHERE key = :key", {"key": key})
+        return row is not None and str(row.get("value", "")) == "1"
 
     def _mark_migrated(key: str):
-        conn.execute(
-            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
-            (key, "1"),
+        db.execute(
+            """
+            INSERT INTO meta (key, value)
+            VALUES (:key, :value)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """,
+            {"key": key, "value": "1"},
         )
 
     if os.path.exists(USERS_CSV_PATH) and not _already_migrated("users"):
         df = pd.read_csv(USERS_CSV_PATH, dtype=str).fillna("")
         if not df.empty:
             records = df.to_dict(orient="records")
-            conn.executemany(
-                "INSERT OR REPLACE INTO users (user_id, nome, created_at) VALUES (?, ?, ?)",
+            db.execute_many(
+                """
+                INSERT INTO users (user_id, nome, created_at)
+                VALUES (:user_id, :nome, :created_at)
+                ON CONFLICT (user_id)
+                DO UPDATE SET nome = EXCLUDED.nome, created_at = EXCLUDED.created_at
+                """,
                 [
-                    (
-                        rec.get("user_id", ""),
-                        rec.get("nome", ""),
-                        rec.get("created_at", ""),
-                    )
+                    {
+                        "user_id": rec.get("user_id", ""),
+                        "nome": rec.get("nome", ""),
+                        "created_at": rec.get("created_at", ""),
+                    }
                     for rec in records
                 ],
             )
@@ -295,41 +232,68 @@ def migrate_from_csv(conn: sqlite3.Connection):
             def _normalize_date(val):
                 parsed = pd.to_datetime(val, errors="coerce")
                 if pd.isna(parsed):
-                    return ""
-                return parsed.date().isoformat()
+                    return None
+                return parsed.date()
 
             for col in ["Data", "WeekStart"]:
                 if col in df.columns:
                     df[col] = df[col].apply(_normalize_date)
 
             records = df[SCHEMA_COLS].to_dict(orient="records")
-            conn.executemany(
-                ""
-                "INSERT OR REPLACE INTO treinos (\"UserID\", \"UID\", \"Data\", \"Start\", \"End\", \"Modalidade\", \"Tipo de Treino\", \"Volume\", \"Unidade\", \"RPE\", \"Detalhamento\", \"Observações\", \"Status\", \"adj\", \"AdjAppliedAt\", \"ChangeLog\", \"LastEditedAt\", \"WeekStart\")"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                "",
+            db.execute_many(
+                """
+                INSERT INTO treinos (
+                    "UserID", "UID", "Data", "Start", "End", "Modalidade",
+                    "Tipo de Treino", "Volume", "Unidade", "RPE", "Detalhamento",
+                    "Observações", "Status", "adj", "AdjAppliedAt", "ChangeLog",
+                    "LastEditedAt", "WeekStart"
+                ) VALUES (
+                    :user_id, :uid, :data, :start, :end, :modalidade,
+                    :tipo_treino, :volume, :unidade, :rpe, :detalhamento,
+                    :observacoes, :status, :adj, :adj_applied_at, :changelog,
+                    :last_edited_at, :week_start
+                )
+                ON CONFLICT ("UID") DO UPDATE SET
+                    "UserID" = EXCLUDED."UserID",
+                    "Data" = EXCLUDED."Data",
+                    "Start" = EXCLUDED."Start",
+                    "End" = EXCLUDED."End",
+                    "Modalidade" = EXCLUDED."Modalidade",
+                    "Tipo de Treino" = EXCLUDED."Tipo de Treino",
+                    "Volume" = EXCLUDED."Volume",
+                    "Unidade" = EXCLUDED."Unidade",
+                    "RPE" = EXCLUDED."RPE",
+                    "Detalhamento" = EXCLUDED."Detalhamento",
+                    "Observações" = EXCLUDED."Observações",
+                    "Status" = EXCLUDED."Status",
+                    "adj" = EXCLUDED."adj",
+                    "AdjAppliedAt" = EXCLUDED."AdjAppliedAt",
+                    "ChangeLog" = EXCLUDED."ChangeLog",
+                    "LastEditedAt" = EXCLUDED."LastEditedAt",
+                    "WeekStart" = EXCLUDED."WeekStart"
+                """,
                 [
-                    (
-                        (rec.get("UserID", "") or "default"),
-                        rec.get("UID")
+                    {
+                        "user_id": (rec.get("UserID", "") or "default"),
+                        "uid": rec.get("UID")
                         or generate_uid(rec.get("UserID", "") or "default"),
-                        rec.get("Data", ""),
-                        rec.get("Start", ""),
-                        rec.get("End", ""),
-                        rec.get("Modalidade", ""),
-                        rec.get("Tipo de Treino", ""),
-                        float(rec.get("Volume", 0.0) or 0.0),
-                        rec.get("Unidade", ""),
-                        float(rec.get("RPE", 0.0) or 0.0),
-                        rec.get("Detalhamento", ""),
-                        rec.get("Observações", ""),
-                        rec.get("Status", ""),
-                        float(rec.get("adj", 0.0) or 0.0),
-                        rec.get("AdjAppliedAt", ""),
-                        rec.get("ChangeLog", ""),
-                        rec.get("LastEditedAt", ""),
-                        rec.get("WeekStart", ""),
-                    )
+                        "data": rec.get("Data"),
+                        "start": rec.get("Start") or None,
+                        "end": rec.get("End") or None,
+                        "modalidade": rec.get("Modalidade", ""),
+                        "tipo_treino": rec.get("Tipo de Treino", ""),
+                        "volume": float(rec.get("Volume", 0.0) or 0.0),
+                        "unidade": rec.get("Unidade", ""),
+                        "rpe": float(rec.get("RPE", 0.0) or 0.0),
+                        "detalhamento": rec.get("Detalhamento", ""),
+                        "observacoes": rec.get("Observações", ""),
+                        "status": rec.get("Status", ""),
+                        "adj": float(rec.get("adj", 0.0) or 0.0),
+                        "adj_applied_at": rec.get("AdjAppliedAt", ""),
+                        "changelog": rec.get("ChangeLog", ""),
+                        "last_edited_at": rec.get("LastEditedAt", ""),
+                        "week_start": rec.get("WeekStart"),
+                    }
                     for rec in records
                 ],
             )
@@ -339,18 +303,19 @@ def migrate_from_csv(conn: sqlite3.Connection):
         df = pd.read_csv(AVAIL_CSV_PATH, dtype=str).fillna("")
         if not df.empty:
             records = df.to_dict(orient="records")
-            conn.executemany(
-                ""
-                "INSERT OR REPLACE INTO availability (\"UserID\", \"WeekStart\", \"Start\", \"End\")"
-                " VALUES (?, ?, ?, ?)"
-                "",
+            db.execute_many(
+                """
+                INSERT INTO availability ("UserID", "WeekStart", "Start", "End")
+                VALUES (:user_id, :week_start, :start, :end)
+                ON CONFLICT ("UserID", "WeekStart", "Start", "End") DO NOTHING
+                """,
                 [
-                    (
-                        rec.get("UserID", ""),
-                        rec.get("WeekStart", ""),
-                        rec.get("Start", ""),
-                        rec.get("End", ""),
-                    )
+                    {
+                        "user_id": rec.get("UserID", ""),
+                        "week_start": rec.get("WeekStart", ""),
+                        "start": rec.get("Start", ""),
+                        "end": rec.get("End", ""),
+                    }
                     for rec in records
                 ],
             )
@@ -360,16 +325,17 @@ def migrate_from_csv(conn: sqlite3.Connection):
         df = pd.read_csv(TIMEPATTERN_CSV_PATH, dtype=str).fillna("")
         if not df.empty:
             records = df.to_dict(orient="records")
-            conn.executemany(
-                ""
-                "INSERT OR REPLACE INTO time_patterns (\"UserID\", \"PatternJSON\")"
-                " VALUES (?, ?)"
-                "",
+            db.execute_many(
+                """
+                INSERT INTO time_patterns ("UserID", "PatternJSON")
+                VALUES (:user_id, :pattern_json)
+                ON CONFLICT ("UserID") DO UPDATE SET "PatternJSON" = EXCLUDED."PatternJSON"
+                """,
                 [
-                    (
-                        rec.get("UserID", ""),
-                        rec.get("PatternJSON", ""),
-                    )
+                    {
+                        "user_id": rec.get("UserID", ""),
+                        "pattern_json": rec.get("PatternJSON", ""),
+                    }
                     for rec in records
                 ],
             )
@@ -379,16 +345,17 @@ def migrate_from_csv(conn: sqlite3.Connection):
         df = pd.read_csv(PREFERENCES_CSV_PATH, dtype=str).fillna("")
         if not df.empty:
             records = df.to_dict(orient="records")
-            conn.executemany(
-                ""
-                "INSERT OR REPLACE INTO preferences (\"UserID\", \"PreferencesJSON\")"
-                " VALUES (?, ?)"
-                "",
+            db.execute_many(
+                """
+                INSERT INTO preferences ("UserID", "PreferencesJSON")
+                VALUES (:user_id, :preferences_json)
+                ON CONFLICT ("UserID") DO UPDATE SET "PreferencesJSON" = EXCLUDED."PreferencesJSON"
+                """,
                 [
-                    (
-                        rec.get("UserID", ""),
-                        rec.get("PreferencesJSON", ""),
-                    )
+                    {
+                        "user_id": rec.get("UserID", ""),
+                        "preferences_json": rec.get("PreferencesJSON", ""),
+                    }
                     for rec in records
                 ],
             )
@@ -398,18 +365,20 @@ def migrate_from_csv(conn: sqlite3.Connection):
         df = pd.read_csv(DAILY_NOTES_CSV_PATH, dtype=str).fillna("")
         if not df.empty:
             records = df.to_dict(orient="records")
-            conn.executemany(
-                ""
-                "INSERT OR REPLACE INTO daily_notes (\"UserID\", \"Date\", \"Note\", \"UpdatedAt\")"
-                " VALUES (?, ?, ?, ?)"
-                "",
+            db.execute_many(
+                """
+                INSERT INTO daily_notes ("UserID", "Date", "Note", "UpdatedAt")
+                VALUES (:user_id, :date, :note, :updated_at)
+                ON CONFLICT ("UserID", "Date")
+                DO UPDATE SET "Note" = EXCLUDED."Note", "UpdatedAt" = EXCLUDED."UpdatedAt"
+                """,
                 [
-                    (
-                        rec.get("UserID", ""),
-                        rec.get("Date", ""),
-                        rec.get("Note", ""),
-                        rec.get("UpdatedAt", ""),
-                    )
+                    {
+                        "user_id": rec.get("UserID", ""),
+                        "date": rec.get("Date", ""),
+                        "note": rec.get("Note", ""),
+                        "updated_at": rec.get("UpdatedAt", ""),
+                    }
                     for rec in records
                 ],
             )
@@ -417,27 +386,22 @@ def migrate_from_csv(conn: sqlite3.Connection):
 
 
 @st.cache_resource(show_spinner=False)
-def get_db_connection() -> sqlite3.Connection:
-    ensure_dirs()
-    conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    initialize_schema(conn)
-    return conn
+def init_database():
+    initialize_schema()
+    return True
 
 # ----------------------------------------------------------------------------
 # Usuários
 # ----------------------------------------------------------------------------
 
 def init_users_if_needed():
-    get_db_connection()
+    init_database()
 
 @st.cache_data(show_spinner=False)
 def load_users_df() -> pd.DataFrame:
-    conn = get_db_connection()
-    df = pd.read_sql_query(
-        "SELECT user_id, nome, created_at FROM users ORDER BY created_at",
-        conn,
+    init_database()
+    df = db.fetch_dataframe(
+        "SELECT user_id, nome, created_at FROM users ORDER BY created_at"
     )
     if df.empty:
         df = pd.DataFrame(columns=["user_id", "nome", "created_at"])
@@ -476,36 +440,40 @@ def get_user(user_id: str):
 
 def save_users_book(df_users: pd.DataFrame):
     """Substitui a base de usuários persistida no banco."""
-    conn = get_db_connection()
+    init_database()
     df_out = df_users.copy().fillna("")
     records = df_out.to_dict(orient="records")
-    with conn:
-        conn.execute("DELETE FROM users")
-        if records:
-            conn.executemany(
-                "INSERT INTO users (user_id, nome, created_at) VALUES (?, ?, ?)",
-                [
-                    (
-                        rec.get("user_id", ""),
-                        rec.get("nome", ""),
-                        rec.get("created_at", ""),
-                    )
-                    for rec in records
-                ],
-            )
+    db.execute("DELETE FROM users")
+    if records:
+        db.execute_many(
+            """
+            INSERT INTO users (user_id, nome, created_at)
+            VALUES (:user_id, :nome, :created_at)
+            """,
+            [
+                {
+                    "user_id": rec.get("user_id", ""),
+                    "nome": rec.get("nome", ""),
+                    "created_at": rec.get("created_at", ""),
+                }
+                for rec in records
+            ],
+        )
     load_users_df.clear()
 
 def create_user(user_id: str, nome: str) -> bool:
-    conn = get_db_connection()
-    cur = conn.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
-    if cur.fetchone():
+    init_database()
+    row = db.fetch_one(
+        "SELECT 1 FROM users WHERE user_id = :user_id",
+        {"user_id": user_id},
+    )
+    if row:
         return False
     created_at = datetime.now().isoformat(timespec="seconds")
-    with conn:
-        conn.execute(
-            "INSERT INTO users (user_id, nome, created_at) VALUES (?, ?, ?)",
-            (user_id, nome, created_at),
-        )
+    db.execute(
+        "INSERT INTO users (user_id, nome, created_at) VALUES (:user_id, :nome, :created_at)",
+        {"user_id": user_id, "nome": nome, "created_at": created_at},
+    )
     load_users_df.clear()
     return True
 
@@ -523,19 +491,18 @@ def logout():
 # ----------------------------------------------------------------------------
 
 def init_csv_if_needed():
-    get_db_connection()
+    init_database()
 
 @st.cache_data(show_spinner=False)
 def load_all() -> pd.DataFrame:
-    conn = get_db_connection()
-    df = pd.read_sql_query(
+    init_database()
+    df = db.fetch_dataframe(
         "SELECT "
-        "    \"UserID\", \"UID\", \"Data\", \"Start\", \"End\", \"Modalidade\","
-        "    \"Tipo de Treino\", \"Volume\", \"Unidade\", \"RPE\", \"Detalhamento\","
-        "    \"Observações\", \"Status\", \"adj\", \"AdjAppliedAt\", \"ChangeLog\","
-        "    \"LastEditedAt\", \"WeekStart\""
-        " FROM treinos",
-        conn,
+        "    \"UserID\", \"UID\", \"Data\", \"Start\", \"End\", \"Modalidade\"," 
+        "    \"Tipo de Treino\", \"Volume\", \"Unidade\", \"RPE\", \"Detalhamento\"," 
+        "    \"Observações\", \"Status\", \"adj\", \"AdjAppliedAt\", \"ChangeLog\"," 
+        "    \"LastEditedAt\", \"WeekStart\"" 
+        " FROM treinos"
     )
     if df.empty:
         df = pd.DataFrame(columns=SCHEMA_COLS)
@@ -567,7 +534,7 @@ def load_all() -> pd.DataFrame:
     return df[SCHEMA_COLS].copy()
 
 def save_all(df: pd.DataFrame):
-    conn = get_db_connection()
+    init_database()
     df_out = df.copy()
     if not df_out.empty:
         data_series = pd.to_datetime(df_out["Data"], errors="coerce")
@@ -577,38 +544,46 @@ def save_all(df: pd.DataFrame):
         df_out.loc[data_series.isna(), "Data"] = ""
         df_out.loc[week_series.isna(), "WeekStart"] = ""
     records = df_out.fillna("").to_dict(orient="records")
-    with conn:
-        conn.execute("DELETE FROM treinos")
-        if records:
-            conn.executemany(
-                ""
-                "INSERT INTO treinos (\"UserID\", \"UID\", \"Data\", \"Start\", \"End\", \"Modalidade\", \"Tipo de Treino\", \"Volume\", \"Unidade\", \"RPE\", \"Detalhamento\", \"Observações\", \"Status\", \"adj\", \"AdjAppliedAt\", \"ChangeLog\", \"LastEditedAt\", \"WeekStart\")"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                "",
-                [
-                    (
-                        rec.get("UserID", ""),
-                        rec.get("UID", ""),
-                        rec.get("Data", ""),
-                        rec.get("Start", ""),
-                        rec.get("End", ""),
-                        rec.get("Modalidade", ""),
-                        rec.get("Tipo de Treino", ""),
-                        float(rec.get("Volume", 0.0) or 0.0),
-                        rec.get("Unidade", ""),
-                        float(rec.get("RPE", 0.0) or 0.0),
-                        rec.get("Detalhamento", ""),
-                        rec.get("Observações", ""),
-                        rec.get("Status", ""),
-                        float(rec.get("adj", 0.0) or 0.0),
-                        rec.get("AdjAppliedAt", ""),
-                        rec.get("ChangeLog", ""),
-                        rec.get("LastEditedAt", ""),
-                        rec.get("WeekStart", ""),
-                    )
-                    for rec in records
-                ],
+    db.execute("DELETE FROM treinos")
+    if records:
+        db.execute_many(
+            """
+            INSERT INTO treinos (
+                "UserID", "UID", "Data", "Start", "End", "Modalidade",
+                "Tipo de Treino", "Volume", "Unidade", "RPE", "Detalhamento",
+                "Observações", "Status", "adj", "AdjAppliedAt", "ChangeLog",
+                "LastEditedAt", "WeekStart"
+            ) VALUES (
+                :user_id, :uid, :data, :start, :end, :modalidade,
+                :tipo_treino, :volume, :unidade, :rpe, :detalhamento,
+                :observacoes, :status, :adj, :adj_applied_at, :changelog,
+                :last_edited_at, :week_start
             )
+            """,
+            [
+                {
+                    "user_id": rec.get("UserID", ""),
+                    "uid": rec.get("UID", ""),
+                    "data": rec.get("Data") or None,
+                    "start": rec.get("Start") or None,
+                    "end": rec.get("End") or None,
+                    "modalidade": rec.get("Modalidade", ""),
+                    "tipo_treino": rec.get("Tipo de Treino", ""),
+                    "volume": float(rec.get("Volume", 0.0) or 0.0),
+                    "unidade": rec.get("Unidade", ""),
+                    "rpe": float(rec.get("RPE", 0.0) or 0.0),
+                    "detalhamento": rec.get("Detalhamento", ""),
+                    "observacoes": rec.get("Observações", ""),
+                    "status": rec.get("Status", ""),
+                    "adj": float(rec.get("adj", 0.0) or 0.0),
+                    "adj_applied_at": rec.get("AdjAppliedAt", ""),
+                    "changelog": rec.get("ChangeLog", ""),
+                    "last_edited_at": rec.get("LastEditedAt", ""),
+                    "week_start": rec.get("WeekStart") or None,
+                }
+                for rec in records
+            ],
+        )
     load_all.clear()
 
 def generate_uid(user_id: str) -> str:
@@ -641,14 +616,13 @@ def save_user_df(user_id: str, user_df: pd.DataFrame):
 # ----------------------------------------------------------------------------
 
 def init_availability_if_needed():
-    get_db_connection()
+    init_database()
 
 @st.cache_data(show_spinner=False)
 def load_all_availability() -> pd.DataFrame:
-    conn = get_db_connection()
-    df = pd.read_sql_query(
-        "SELECT \"UserID\", \"WeekStart\", \"Start\", \"End\" FROM availability",
-        conn,
+    init_database()
+    df = db.fetch_dataframe(
+        "SELECT \"UserID\", \"WeekStart\", \"Start\", \"End\" FROM availability"
     )
     if df.empty:
         df = pd.DataFrame(columns=["UserID", "WeekStart", "Start", "End"])
@@ -659,7 +633,7 @@ def load_all_availability() -> pd.DataFrame:
     return df
 
 def save_all_availability(df: pd.DataFrame):
-    conn = get_db_connection()
+    init_database()
     df_out = df.copy()
     if not df_out.empty:
         week_series = pd.to_datetime(df_out["WeekStart"], errors="coerce")
@@ -672,21 +646,23 @@ def save_all_availability(df: pd.DataFrame):
         df_out.loc[start_series.isna(), "Start"] = ""
         df_out.loc[end_series.isna(), "End"] = ""
     records = df_out.fillna("").to_dict(orient="records")
-    with conn:
-        conn.execute("DELETE FROM availability")
-        if records:
-            conn.executemany(
-                "INSERT INTO availability (\"UserID\", \"WeekStart\", \"Start\", \"End\") VALUES (?, ?, ?, ?)",
-                [
-                    (
-                        rec.get("UserID", ""),
-                        rec.get("WeekStart", ""),
-                        rec.get("Start", ""),
-                        rec.get("End", ""),
-                    )
-                    for rec in records
-                ],
-            )
+    db.execute("DELETE FROM availability")
+    if records:
+        db.execute_many(
+            """
+            INSERT INTO availability ("UserID", "WeekStart", "Start", "End")
+            VALUES (:user_id, :week_start, :start, :end)
+            """,
+            [
+                {
+                    "user_id": rec.get("UserID", ""),
+                    "week_start": rec.get("WeekStart") or None,
+                    "start": rec.get("Start") or None,
+                    "end": rec.get("End") or None,
+                }
+                for rec in records
+            ],
+        )
     load_all_availability.clear()
 
 def normalize_slots(slots):
@@ -735,15 +711,14 @@ def set_week_availability(user_id: str, week_start: date, slots):
 # ----------------------------------------------------------------------------
 
 def init_timepattern_if_needed():
-    get_db_connection()
+    init_database()
 
 
 @st.cache_data(show_spinner=False)
 def load_all_timepatterns() -> pd.DataFrame:
-    conn = get_db_connection()
-    df = pd.read_sql_query(
-        "SELECT \"UserID\", \"PatternJSON\" FROM time_patterns",
-        conn,
+    init_database()
+    df = db.fetch_dataframe(
+        "SELECT \"UserID\", \"PatternJSON\" FROM time_patterns"
     )
     if df.empty:
         df = pd.DataFrame(columns=["UserID", "PatternJSON"])
@@ -751,31 +726,30 @@ def load_all_timepatterns() -> pd.DataFrame:
 
 
 def save_timepattern_for_user(user_id: str, pattern: dict):
-    conn = get_db_connection()
+    init_database()
     serialized = json.dumps(pattern, ensure_ascii=False)
-    with conn:
-        conn.execute(
-            "DELETE FROM time_patterns WHERE \"UserID\" = ?",
-            (user_id,),
-        )
-        conn.execute(
-            "INSERT INTO time_patterns (\"UserID\", \"PatternJSON\") VALUES (?, ?)",
-            (user_id, serialized),
-        )
+    db.execute(
+        "DELETE FROM time_patterns WHERE \"UserID\" = :user_id",
+        {"user_id": user_id},
+    )
+    db.execute(
+        "INSERT INTO time_patterns (\"UserID\", \"PatternJSON\") VALUES (:user_id, :pattern)",
+        {"user_id": user_id, "pattern": serialized},
+    )
     load_all_timepatterns.clear()
 
 
 def load_timepattern_for_user(user_id: str):
-    conn = get_db_connection()
-    cur = conn.execute(
-        "SELECT \"PatternJSON\" FROM time_patterns WHERE \"UserID\" = ?",
-        (user_id,),
+    init_database()
+    row = db.fetch_one(
+        "SELECT \"PatternJSON\" FROM time_patterns WHERE \"UserID\" = :user_id",
+        {"user_id": user_id},
     )
-    row = cur.fetchone()
     if not row:
         return None
     try:
-        return json.loads(row[0]) if row[0] else None
+        value = row.get("PatternJSON") if row else None
+        return json.loads(value) if value else None
     except Exception:
         return None
 
@@ -785,15 +759,14 @@ def load_timepattern_for_user(user_id: str):
 
 
 def init_preferences_if_needed():
-    get_db_connection()
+    init_database()
 
 
 @st.cache_data(show_spinner=False)
 def load_all_preferences() -> pd.DataFrame:
-    conn = get_db_connection()
-    df = pd.read_sql_query(
-        "SELECT \"UserID\", \"PreferencesJSON\" FROM preferences",
-        conn,
+    init_database()
+    df = db.fetch_dataframe(
+        "SELECT \"UserID\", \"PreferencesJSON\" FROM preferences"
     )
     if df.empty:
         df = pd.DataFrame(columns=["UserID", "PreferencesJSON"])
@@ -822,17 +795,16 @@ def load_preferences_for_user(user_id: str) -> dict:
 
 
 def save_preferences_for_user(user_id: str, preferences: dict):
-    conn = get_db_connection()
+    init_database()
     serialized = json.dumps(preferences, ensure_ascii=False)
-    with conn:
-        conn.execute(
-            "DELETE FROM preferences WHERE \"UserID\" = ?",
-            (user_id,),
-        )
-        conn.execute(
-            "INSERT INTO preferences (\"UserID\", \"PreferencesJSON\") VALUES (?, ?)",
-            (user_id, serialized),
-        )
+    db.execute(
+        "DELETE FROM preferences WHERE \"UserID\" = :user_id",
+        {"user_id": user_id},
+    )
+    db.execute(
+        "INSERT INTO preferences (\"UserID\", \"PreferencesJSON\") VALUES (:user_id, :prefs)",
+        {"user_id": user_id, "prefs": serialized},
+    )
     load_all_preferences.clear()
 
 
@@ -842,15 +814,14 @@ def save_preferences_for_user(user_id: str, preferences: dict):
 
 
 def init_daily_notes_if_needed():
-    get_db_connection()
+    init_database()
 
 
 @st.cache_data(show_spinner=False)
 def load_all_daily_notes() -> pd.DataFrame:
-    conn = get_db_connection()
-    df = pd.read_sql_query(
-        "SELECT \"UserID\", \"Date\", \"Note\", \"UpdatedAt\" FROM daily_notes",
-        conn,
+    init_database()
+    df = db.fetch_dataframe(
+        "SELECT \"UserID\", \"Date\", \"Note\", \"UpdatedAt\" FROM daily_notes"
     )
     if df.empty:
         df = pd.DataFrame(columns=["UserID", "Date", "Note", "UpdatedAt"])
@@ -870,7 +841,7 @@ def load_daily_note_for_user(user_id: str, target_date: date) -> str:
 
 
 def save_daily_note_for_user(user_id: str, target_date: date, note: str):
-    conn = get_db_connection()
+    init_database()
     updated_at = datetime.now().isoformat(timespec="seconds")
     if isinstance(target_date, str):
         date_str = target_date
@@ -878,15 +849,14 @@ def save_daily_note_for_user(user_id: str, target_date: date, note: str):
         date_str = target_date.date().isoformat()
     else:
         date_str = target_date.isoformat()
-    with conn:
-        conn.execute(
-            "DELETE FROM daily_notes WHERE \"UserID\" = ? AND \"Date\" = ?",
-            (user_id, date_str),
-        )
-        conn.execute(
-            "INSERT INTO daily_notes (\"UserID\", \"Date\", \"Note\", \"UpdatedAt\") VALUES (?, ?, ?, ?)",
-            (user_id, date_str, note, updated_at),
-        )
+    db.execute(
+        "DELETE FROM daily_notes WHERE \"UserID\" = :user_id AND \"Date\" = :date",
+        {"user_id": user_id, "date": date_str},
+    )
+    db.execute(
+        "INSERT INTO daily_notes (\"UserID\", \"Date\", \"Note\", \"UpdatedAt\") VALUES (:user_id, :date, :note, :updated_at)",
+        {"user_id": user_id, "date": date_str, "note": note, "updated_at": updated_at},
+    )
     load_all_daily_notes.clear()
 
 
