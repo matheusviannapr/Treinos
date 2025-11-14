@@ -1023,7 +1023,7 @@ class PDF(FPDF):
 
 def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
     if df.empty:
-        pdf = PDF()
+        pdf = PDF(orientation="L")  # já em paisagem
         pdf.alias_nb_pages()
         pdf.add_page()
         pdf.set_font("Arial", "", 10)
@@ -1033,7 +1033,7 @@ def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
     df = df.copy()
     df = df.sort_values(["Data", "StartDT"]).reset_index(drop=True)
 
-    pdf = PDF()
+    pdf = PDF(orientation="L")  # PRIMEIRA PÁGINA EM PAISAGEM
     pdf.alias_nb_pages()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -1051,9 +1051,20 @@ def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
     )
     pdf.ln(5)
 
-    # Página 1: tabela com horários
-    col_widths = [22, 16, 16, 26, 32, 16, 12, 70]
-    headers = ["Data", "Início", "Fim", "Modalidade", "Tipo", "Volume", "Unid.", "Detalhamento"]
+    # Página 1: tabela com horários (AGORA EM PAISAGEM) + coluna de Notas do Atleta
+    # Ajustei levemente as larguras para caber em A4 paisagem
+    col_widths = [24, 18, 18, 30, 36, 18, 14, 70, 50]
+    headers = [
+        "Data",
+        "Início",
+        "Fim",
+        "Modalidade",
+        "Tipo",
+        "Volume",
+        "Unid.",
+        "Detalhamento",
+        "Notas do Atleta",
+    ]
 
     pdf.set_font("Arial", "B", 9)
     pdf.set_fill_color(220, 220, 220)
@@ -1087,6 +1098,7 @@ def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
         text_color = MODALITY_TEXT_COLORS.get(mod, (0, 0, 0))
         line_h = 5
 
+        # 7 primeiras colunas (dados “fixos”)
         pdf.set_fill_color(*color)
         pdf.set_text_color(*text_color)
         pdf.cell(col_widths[0], line_h, pdf_safe(data_str), 1, 0, "L", 1)
@@ -1097,15 +1109,33 @@ def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
         pdf.cell(col_widths[5], line_h, pdf_safe(vol), 1, 0, "R", 1)
         pdf.cell(col_widths[6], line_h, pdf_safe(unit), 1, 0, "C", 1)
 
+        # Agora vamos desenhar duas células multi-linha lado a lado:
+        # - Detalhamento (texto do plano)
+        # - Notas do Atleta (em branco para ele escrever)
+
         pdf.set_text_color(0, 0, 0)
         pdf.set_fill_color(255, 255, 255)
-        x = pdf.get_x()
-        y = pdf.get_y()
-        pdf.multi_cell(col_widths[7], line_h, pdf_safe(detail), 1, "L")
-        pdf.set_xy(10, y + line_h)
-        pdf.ln(0)
 
-    # Página 2: calendário visual alinhado ao timeGridWeek
+        # Ponto de início da célula de Detalhamento
+        x_detail = pdf.get_x()
+        y_detail = pdf.get_y()
+
+        # Célula de Detalhamento (multi_cell com borda)
+        pdf.multi_cell(col_widths[7], line_h, pdf_safe(detail), 1, "L")
+
+        # Altura efetiva ocupada por esse multi_cell
+        used_height = pdf.get_y() - y_detail
+        if used_height <= 0:
+            used_height = line_h
+
+        # Célula de Notas do Atleta, com MESMA altura da célula de Detalhamento
+        pdf.set_xy(x_detail + col_widths[7], y_detail)
+        pdf.multi_cell(col_widths[8], used_height, "", 1, "L")
+
+        # Vai para o início da próxima linha (margem esquerda padrão = 10)
+        pdf.set_xy(10, y_detail + used_height)
+
+    # Página 2: calendário visual alinhado ao timeGridWeek (já era paisagem)
     if not df.empty:
         pdf.add_page(orientation="L")
         pdf.set_auto_page_break(auto=False)
