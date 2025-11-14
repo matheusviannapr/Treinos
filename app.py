@@ -1423,6 +1423,10 @@ def main():
         st.session_state["current_week_start"] = monday_of_week(today())
     if "frozen_targets" not in st.session_state:
         st.session_state["frozen_targets"] = {}
+    if "calendar_snapshot" not in st.session_state:
+        st.session_state["calendar_snapshot"] = []
+    if "calendar_forcar_snapshot" not in st.session_state:
+        st.session_state["calendar_forcar_snapshot"] = False
 
     df = st.session_state["df"]
 
@@ -1520,12 +1524,16 @@ def main():
         col1, col2, col3 = st.columns([1, 2, 1])
         if col1.button("⬅️ Semana anterior"):
             st.session_state["current_week_start"] -= timedelta(days=7)
+            st.session_state["calendar_snapshot"] = []
+            st.session_state["calendar_forcar_snapshot"] = False
             canonical_week_df.clear()
             safe_rerun()
         week_start = st.session_state["current_week_start"]
         col2.subheader(f"Semana de {week_start.strftime('%d/%m/%Y')}")
         if col3.button("Semana seguinte ➡️"):
             st.session_state["current_week_start"] += timedelta(days=7)
+            st.session_state["calendar_snapshot"] = []
+            st.session_state["calendar_forcar_snapshot"] = False
             canonical_week_df.clear()
             safe_rerun()
 
@@ -1698,6 +1706,7 @@ def main():
             "headerToolbar": {"left": "", "center": "", "right": ""},
             "height": "650px",
         }
+        options["initialDate"] = week_start.isoformat()
 
         cal_state = calendar(
             events=events,
@@ -1709,7 +1718,13 @@ def main():
             st.session_state["calendar_snapshot"] = eventos_visuais
 
         if st.session_state.get("calendar_forcar_snapshot", False):
-            eventos = cal_state.get("events", [])
+            eventos = []
+            if isinstance(cal_state, dict):
+                eventos = cal_state.get("events") or []
+                if not eventos:
+                    eventos = cal_state.get("eventsSet", {}).get("events", [])
+            if not eventos:
+                eventos = st.session_state.get("calendar_snapshot", [])
 
             if eventos:
                 df_current = st.session_state["df"].copy()
@@ -1731,6 +1746,8 @@ def main():
                     old_row = df_current.loc[idx].copy()
                     start = parse_iso(ev.get("start"))
                     end = parse_iso(ev.get("end"))
+                    if not start or not end or end <= start:
+                        continue
 
                     df_current.at[idx, "Start"] = start.isoformat()
                     df_current.at[idx, "End"] = end.isoformat()
@@ -1744,6 +1761,8 @@ def main():
                 df_from_csv = load_all()
                 st.session_state["df"] = df_from_csv[df_from_csv["UserID"] == user_id].copy()
                 st.session_state["all_df"] = df_from_csv
+                st.session_state["calendar_snapshot"] = eventos
+                canonical_week_df.clear()
 
                 st.success("✅ Semana salva com os horários visuais do calendário.")
             else:
@@ -1975,11 +1994,10 @@ def main():
         # 5.4 Botão salvar semana (reforça persistência; canonical já lê direto de df)
         st.markdown("---")
         if st.button("💾 Salvar Semana Atual"):
-            # Persiste exatamente o que está no session_state (já atualizado pelos handlers)
-            df_current = st.session_state["df"].copy()
-            save_user_df(user_id, df_current)   # <- grava em treinos.csv
-            canonical_week_df.clear()
-            st.success("✅ Semana salva com sucesso!")
+            st.session_state["calendar_forcar_snapshot"] = True
+            if "calendar_snapshot" not in st.session_state:
+                st.session_state["calendar_snapshot"] = []
+            safe_rerun()
 
 
         # 6. Exportações — usam SEMPRE o df canônico (mesmo do calendário)
