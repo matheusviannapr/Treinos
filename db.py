@@ -18,15 +18,16 @@ load_dotenv()
 
 
 def _get_database_url() -> str:
+    # 1) Tenta pegar do Streamlit Secrets: [db].url
     secrets_url = None
     try:
-        secrets_section = st.secrets.get("db")  # type: ignore[attr-defined]
-        if isinstance(secrets_section, dict):
-            secrets_url = secrets_section.get("url")
+        if "db" in st.secrets:  # type: ignore[attr-defined]
+            secrets_url = st.secrets["db"]["url"]
     except Exception:
-        # st.secrets may not be available outside Streamlit runtime
+        # st.secrets pode não existir fora do runtime do Streamlit
         pass
 
+    # 2) Se não tiver secrets (rodando local), tenta .env
     env_url = os.getenv("DATABASE_URL")
 
     url = secrets_url or env_url
