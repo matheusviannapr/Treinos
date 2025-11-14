@@ -6,3 +6,4 @@ pandas
 numpy
 matplotlib
 streamlit_calendar
+sqlite3
