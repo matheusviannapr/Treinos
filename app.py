@@ -32,7 +32,7 @@
 import os
 import json
 import math
-import calendar
+import calendar as py_calendar
 from datetime import datetime, date, timedelta, time, timezone
 
 import pandas as pd
@@ -42,7 +42,7 @@ from fpdf import FPDF
 import matplotlib.pyplot as plt
 import unicodedata
 
-from streamlit_calendar import calendar  # pip install streamlit-calendar
+from streamlit_calendar import calendar as st_calendar  # pip install streamlit-calendar
 
 # ----------------------------------------------------------------------------
 # Utilitários básicos
@@ -1693,7 +1693,7 @@ def build_daily_adherence_heatmap(df: pd.DataFrame, month_start: date):
 
     daily_stats_dict = daily_stats.to_dict("index")
 
-    cal = calendar.Calendar(firstweekday=0)
+    cal = py_calendar.Calendar(firstweekday=0)
     weeks = cal.monthdatescalendar(month_start.year, month_start.month)
 
     columns = OFF_DAY_LABELS
@@ -2374,7 +2374,7 @@ def main():
         }
         options["initialDate"] = week_start.isoformat()
 
-        cal_state = calendar(
+        cal_state = st_calendar(
             events=events,
             options=options,
             key=f"cal_semana_{get_week_key(week_start)}",
