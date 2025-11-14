@@ -498,10 +498,10 @@ def load_all() -> pd.DataFrame:
     init_database()
     df = db.fetch_dataframe(
         "SELECT "
-        "    \"UserID\", \"UID\", \"Data\", \"Start\", \"End\", \"Modalidade\"," 
+        "    \"UserID\", \"UID\", \"Data\"::text AS \"Data\", \"Start\"::text AS \"Start\", \"End\"::text AS \"End\", \"Modalidade\","
         "    \"Tipo de Treino\", \"Volume\", \"Unidade\", \"RPE\", \"Detalhamento\"," 
         "    \"Observações\", \"Status\", \"adj\", \"AdjAppliedAt\", \"ChangeLog\"," 
-        "    \"LastEditedAt\", \"WeekStart\"" 
+        "    \"LastEditedAt\", \"WeekStart\"::text AS \"WeekStart\""
         " FROM treinos"
     )
     if df.empty:
@@ -622,7 +622,7 @@ def init_availability_if_needed():
 def load_all_availability() -> pd.DataFrame:
     init_database()
     df = db.fetch_dataframe(
-        "SELECT \"UserID\", \"WeekStart\", \"Start\", \"End\" FROM availability"
+        "SELECT \"UserID\", \"WeekStart\"::text AS \"WeekStart\", \"Start\"::text AS \"Start\", \"End\"::text AS \"End\" FROM availability"
     )
     if df.empty:
         df = pd.DataFrame(columns=["UserID", "WeekStart", "Start", "End"])
