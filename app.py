@@ -32,8 +32,8 @@
 import os
 import json
 import math
+import calendar as py_calendar
 from datetime import datetime, date, timedelta, time, timezone
-from pathlib import Path
 
 import pandas as pd
 import numpy as np
@@ -42,7 +42,7 @@ from fpdf import FPDF
 import matplotlib.pyplot as plt
 import unicodedata
 
-from streamlit_calendar import calendar  # pip install streamlit-calendar
+from streamlit_calendar import calendar as st_calendar  # pip install streamlit-calendar
 
 # ----------------------------------------------------------------------------
 # Utilitários básicos
@@ -58,44 +58,15 @@ def safe_rerun():
             except Exception:
                 pass
 
-def resolve_project_root() -> Path:
-    """Resolve o diretório raiz do projeto, mesmo quando o Streamlit duplica o script."""
-
-    candidate_paths = []
-
-    if "__file__" in globals():
-        candidate_paths.append(Path(__file__).resolve())
-
-    streamlit_script = os.environ.get("STREAMLIT_SCRIPT_RUNNER_FILENAME") or os.environ.get(
-        "STREAMLIT_SCRIPT_PATH"
-    )
-    if streamlit_script:
-        candidate_paths.append(Path(streamlit_script).resolve())
-
-    candidate_paths.append(Path.cwd())
-
-    def iter_parents(path: Path):
-        yield path
-        yield from path.parents
-
-    for path in candidate_paths:
-        for parent in iter_parents(path):
-            data_dir = parent / "data"
-            if data_dir.is_dir() and (data_dir / "treinos.csv").exists():
-                return parent
-            if (parent / ".git").exists():
-                return parent
-
-    return candidate_paths[0]
-
-
-PROJECT_ROOT = resolve_project_root()
-DATA_DIR = PROJECT_ROOT / "data"
-EXPORT_DIR = PROJECT_ROOT / "exports"
-CSV_PATH = DATA_DIR / "treinos.csv"
-USERS_CSV_PATH = DATA_DIR / "usuarios.csv"
-AVAIL_CSV_PATH = DATA_DIR / "availability.csv"
-TIMEPATTERN_CSV_PATH = DATA_DIR / "time_patterns.csv"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+EXPORT_DIR = os.path.join(BASE_DIR, "exports")
+CSV_PATH = os.path.join(DATA_DIR, "treinos.csv")
+USERS_CSV_PATH = os.path.join(DATA_DIR, "usuarios.csv")
+AVAIL_CSV_PATH = os.path.join(DATA_DIR, "availability.csv")
+TIMEPATTERN_CSV_PATH = os.path.join(DATA_DIR, "time_patterns.csv")
+PREFERENCES_CSV_PATH = os.path.join(DATA_DIR, "preferences.csv")
+DAILY_NOTES_CSV_PATH = os.path.join(DATA_DIR, "daily_notes.csv")
 
 SCHEMA_COLS = [
     "UserID",
@@ -175,13 +146,22 @@ PHASES = ["Base", "Build", "Peak", "Recovery"]
 
 DEFAULT_TRAINING_DURATION_MIN = 60
 
+TIME_OF_DAY_WINDOWS = {
+    "Manhã": time(6, 0),
+    "Tarde": time(12, 0),
+    "Noite": time(18, 0),
+    "Indiferente": time(8, 0),
+}
+
+OFF_DAY_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+
 # ----------------------------------------------------------------------------
 # Diretórios
 # ----------------------------------------------------------------------------
 
 def ensure_dirs():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(EXPORT_DIR, exist_ok=True)
 
 # ----------------------------------------------------------------------------
 # Usuários
@@ -189,7 +169,7 @@ def ensure_dirs():
 
 def init_users_if_needed():
     ensure_dirs()
-    if not USERS_CSV_PATH.exists():
+    if not os.path.exists(USERS_CSV_PATH):
         df = pd.DataFrame(columns=["user_id", "nome", "created_at"])
         df.to_csv(USERS_CSV_PATH, index=False)
 
@@ -264,7 +244,7 @@ def logout():
 
 def init_csv_if_needed():
     ensure_dirs()
-    if not CSV_PATH.exists():
+    if not os.path.exists(CSV_PATH):
         df = pd.DataFrame(columns=SCHEMA_COLS)
         df.to_csv(CSV_PATH, index=False)
 
@@ -345,7 +325,7 @@ def save_user_df(user_id: str, user_df: pd.DataFrame):
 
 def init_availability_if_needed():
     ensure_dirs()
-    if not AVAIL_CSV_PATH.exists():
+    if not os.path.exists(AVAIL_CSV_PATH):
         df = pd.DataFrame(columns=["UserID", "WeekStart", "Start", "End"])
         df.to_csv(AVAIL_CSV_PATH, index=False)
 
@@ -415,7 +395,7 @@ def set_week_availability(user_id: str, week_start: date, slots):
 
 def init_timepattern_if_needed():
     ensure_dirs()
-    if not TIMEPATTERN_CSV_PATH.exists():
+    if not os.path.exists(TIMEPATTERN_CSV_PATH):
         df = pd.DataFrame(columns=["UserID", "PatternJSON"])
         df.to_csv(TIMEPATTERN_CSV_PATH, index=False)
 
@@ -450,6 +430,110 @@ def load_timepattern_for_user(user_id: str):
         return json.loads(row.iloc[0]["PatternJSON"])
     except Exception:
         return None
+
+# ----------------------------------------------------------------------------
+# Preferências do atleta
+# ----------------------------------------------------------------------------
+
+
+def init_preferences_if_needed():
+    ensure_dirs()
+    if not os.path.exists(PREFERENCES_CSV_PATH):
+        df = pd.DataFrame(columns=["UserID", "PreferencesJSON"])
+        df.to_csv(PREFERENCES_CSV_PATH, index=False)
+
+
+@st.cache_data(show_spinner=False)
+def load_all_preferences() -> pd.DataFrame:
+    init_preferences_if_needed()
+    return pd.read_csv(PREFERENCES_CSV_PATH, dtype=str).fillna("")
+
+
+def load_preferences_for_user(user_id: str) -> dict:
+    df = load_all_preferences()
+    row = df[df["UserID"] == user_id]
+    default = {
+        "time_preferences": {},
+        "daily_limit_minutes": None,
+        "off_days": [],
+    }
+    if row.empty:
+        return default
+    try:
+        prefs = json.loads(row.iloc[0]["PreferencesJSON"])
+    except Exception:
+        return default
+    return {
+        "time_preferences": prefs.get("time_preferences", {}),
+        "daily_limit_minutes": prefs.get("daily_limit_minutes"),
+        "off_days": prefs.get("off_days", []),
+    }
+
+
+def save_preferences_for_user(user_id: str, preferences: dict):
+    df = load_all_preferences()
+    df = df[df["UserID"] != user_id]
+
+    serialized = json.dumps(preferences, ensure_ascii=False)
+    new_row = pd.DataFrame([
+        {
+            "UserID": user_id,
+            "PreferencesJSON": serialized,
+        }
+    ])
+    df = pd.concat([df, new_row], ignore_index=True)
+    df.to_csv(PREFERENCES_CSV_PATH, index=False)
+    load_all_preferences.clear()
+
+
+# ----------------------------------------------------------------------------
+# Observações diárias
+# ----------------------------------------------------------------------------
+
+
+def init_daily_notes_if_needed():
+    ensure_dirs()
+    if not os.path.exists(DAILY_NOTES_CSV_PATH):
+        df = pd.DataFrame(columns=["UserID", "Date", "Note", "UpdatedAt"])
+        df.to_csv(DAILY_NOTES_CSV_PATH, index=False)
+
+
+@st.cache_data(show_spinner=False)
+def load_all_daily_notes() -> pd.DataFrame:
+    init_daily_notes_if_needed()
+    df = pd.read_csv(DAILY_NOTES_CSV_PATH, dtype=str).fillna("")
+    if not df.empty:
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
+    return df
+
+
+def load_daily_note_for_user(user_id: str, target_date: date) -> str:
+    df = load_all_daily_notes()
+    if df.empty:
+        return ""
+    row = df[(df["UserID"] == user_id) & (df["Date"] == target_date)]
+    if row.empty:
+        return ""
+    return row.iloc[0]["Note"]
+
+
+def save_daily_note_for_user(user_id: str, target_date: date, note: str):
+    df = load_all_daily_notes()
+    if not df.empty:
+        df = df[~((df["UserID"] == user_id) & (df["Date"] == target_date))]
+
+    new_row = pd.DataFrame([
+        {
+            "UserID": user_id,
+            "Date": target_date,
+            "Note": note,
+            "UpdatedAt": datetime.now().isoformat(timespec="seconds"),
+        }
+    ])
+
+    df = pd.concat([df, new_row], ignore_index=True)
+    df.to_csv(DAILY_NOTES_CSV_PATH, index=False)
+    load_all_daily_notes.clear()
 
 
 def _ensure_py_datetime(value):
@@ -659,6 +743,49 @@ def append_changelog(old_row: pd.Series, new_row: pd.Series) -> str:
         log.append({"at": datetime.now().isoformat(timespec="seconds"), "changes": changes})
     return json.dumps(log, ensure_ascii=False)
 
+
+def apply_training_updates(user_id: str, uid: str, updates: dict) -> bool:
+    df_current = st.session_state.get("df", pd.DataFrame()).copy()
+    if df_current.empty:
+        return False
+
+    mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
+    if not mask.any():
+        return False
+
+    idx = df_current[mask].index[0]
+    old_row = df_current.loc[idx].copy()
+
+    for key, value in updates.items():
+        df_current.at[idx, key] = value
+
+    df_current.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
+    df_current.at[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
+
+    save_user_df(user_id, df_current)
+
+    def _coerce_date(val):
+        if isinstance(val, date):
+            return val
+        try:
+            parsed = pd.to_datetime(val, errors="coerce")
+        except Exception:
+            return None
+        if pd.isna(parsed):
+            return None
+        return parsed.date()
+
+    if any(k in updates for k in ["Start", "End", "Data"]):
+        old_date = _coerce_date(old_row.get("Data"))
+        new_date = _coerce_date(df_current.loc[idx, "Data"])
+        if old_date:
+            update_availability_from_current_week(user_id, monday_of_week(old_date))
+        if new_date and (not old_date or new_date != old_date):
+            update_availability_from_current_week(user_id, monday_of_week(new_date))
+
+    canonical_week_df.clear()
+    return True
+
 # ----------------------------------------------------------------------------
 # Prescrição / distribuição
 # ----------------------------------------------------------------------------
@@ -789,6 +916,7 @@ def distribute_week_by_targets(
     paces: dict,
     user_preferred_days: dict | None,
     user_id: str,
+    off_days: list[int] | None = None,
 ) -> pd.DataFrame:
     days = week_range(week_start)
     rows = []
@@ -835,10 +963,32 @@ def distribute_week_by_targets(
         mod_volumes[mod] = volumes
 
     session_assignments = {i: [] for i in range(7)}
+    off_days_set = set(off_days or [])
+
     for mod, volumes in mod_volumes.items():
         n = len(volumes)
         prefs = (user_preferred_days or {}).get(mod, default_days.get(mod, list(range(7))))
-        day_idx = prefs + [i for i in range(7) if i not in prefs]
+        prefs = [d for d in prefs if d in range(7)]
+
+        base_order = []
+        for candidate in prefs + list(range(7)):
+            if candidate not in base_order and 0 <= candidate < 7:
+                base_order.append(candidate)
+
+        if off_days_set:
+            preferred = [d for d in base_order if d not in off_days_set]
+            fallback = [d for d in base_order if d in off_days_set]
+            day_idx = preferred + fallback
+        else:
+            day_idx = base_order
+
+        if not day_idx:
+            day_idx = list(range(7))
+
+        if len(day_idx) < n:
+            extras = [i for i in range(7) if i not in day_idx]
+            day_idx.extend(extras[: n - len(day_idx)])
+
         day_idx = day_idx[:n]
 
         tipos_base = TIPOS_MODALIDADE.get(mod, ["Treino"])
@@ -906,30 +1056,97 @@ def distribute_week_by_targets(
 # Horários x disponibilidade
 # ----------------------------------------------------------------------------
 
-def assign_times_to_week(week_df: pd.DataFrame, slots, use_availability: bool):
+def estimate_session_duration_minutes(row: pd.Series) -> int:
+    unit = row.get("Unidade")
+    vol = row.get("Volume", 0)
+    try:
+        vol = float(vol)
+    except (TypeError, ValueError):
+        vol = 0.0
+
+    if unit == "min" and vol > 0:
+        return max(int(round(vol)), 10)
+    return DEFAULT_TRAINING_DURATION_MIN
+
+
+def _preferred_time_for_modality(modality: str, preferences: dict | None) -> time:
+    pref_map = (preferences or {}).get("time_preferences", {}) or {}
+    label = pref_map.get(modality)
+    if label in TIME_OF_DAY_WINDOWS:
+        return TIME_OF_DAY_WINDOWS[label]
+    return TIME_OF_DAY_WINDOWS["Indiferente"]
+
+
+def _collect_daily_limit_warnings(df: pd.DataFrame, limit_minutes: int | None) -> list[str]:
+    if not limit_minutes:
+        return []
+
+    if df.empty:
+        return []
+
+    tmp = df.copy()
+    tmp["StartDT"] = tmp["Start"].apply(parse_iso)
+    tmp["EndDT"] = tmp["End"].apply(parse_iso)
+
+    warnings = []
+    for day, chunk in tmp.groupby("Data"):
+        total = 0
+        for _, row in chunk.iterrows():
+            if row["Modalidade"] == "Descanso":
+                continue
+            s = row.get("StartDT")
+            e = row.get("EndDT")
+            if s and e and e > s:
+                total += int((e - s).total_seconds() // 60)
+            else:
+                total += DEFAULT_TRAINING_DURATION_MIN
+        if total > limit_minutes:
+            warnings.append(
+                f"Dia {day.strftime('%d/%m')}: {total} min planejados (limite {limit_minutes} min)"
+            )
+    return warnings
+
+
+def assign_times_to_week(
+    week_df: pd.DataFrame,
+    slots,
+    use_availability: bool,
+    preferences: dict | None = None,
+):
     df = week_df.copy()
     if "Start" not in df.columns:
         df["Start"] = ""
     if "End" not in df.columns:
         df["End"] = ""
 
+    raw_limit = (preferences or {}).get("daily_limit_minutes") if preferences else None
+    daily_limit = None
+    if raw_limit not in (None, ""):
+        try:
+            daily_limit = int(float(raw_limit))
+            if daily_limit <= 0:
+                daily_limit = None
+        except (TypeError, ValueError):
+            daily_limit = None
+
     free = normalize_slots(slots) if use_availability else slots
-    dur = timedelta(minutes=DEFAULT_TRAINING_DURATION_MIN)
+    warnings = []
 
-    for idx, row in df.iterrows():
-        if row["Modalidade"] == "Descanso":
-            df.at[idx, "Start"] = ""
-            df.at[idx, "End"] = ""
-            continue
+    if use_availability:
+        for idx, row in df.iterrows():
+            if row["Modalidade"] == "Descanso":
+                df.at[idx, "Start"] = ""
+                df.at[idx, "End"] = ""
+                continue
 
-        if use_availability:
+            duration = timedelta(minutes=estimate_session_duration_minutes(row))
             assigned = False
             for si, slot in enumerate(free):
                 if slot["start"].date() != row["Data"]:
                     continue
-                if slot["end"] - slot["start"] >= dur:
+                if slot["end"] - slot["start"] >= duration:
                     start_dt = slot["start"]
-                    end_dt = start_dt + dur
+                    end_dt = start_dt + duration
                     df.at[idx, "Start"] = start_dt.isoformat()
                     df.at[idx, "End"] = end_dt.isoformat()
                     if slot["end"] == end_dt:
@@ -939,15 +1156,53 @@ def assign_times_to_week(week_df: pd.DataFrame, slots, use_availability: bool):
                     assigned = True
                     break
             if not assigned:
-                s = datetime.combine(row["Data"], time(6, 0))
-                df.at[idx, "Start"] = s.isoformat()
-                df.at[idx, "End"] = (s + dur).isoformat()
-        else:
-            s = datetime.combine(row["Data"], time(6, 0))
-            df.at[idx, "Start"] = s.isoformat()
-            df.at[idx, "End"] = (s + dur).isoformat()
+                pref_time = _preferred_time_for_modality(row["Modalidade"], preferences)
+                start_dt = datetime.combine(row["Data"], pref_time)
+                df.at[idx, "Start"] = start_dt.isoformat()
+                df.at[idx, "End"] = (start_dt + duration).isoformat()
+        warnings.extend(_collect_daily_limit_warnings(df, daily_limit))
+        return df, (free if use_availability else slots), warnings
 
-    return df, (free if use_availability else slots)
+    # Sem disponibilidade: atribui horários respeitando preferências
+    df.loc[df["Modalidade"] == "Descanso", ["Start", "End"]] = ""
+
+    training_mask = df["Modalidade"] != "Descanso"
+    if training_mask.any():
+        grouped = df[training_mask].groupby("Data")
+        for day, idxs in grouped.groups.items():
+            if isinstance(idxs, (list, tuple)):
+                indices = list(idxs)
+            else:
+                indices = list(idxs.tolist())
+            indices.sort(
+                key=lambda i: (
+                    _preferred_time_for_modality(df.at[i, "Modalidade"], preferences).hour,
+                    _preferred_time_for_modality(df.at[i, "Modalidade"], preferences).minute,
+                    i,
+                )
+            )
+
+            current_dt = None
+            total_minutes = 0
+            for idx in indices:
+                row = df.loc[idx]
+                pref_time = _preferred_time_for_modality(row["Modalidade"], preferences)
+                start_dt = datetime.combine(day, pref_time)
+                if current_dt and start_dt < current_dt:
+                    start_dt = current_dt
+                duration_min = estimate_session_duration_minutes(row)
+                end_dt = start_dt + timedelta(minutes=duration_min)
+                df.at[idx, "Start"] = start_dt.isoformat()
+                df.at[idx, "End"] = end_dt.isoformat()
+                current_dt = end_dt + timedelta(minutes=5)
+                total_minutes += duration_min
+
+            if daily_limit and total_minutes > daily_limit:
+                warnings.append(
+                    f"Dia {day.strftime('%d/%m')}: {total_minutes} min planejados (limite {daily_limit} min)"
+                )
+
+    return df, slots, warnings
 
 def subtract_trainings_from_slots(week_df: pd.DataFrame, slots):
     trainings = []
@@ -1296,6 +1551,265 @@ def calculate_metrics(df: pd.DataFrame):
     weekly["TSB"] = weekly["CTL"] - weekly["ATL"]
     return weekly, df
 
+
+def _normalize_status_flags(df: pd.DataFrame) -> pd.DataFrame:
+    tmp = df.copy()
+    if "Status" not in tmp.columns:
+        tmp["Status"] = ""
+    status_norm = tmp["Status"].astype(str).str.strip().str.lower()
+    tmp["status_norm"] = status_norm
+    tmp["is_planned"] = status_norm != "cancelado"
+    tmp["is_realized"] = status_norm == "realizado"
+    tmp["is_partial"] = status_norm.isin(["adiado", "parcial"])
+    return tmp
+
+
+def compute_weekly_adherence(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame()
+
+    tmp = df.copy()
+    tmp["WeekStart"] = pd.to_datetime(tmp["WeekStart"], errors="coerce").dt.date
+    tmp["Data"] = pd.to_datetime(tmp["Data"], errors="coerce").dt.date
+    tmp["Volume"] = pd.to_numeric(tmp["Volume"], errors="coerce").fillna(0.0)
+    tmp = tmp[tmp["Modalidade"] != "Descanso"]
+    if tmp.empty:
+        return pd.DataFrame()
+
+    tmp = _normalize_status_flags(tmp)
+
+    planned_mask = tmp["is_planned"]
+    realized_mask = tmp["is_realized"]
+
+    planned_sessions = (
+        tmp[planned_mask]
+        .groupby(["WeekStart", "Modalidade"])
+        .size()
+        .rename("planned_sessions")
+    )
+    realized_sessions = (
+        tmp[realized_mask]
+        .groupby(["WeekStart", "Modalidade"])
+        .size()
+        .rename("realized_sessions")
+    )
+    planned_volume = (
+        tmp[planned_mask]
+        .groupby(["WeekStart", "Modalidade"])["Volume"]
+        .sum()
+        .rename("planned_volume")
+    )
+    realized_volume = (
+        tmp[realized_mask]
+        .groupby(["WeekStart", "Modalidade"])["Volume"]
+        .sum()
+        .rename("realized_volume")
+    )
+
+    planned_sessions_dict = planned_sessions.to_dict()
+    realized_sessions_dict = realized_sessions.to_dict()
+    planned_volume_dict = planned_volume.to_dict()
+    realized_volume_dict = realized_volume.to_dict()
+
+    weeks = sorted(w for w in tmp["WeekStart"].dropna().unique())
+    modalities = [m for m in ["Corrida", "Ciclismo", "Natação", "Força/Calistenia"] if m in tmp["Modalidade"].unique()]
+
+    rows = []
+    for week in weeks:
+        row = {"_week": week, "Semana": week.strftime("%d/%m/%Y")}
+        total_planned_sessions = 0
+        total_realized_sessions = 0
+        total_planned_volume = 0.0
+        total_realized_volume = 0.0
+
+        for mod in modalities:
+            key = (week, mod)
+            psess = planned_sessions_dict.get(key, 0)
+            rsess = realized_sessions_dict.get(key, 0)
+            pvol = planned_volume_dict.get(key, 0.0)
+            rvol = realized_volume_dict.get(key, 0.0)
+
+            total_planned_sessions += psess
+            total_realized_sessions += rsess
+            total_planned_volume += pvol
+            total_realized_volume += rvol
+
+            parts = []
+            if psess > 0:
+                parts.append(f"S:{rsess / psess * 100:.0f}%")
+            if pvol > 0:
+                parts.append(f"V:{rvol / pvol * 100:.0f}%")
+            row[mod] = " / ".join(parts) if parts else "-"
+
+        if total_planned_sessions > 0:
+            row["Total"] = f"{total_realized_sessions / total_planned_sessions * 100:.0f}%"
+        else:
+            row["Total"] = "-"
+
+        if total_planned_volume > 0:
+            row["Aderência (%)"] = f"{total_realized_volume / total_planned_volume * 100:.0f}%"
+        else:
+            row["Aderência (%)"] = "-"
+
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame()
+
+    result = pd.DataFrame(rows)
+    result = result.sort_values("_week", ascending=False).drop(columns=["_week"])
+    return result.reset_index(drop=True)
+
+
+def build_daily_adherence_heatmap(df: pd.DataFrame, month_start: date):
+    if df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    tmp = df.copy()
+    tmp["Data"] = pd.to_datetime(tmp["Data"], errors="coerce").dt.date
+    tmp["WeekStart"] = pd.to_datetime(tmp["WeekStart"], errors="coerce").dt.date
+    tmp["Volume"] = pd.to_numeric(tmp["Volume"], errors="coerce").fillna(0.0)
+    tmp = tmp[tmp["Modalidade"] != "Descanso"]
+    if tmp.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    tmp = _normalize_status_flags(tmp)
+
+    tmp["planned_volume"] = tmp.apply(
+        lambda r: r["Volume"] if r["is_planned"] else 0.0,
+        axis=1,
+    )
+    tmp["realized_volume"] = tmp.apply(
+        lambda r: r["Volume"] if r["is_realized"] else 0.0,
+        axis=1,
+    )
+
+    daily_stats = tmp.groupby("Data").agg(
+        planned_sessions=("is_planned", "sum"),
+        realized_sessions=("is_realized", "sum"),
+        planned_volume=("planned_volume", "sum"),
+        realized_volume=("realized_volume", "sum"),
+    )
+
+    daily_stats_dict = daily_stats.to_dict("index")
+
+    cal = py_calendar.Calendar(firstweekday=0)
+    weeks = cal.monthdatescalendar(month_start.year, month_start.month)
+
+    columns = OFF_DAY_LABELS
+    display_df = pd.DataFrame("", index=[f"Sem {i+1}" for i in range(len(weeks))], columns=columns)
+    ratio_df = pd.DataFrame(np.nan, index=display_df.index, columns=columns)
+
+    for w_idx, week_days in enumerate(weeks):
+        for d_idx, day_dt in enumerate(week_days):
+            if day_dt.month != month_start.month:
+                display_df.iat[w_idx, d_idx] = ""
+                ratio_df.iat[w_idx, d_idx] = np.nan
+                continue
+
+            stats = daily_stats_dict.get(day_dt)
+            if not stats:
+                display_df.iat[w_idx, d_idx] = ""
+                ratio_df.iat[w_idx, d_idx] = np.nan
+                continue
+
+            planned = stats.get("planned_sessions", 0)
+            realized = stats.get("realized_sessions", 0)
+
+            if planned <= 0:
+                ratio = 1.0 if realized > 0 else np.nan
+            else:
+                ratio = realized / planned
+
+            ratio_df.iat[w_idx, d_idx] = ratio
+
+            if planned <= 0:
+                display_df.iat[w_idx, d_idx] = ""
+            else:
+                percent = ratio * 100 if ratio == ratio else 0.0
+                display_df.iat[w_idx, d_idx] = f"{percent:.0f}% ({int(realized)}/{int(planned)})"
+
+    return display_df, ratio_df
+
+
+def make_heatmap_style(ratio_df: pd.DataFrame):
+    def _style(data):
+        styles = pd.DataFrame("", index=data.index, columns=data.columns)
+        for r in data.index:
+            for c in data.columns:
+                ratio = ratio_df.loc[r, c]
+                if pd.isna(ratio):
+                    color = "#f1f3f5"
+                elif ratio >= 0.99:
+                    color = "#69db7c"
+                elif ratio > 0:
+                    color = "#ffd43b"
+                else:
+                    color = "#ff6b6b"
+                styles.loc[r, c] = f"background-color: {color}; color: #1f1f1f; font-weight: 600;"
+        return styles
+
+    return _style
+
+
+def extract_training_changelog(row: pd.Series) -> list[dict]:
+    log_raw = row.get("ChangeLog", "[]")
+    try:
+        entries = json.loads(log_raw or "[]")
+    except Exception:
+        entries = []
+
+    parsed = []
+    for entry in entries:
+        ts_str = entry.get("at", "")
+        ts = None
+        if ts_str:
+            try:
+                ts = datetime.fromisoformat(ts_str)
+            except Exception:
+                ts = None
+        changes = entry.get("changes", {}) or {}
+        change_list = []
+        for field, values in changes.items():
+            old = values.get("old", "")
+            new = values.get("new", "")
+            change_list.append(f"{field}: {old} → {new}")
+        parsed.append(
+            {
+                "timestamp": ts,
+                "timestamp_str": ts.strftime("%d/%m %H:%M") if ts else ts_str,
+                "changes": change_list,
+            }
+        )
+
+    parsed.sort(key=lambda x: x["timestamp"] or datetime.min, reverse=True)
+    return parsed
+
+
+def build_week_changelog(df: pd.DataFrame, week_start: date) -> list[dict]:
+    if df.empty:
+        return []
+
+    chunk = week_slice(df, week_start)
+    if chunk.empty:
+        return []
+
+    events = []
+    for _, row in chunk.iterrows():
+        training_desc = f"{row['Modalidade']} - {row['Tipo de Treino']} ({row['Data']})"
+        for entry in extract_training_changelog(row):
+            events.append(
+                {
+                    "timestamp": entry["timestamp"],
+                    "timestamp_str": entry["timestamp_str"],
+                    "training": training_desc,
+                    "changes": entry["changes"],
+                }
+            )
+
+    events.sort(key=lambda x: x["timestamp"] or datetime.min, reverse=True)
+    return events
+
 def plot_load_chart(weekly_metrics: pd.DataFrame):
     if weekly_metrics.empty:
         st.warning("Sem dados de carga para gerar o gráfico.")
@@ -1334,6 +1848,7 @@ def generate_cycle(
     user_preferred_days: dict,
     key_sessions: dict,
     user_id: str,
+    user_preferences: dict | None = None,
 ) -> pd.DataFrame:
     all_weeks = []
     for w in range(num_weeks):
@@ -1353,8 +1868,14 @@ def generate_cycle(
             paces,
             user_preferred_days,
             user_id,
+            off_days=(user_preferences or {}).get("off_days"),
         )
-        week_df, _ = assign_times_to_week(week_df, [], use_availability=False)
+        week_df, _, _ = assign_times_to_week(
+            week_df,
+            [],
+            use_availability=False,
+            preferences=user_preferences,
+        )
         all_weeks.append(week_df)
 
     if not all_weeks:
@@ -1493,6 +2014,16 @@ def main():
 
     df = st.session_state["df"]
 
+    if (
+        "user_preferences_cache" not in st.session_state
+        or st.session_state.get("user_preferences_cache_user") != user_id
+    ):
+        prefs_loaded = load_preferences_for_user(user_id)
+        st.session_state["user_preferences_cache"] = prefs_loaded
+        st.session_state["user_preferences_cache_user"] = user_id
+
+    user_preferences = st.session_state.get("user_preferences_cache", load_preferences_for_user(user_id))
+
     # SIDEBAR
     st.sidebar.title("TriPlano 🌀")
     st.sidebar.markdown(f"👤 **{user_name}**  \n`{user_id}`")
@@ -1501,7 +2032,7 @@ def main():
 
     menu = st.sidebar.radio(
         "Navegação",
-        ["📅 Planejamento Semanal", "📈 Dashboard", "⚙️ Periodização"],
+        ["📅 Planejamento Semanal", "🗓️ Resumo do Dia", "📈 Dashboard", "⚙️ Periodização"],
         index=0,
     )
     st.sidebar.markdown("---")
@@ -1510,6 +2041,67 @@ def main():
     # ---------------- PLANEJAMENTO SEMANAL ----------------
     if menu == "📅 Planejamento Semanal":
         st.header("📅 Planejamento Semanal")
+
+        off_days_set = set(user_preferences.get("off_days", []))
+        time_preferences = user_preferences.get("time_preferences", {}) or {}
+
+        with st.expander("⚙️ Preferências do Atleta", expanded=False):
+            st.markdown(
+                "Ajuste horários preferidos por modalidade, limite diário e dias realmente de descanso."
+            )
+            time_options = list(TIME_OF_DAY_WINDOWS.keys())
+            pref_cols = st.columns(3)
+            time_pref_inputs = {}
+            for idx, mod in enumerate(MODALIDADES):
+                default_label = time_preferences.get(mod, "Indiferente")
+                if default_label not in time_options:
+                    default_label = "Indiferente"
+                default_index = time_options.index(default_label)
+                time_pref_inputs[mod] = pref_cols[idx % 3].selectbox(
+                    mod,
+                    options=time_options,
+                    index=default_index,
+                    key=f"timepref_{mod}",
+                )
+
+            col_limit, col_off = st.columns(2)
+            limit_default = int(user_preferences.get("daily_limit_minutes") or 0)
+            limit_value = col_limit.number_input(
+                "Limite máximo por dia (min)",
+                min_value=0,
+                max_value=600,
+                step=15,
+                value=limit_default,
+                key="daily_limit_pref",
+                help="0 significa sem limite configurado.",
+            )
+
+            off_default_labels = [
+                OFF_DAY_LABELS[i]
+                for i in user_preferences.get("off_days", [])
+                if 0 <= i < len(OFF_DAY_LABELS)
+            ]
+            off_selected = col_off.multiselect(
+                "Dias intocáveis (off total)",
+                OFF_DAY_LABELS,
+                default=off_default_labels,
+                key="off_days_pref",
+            )
+
+            if st.button("Salvar preferências do atleta"):
+                new_preferences = {
+                    "time_preferences": time_pref_inputs,
+                    "daily_limit_minutes": int(limit_value) if limit_value > 0 else None,
+                    "off_days": [OFF_DAY_LABELS.index(label) for label in off_selected],
+                }
+                save_preferences_for_user(user_id, new_preferences)
+                st.session_state["user_preferences_cache"] = new_preferences
+                st.session_state["user_preferences_cache_user"] = user_id
+                off_days_set = set(new_preferences.get("off_days", []))
+                st.success("Preferências salvas!")
+                user_preferences = new_preferences
+            else:
+                off_days_set = set(user_preferences.get("off_days", []))
 
         # 1. Paces
         st.subheader("1. Parâmetros de Prescrição")
@@ -1556,7 +2148,7 @@ def main():
 
             default_selected = [
                 abrev for abrev, idx in dias_semana_options.items()
-                if idx in default_days.get(mod, [])
+                if idx in default_days.get(mod, []) and idx not in off_days_set
             ]
             cols_mod[i].multiselect(
                 f"Dias {mod}",
@@ -1625,10 +2217,15 @@ def main():
         col_btn1, _, _ = st.columns(3)
         if col_btn1.button("📆 Gerar Semana Automática"):
             dias_map = dias_semana_options
-            current_preferred_days = {
-                mod: [dias_map[d] for d in st.session_state.get(f"pref_days_{mod}", [])]
-                for mod in MODALIDADES
-            }
+            off_days_set = set(user_preferences.get("off_days", []))
+            current_preferred_days = {}
+            for mod in MODALIDADES:
+                selected_labels = st.session_state.get(f"pref_days_{mod}", [])
+                selected = [dias_map[d] for d in selected_labels if d in dias_map]
+                filtered = [d for d in selected if d not in off_days_set]
+                if not filtered:
+                    filtered = [idx for idx in dias_map.values() if idx not in off_days_set]
+                current_preferred_days[mod] = filtered
             key_sessions = {mod: st.session_state.get(f"key_sess_{mod}", "") for mod in MODALIDADES}
 
             new_week_df = distribute_week_by_targets(
@@ -1639,6 +2236,7 @@ def main():
                 paces,
                 current_preferred_days,
                 user_id,
+                off_days=user_preferences.get("off_days"),
             )
 
             pattern = load_timepattern_for_user(user_id) if use_time_pattern else None
@@ -1648,17 +2246,22 @@ def main():
             if pattern:
                 new_week_df = apply_time_pattern_to_week(new_week_df, pattern)
                 updated_slots = week_slots
+                warnings = []
             else:
                 use_avail = (modo_agendamento == "Usar horários livres")
-                new_week_df, updated_slots = assign_times_to_week(
+                new_week_df, updated_slots, warnings = assign_times_to_week(
                     new_week_df,
                     week_slots,
                     use_avail,
+                    preferences=user_preferences,
                 )
 
                 if use_avail:
                     updated_slots = subtract_trainings_from_slots(new_week_df, updated_slots)
                     set_week_availability(user_id, week_start, updated_slots)
+
+            for warn in warnings:
+                st.warning(warn)
 
             user_df = st.session_state["df"]
             others = user_df[user_df["WeekStart"] != week_start]
@@ -1771,7 +2374,7 @@ def main():
         }
         options["initialDate"] = week_start.isoformat()
 
-        cal_state = calendar(
+        cal_state = st_calendar(
             events=events,
             options=options,
             key=f"cal_semana_{get_week_key(week_start)}",
@@ -2104,12 +2707,273 @@ def main():
             st.write("Metas congeladas para esta semana:")
             st.json(st.session_state["frozen_targets"][frozen_key])
 
+    # ---------------- RESUMO DO DIA ----------------
+    elif menu == "🗓️ Resumo do Dia":
+        st.header("🗓️ Resumo do Dia")
+        hoje = today()
+        st.subheader(hoje.strftime("%A, %d/%m/%Y").title())
+
+        week_start_today = monday_of_week(hoje)
+        day_week_df = canonical_week_df(user_id, week_start_today)
+        day_df = day_week_df[day_week_df["Data"] == hoje].copy()
+
+        if day_df.empty:
+            st.info("Nenhum treino planejado para hoje.")
+        else:
+            day_flags = _normalize_status_flags(day_df)
+            planned_today = int(day_flags["is_planned"].sum())
+            realized_today = int(day_flags["is_realized"].sum())
+            partial_today = int(day_flags["is_partial"].sum())
+
+            col_m1, col_m2, col_m3 = st.columns(3)
+            col_m1.metric("Sessões planejadas", planned_today)
+            col_m2.metric("Concluídas", realized_today)
+            col_m3.metric("Parciais", partial_today)
+
+            if "editing_uid" not in st.session_state:
+                st.session_state["editing_uid"] = None
+
+            for _, row in day_df.iterrows():
+                uid = row["UID"]
+                mod = row["Modalidade"]
+                tipo = row["Tipo de Treino"]
+                status = row.get("Status", "Planejado")
+                volume_raw = row.get("Volume", 0)
+                try:
+                    volume_val = float(volume_raw or 0.0)
+                except (TypeError, ValueError):
+                    volume_val = 0.0
+                unidade = row.get("Unidade", "")
+                start_dt = row.get("StartDT")
+                end_dt = row.get("EndDT")
+                start_str = start_dt.strftime("%H:%M") if isinstance(start_dt, datetime) else "--:--"
+
+                with st.container():
+                    st.markdown(f"### {start_str} — {mod} ({tipo})")
+                    st.markdown(f"**Status atual:** {status}")
+                    if volume_val:
+                        st.caption(f"Volume: {volume_val:g} {unidade}")
+                    if row.get("Detalhamento"):
+                        st.caption(f"Plano: {row['Detalhamento']}")
+                    if row.get("Observações"):
+                        st.caption(f"Notas: {row['Observações']}")
+
+                    col_feito, col_nao, col_edit = st.columns(3)
+
+                    if col_feito.button("✅ FEITO", key=f"daily_done_{uid}"):
+                        if apply_training_updates(user_id, uid, {"Status": "Realizado"}):
+                            st.session_state["editing_uid"] = None
+                            safe_rerun()
+
+                    if col_nao.button("❌ NÃO FEITO", key=f"daily_cancel_{uid}"):
+                        if apply_training_updates(user_id, uid, {"Status": "Cancelado"}):
+                            st.session_state["editing_uid"] = None
+                            safe_rerun()
+
+                    if col_edit.button("✏️ EDITAR", key=f"daily_edit_{uid}"):
+                        st.session_state["editing_uid"] = uid
+
+                    if st.session_state.get("editing_uid") == uid:
+                        with st.form(f"daily_edit_form_{uid}"):
+                            status_options = STATUS_CHOICES
+                            status_clean = status if status in status_options else status_options[0]
+                            status_index = status_options.index(status_clean)
+                            status_value = st.selectbox(
+                                "Status",
+                                options=status_options,
+                                index=status_index,
+                                key=f"daily_status_{uid}",
+                            )
+
+                            volume_input = st.number_input(
+                                "Volume",
+                                min_value=0.0,
+                                value=float(volume_val),
+                                step=_unit_step(unidade),
+                                key=f"daily_volume_{uid}",
+                            )
+
+                            obs_input = st.text_area(
+                                "Observações",
+                                value=row.get("Observações", ""),
+                                key=f"daily_obs_{uid}",
+                            )
+
+                            start_default = start_dt.time() if isinstance(start_dt, datetime) else time(6, 0)
+                            start_time_input = st.time_input(
+                                "Horário de início",
+                                value=start_default,
+                                key=f"daily_start_{uid}",
+                            )
+
+                            if isinstance(start_dt, datetime) and isinstance(end_dt, datetime) and end_dt > start_dt:
+                                duration_guess = int((end_dt - start_dt).total_seconds() // 60)
+                            else:
+                                duration_guess = estimate_session_duration_minutes(row)
+                            if duration_guess < 15:
+                                duration_guess = 15
+
+                            duration_input = st.number_input(
+                                "Duração (min)",
+                                min_value=15,
+                                max_value=600,
+                                value=duration_guess,
+                                step=5,
+                                key=f"daily_duration_{uid}",
+                            )
+
+                            submitted = st.form_submit_button("Salvar alterações")
+                            if submitted:
+                                start_combined = datetime.combine(row["Data"], start_time_input)
+                                end_combined = start_combined + timedelta(minutes=int(duration_input))
+                                updates = {
+                                    "Status": status_value,
+                                    "Volume": float(volume_input),
+                                    "Observações": obs_input,
+                                    "Start": start_combined.isoformat(),
+                                    "End": end_combined.isoformat(),
+                                }
+                                if apply_training_updates(user_id, uid, updates):
+                                    st.session_state["editing_uid"] = None
+                                    safe_rerun()
+
+        st.markdown("---")
+
+        note_key = f"daily_note_{hoje.isoformat()}"
+        existing_note = load_daily_note_for_user(user_id, hoje)
+        if note_key not in st.session_state:
+            st.session_state[note_key] = existing_note
+        note_value = st.text_area(
+            "Observações gerais do dia",
+            value=st.session_state.get(note_key, existing_note),
+            key=note_key,
+            height=150,
+        )
+        if st.button("Salvar observações do dia"):
+            save_daily_note_for_user(user_id, hoje, note_value)
+            st.success("Observações salvas!")
+            st.session_state[note_key] = note_value
+
     # ---------------- DASHBOARD ----------------
     elif menu == "📈 Dashboard":
         st.header("📈 Dashboard de Performance")
         weekly_metrics, df_with_load = calculate_metrics(df)
-        plot_load_chart(weekly_metrics)
-        st.dataframe(df_with_load)
+
+        df_dashboard = df.copy()
+        if not df_dashboard.empty:
+            df_dashboard["Data"] = pd.to_datetime(df_dashboard["Data"], errors="coerce").dt.date
+            df_dashboard["WeekStart"] = pd.to_datetime(df_dashboard["WeekStart"], errors="coerce").dt.date
+
+        tab_carga, tab_aderencia, tab_historico = st.tabs([
+            "Carga", "Aderência", "Histórico de Edição"
+        ])
+
+        with tab_carga:
+            plot_load_chart(weekly_metrics)
+            st.dataframe(df_with_load)
+
+        with tab_aderencia:
+            adherence_df = compute_weekly_adherence(df_dashboard)
+            if adherence_df.empty:
+                st.info("Sem dados suficientes para calcular aderência semanal.")
+            else:
+                st.dataframe(adherence_df, use_container_width=True)
+                st.caption("S:% = aderência em sessões. V:% = aderência em volume.")
+
+            if df_dashboard.empty:
+                st.info("Cadastre treinos para visualizar a aderência diária.")
+            else:
+                available_dates = pd.to_datetime(df_dashboard["Data"], errors="coerce").dropna()
+                month_keys = sorted({date(d.year, d.month, 1) for d in available_dates.dt.date}, reverse=True)
+                if month_keys:
+                    month_labels = [m.strftime("%m/%Y") for m in month_keys]
+                    month_map = dict(zip(month_labels, month_keys))
+                    selected_label = st.selectbox(
+                        "Selecione o mês",
+                        month_labels,
+                        index=0,
+                        key="adherence_month_select",
+                    )
+                    selected_month = month_map[selected_label]
+                    heatmap_df, ratio_df = build_daily_adherence_heatmap(df_dashboard, selected_month)
+                    if heatmap_df.empty:
+                        st.info("Sem treinos planejados para o mês selecionado.")
+                    else:
+                        styled = heatmap_df.style.apply(make_heatmap_style(ratio_df), axis=None)
+                        styled = styled.set_properties(**{"text-align": "center", "white-space": "pre"})
+                        st.write(styled)
+                        st.caption(
+                            "Verde = 100% das sessões concluídas; Amarelo = parcial; Vermelho = não feito."
+                        )
+                else:
+                    st.info("Cadastre treinos para visualizar a aderência diária.")
+
+        with tab_historico:
+            if df_dashboard.empty:
+                st.info("Sem treinos cadastrados ainda.")
+            else:
+                week_candidates = pd.to_datetime(df_dashboard["WeekStart"], errors="coerce").dropna().dt.date
+                if week_candidates.empty:
+                    date_candidates = pd.to_datetime(df_dashboard["Data"], errors="coerce").dropna().dt.date
+                    week_options = sorted({monday_of_week(d) for d in date_candidates}, reverse=True)
+                else:
+                    week_options = sorted(set(week_candidates), reverse=True)
+
+                if not week_options:
+                    st.info("Sem semanas com alterações registradas.")
+                else:
+                    week_labels = [ws.strftime("%d/%m/%Y") for ws in week_options]
+                    week_map = dict(zip(week_labels, week_options))
+                    selected_week_label = st.selectbox(
+                        "Semana",
+                        week_labels,
+                        index=0,
+                        key="history_week_select",
+                    )
+                    selected_week = week_map[selected_week_label]
+
+                    events = build_week_changelog(df_dashboard, selected_week)
+                    if not events:
+                        st.info("Nenhuma alteração registrada para a semana selecionada.")
+                    else:
+                        for event in events:
+                            title = event["training"]
+                            if event["timestamp_str"]:
+                                title = f"{event['timestamp_str']} — {title}"
+                            with st.expander(title, expanded=False):
+                                if event["changes"]:
+                                    for change in event["changes"]:
+                                        st.markdown(f"- {change}")
+                                else:
+                                    st.caption("Alteração registrada sem detalhes adicionais.")
+
+                    st.markdown("---")
+                    week_df = week_slice(df_dashboard, selected_week)
+                    if week_df.empty:
+                        st.info("Nenhum treino encontrado na semana selecionada.")
+                    else:
+                        training_options = [
+                            f"{r['Data'].strftime('%d/%m')} — {r['Modalidade']} ({r['Tipo de Treino']})"
+                            for _, r in week_df.iterrows()
+                        ]
+                        training_map = dict(zip(training_options, week_df.index))
+                        selected_training_label = st.selectbox(
+                            "Treino",
+                            training_options,
+                            key="history_training_select",
+                        )
+                        selected_training = week_df.loc[training_map[selected_training_label]]
+                        training_log = extract_training_changelog(selected_training)
+                        if not training_log:
+                            st.info("Este treino ainda não possui alterações registradas.")
+                        else:
+                            for entry in reversed(training_log):
+                                st.markdown(f"**{entry['timestamp_str'] or 'Sem horário'}**")
+                                if entry["changes"]:
+                                    for change in entry["changes"]:
+                                        st.markdown(f"- {change}")
+                                else:
+                                    st.caption("Alteração sem detalhes adicionais.")
 
     # ---------------- PERIODIZAÇÃO ----------------
     elif menu == "⚙️ Periodização":
@@ -2144,7 +3008,16 @@ def main():
             submitted = st.form_submit_button("Gerar Ciclo de Treinamento")
             if submitted:
                 dias_map = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4, "Sáb": 5, "Dom": 6}
-                pref_days = {mod: [dias_map[d] for d in st.session_state.get(f"pref_days_{mod}", [])] for mod in MODALIDADES}
+                off_days_cycle = set(user_preferences.get("off_days", []))
+                pref_days = {}
+                for mod in MODALIDADES:
+                    raw_selection = [
+                        dias_map[d] for d in st.session_state.get(f"pref_days_{mod}", []) if d in dias_map
+                    ]
+                    filtered_sel = [d for d in raw_selection if d not in off_days_cycle]
+                    if not filtered_sel:
+                        filtered_sel = [idx for idx in dias_map.values() if idx not in off_days_cycle]
+                    pref_days[mod] = filtered_sel
                 key_sess = {mod: st.session_state.get(f"key_sess_{mod}", "") for mod in MODALIDADES}
                 sess_per_mod = {mod: st.session_state.get(f"sess_{mod}", 2) for mod in MODALIDADES}
 
@@ -2158,6 +3031,7 @@ def main():
                     pref_days,
                     key_sess,
                     user_id,
+                    user_preferences=user_preferences,
                 )
 
                 pattern = load_timepattern_for_user(user_id) if use_time_pattern_cycle else None
