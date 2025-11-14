@@ -2,13 +2,13 @@
 # app.py — TriPlano (evolução do TriCiclo Planner)
 # ----------------------------------------------------------------------------
 # Funcionalidades:
-# - Login/cadastro multiusuário (CSV)
+# - Login/cadastro multiusuário (SQLite)
 # - Treinos multiusuário com UserID + UID estável
 # - Metas, sessões, preferências por modalidade
 # - Geração automática de semana
 # - Periodização multi-semanal (generate_cycle)
 # - Exportações: PDF / ICS
-# - Disponibilidade persistida em availability.csv
+# - Disponibilidade persistida no banco SQLite
 # - Calendário semanal (streamlit-calendar):
 #     - Seleção cria slots "Livre"
 #     - Clique em "Livre" remove slot
@@ -33,6 +33,7 @@ import os
 import json
 import math
 import calendar as py_calendar
+import sqlite3
 from datetime import datetime, date, timedelta, time, timezone
 
 import pandas as pd
@@ -67,6 +68,7 @@ AVAIL_CSV_PATH = os.path.join(DATA_DIR, "availability.csv")
 TIMEPATTERN_CSV_PATH = os.path.join(DATA_DIR, "time_patterns.csv")
 PREFERENCES_CSV_PATH = os.path.join(DATA_DIR, "preferences.csv")
 DAILY_NOTES_CSV_PATH = os.path.join(DATA_DIR, "daily_notes.csv")
+DB_PATH = os.path.join(DATA_DIR, "treinos.sqlite")
 
 SCHEMA_COLS = [
     "UserID",
@@ -163,20 +165,261 @@ def ensure_dirs():
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(EXPORT_DIR, exist_ok=True)
 
+
+def initialize_schema(conn: sqlite3.Connection):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            nome TEXT,
+            created_at TEXT
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS treinos (
+            "UserID" TEXT NOT NULL,
+            "UID" TEXT PRIMARY KEY,
+            "Data" TEXT,
+            "Start" TEXT,
+            "End" TEXT,
+            "Modalidade" TEXT,
+            "Tipo de Treino" TEXT,
+            "Volume" REAL,
+            "Unidade" TEXT,
+            "RPE" REAL,
+            "Detalhamento" TEXT,
+            "Observações" TEXT,
+            "Status" TEXT,
+            "adj" REAL,
+            "AdjAppliedAt" TEXT,
+            "ChangeLog" TEXT,
+            "LastEditedAt" TEXT,
+            "WeekStart" TEXT
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS availability (
+            "UserID" TEXT NOT NULL,
+            "WeekStart" TEXT NOT NULL,
+            "Start" TEXT,
+            "End" TEXT
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS time_patterns (
+            "UserID" TEXT PRIMARY KEY,
+            "PatternJSON" TEXT
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS preferences (
+            "UserID" TEXT PRIMARY KEY,
+            "PreferencesJSON" TEXT
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS daily_notes (
+            "UserID" TEXT NOT NULL,
+            "Date" TEXT NOT NULL,
+            "Note" TEXT,
+            "UpdatedAt" TEXT,
+            PRIMARY KEY ("UserID", "Date")
+        )
+        """
+    )
+
+    migrate_from_csv(conn)
+    conn.commit()
+
+
+def migrate_from_csv(conn: sqlite3.Connection):
+    def _table_has_data(table: str) -> bool:
+        cur = conn.execute(f"SELECT 1 FROM {table} LIMIT 1")
+        return cur.fetchone() is not None
+
+    if os.path.exists(USERS_CSV_PATH) and not _table_has_data("users"):
+        df = pd.read_csv(USERS_CSV_PATH, dtype=str).fillna("")
+        if not df.empty:
+            records = df.to_dict(orient="records")
+            conn.executemany(
+                "INSERT OR REPLACE INTO users (user_id, nome, created_at) VALUES (?, ?, ?)",
+                [
+                    (
+                        rec.get("user_id", ""),
+                        rec.get("nome", ""),
+                        rec.get("created_at", ""),
+                    )
+                    for rec in records
+                ],
+            )
+
+    if os.path.exists(CSV_PATH) and not _table_has_data("treinos"):
+        df = pd.read_csv(CSV_PATH, dtype=str).fillna("")
+        if not df.empty:
+            for col in ["Volume", "RPE", "adj"]:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+            def _normalize_date(val):
+                parsed = pd.to_datetime(val, errors="coerce")
+                if pd.isna(parsed):
+                    return ""
+                return parsed.date().isoformat()
+
+            for col in ["Data", "WeekStart"]:
+                if col in df.columns:
+                    df[col] = df[col].apply(_normalize_date)
+
+            records = df[SCHEMA_COLS].to_dict(orient="records")
+            conn.executemany(
+                ""
+                "INSERT OR REPLACE INTO treinos (\"UserID\", \"UID\", \"Data\", \"Start\", \"End\", \"Modalidade\", \"Tipo de Treino\", \"Volume\", \"Unidade\", \"RPE\", \"Detalhamento\", \"Observações\", \"Status\", \"adj\", \"AdjAppliedAt\", \"ChangeLog\", \"LastEditedAt\", \"WeekStart\")"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                "",
+                [
+                    (
+                        (rec.get("UserID", "") or "default"),
+                        rec.get("UID")
+                        or generate_uid(rec.get("UserID", "") or "default"),
+                        rec.get("Data", ""),
+                        rec.get("Start", ""),
+                        rec.get("End", ""),
+                        rec.get("Modalidade", ""),
+                        rec.get("Tipo de Treino", ""),
+                        float(rec.get("Volume", 0.0) or 0.0),
+                        rec.get("Unidade", ""),
+                        float(rec.get("RPE", 0.0) or 0.0),
+                        rec.get("Detalhamento", ""),
+                        rec.get("Observações", ""),
+                        rec.get("Status", ""),
+                        float(rec.get("adj", 0.0) or 0.0),
+                        rec.get("AdjAppliedAt", ""),
+                        rec.get("ChangeLog", ""),
+                        rec.get("LastEditedAt", ""),
+                        rec.get("WeekStart", ""),
+                    )
+                    for rec in records
+                ],
+            )
+
+    if os.path.exists(AVAIL_CSV_PATH) and not _table_has_data("availability"):
+        df = pd.read_csv(AVAIL_CSV_PATH, dtype=str).fillna("")
+        if not df.empty:
+            records = df.to_dict(orient="records")
+            conn.executemany(
+                ""
+                "INSERT OR REPLACE INTO availability (\"UserID\", \"WeekStart\", \"Start\", \"End\")"
+                " VALUES (?, ?, ?, ?)"
+                "",
+                [
+                    (
+                        rec.get("UserID", ""),
+                        rec.get("WeekStart", ""),
+                        rec.get("Start", ""),
+                        rec.get("End", ""),
+                    )
+                    for rec in records
+                ],
+            )
+
+    if os.path.exists(TIMEPATTERN_CSV_PATH) and not _table_has_data("time_patterns"):
+        df = pd.read_csv(TIMEPATTERN_CSV_PATH, dtype=str).fillna("")
+        if not df.empty:
+            records = df.to_dict(orient="records")
+            conn.executemany(
+                ""
+                "INSERT OR REPLACE INTO time_patterns (\"UserID\", \"PatternJSON\")"
+                " VALUES (?, ?)"
+                "",
+                [
+                    (
+                        rec.get("UserID", ""),
+                        rec.get("PatternJSON", ""),
+                    )
+                    for rec in records
+                ],
+            )
+
+    if os.path.exists(PREFERENCES_CSV_PATH) and not _table_has_data("preferences"):
+        df = pd.read_csv(PREFERENCES_CSV_PATH, dtype=str).fillna("")
+        if not df.empty:
+            records = df.to_dict(orient="records")
+            conn.executemany(
+                ""
+                "INSERT OR REPLACE INTO preferences (\"UserID\", \"PreferencesJSON\")"
+                " VALUES (?, ?)"
+                "",
+                [
+                    (
+                        rec.get("UserID", ""),
+                        rec.get("PreferencesJSON", ""),
+                    )
+                    for rec in records
+                ],
+            )
+
+    if os.path.exists(DAILY_NOTES_CSV_PATH) and not _table_has_data("daily_notes"):
+        df = pd.read_csv(DAILY_NOTES_CSV_PATH, dtype=str).fillna("")
+        if not df.empty:
+            records = df.to_dict(orient="records")
+            conn.executemany(
+                ""
+                "INSERT OR REPLACE INTO daily_notes (\"UserID\", \"Date\", \"Note\", \"UpdatedAt\")"
+                " VALUES (?, ?, ?, ?)"
+                "",
+                [
+                    (
+                        rec.get("UserID", ""),
+                        rec.get("Date", ""),
+                        rec.get("Note", ""),
+                        rec.get("UpdatedAt", ""),
+                    )
+                    for rec in records
+                ],
+            )
+
+
+@st.cache_resource(show_spinner=False)
+def get_db_connection() -> sqlite3.Connection:
+    ensure_dirs()
+    conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    initialize_schema(conn)
+    return conn
+
 # ----------------------------------------------------------------------------
 # Usuários
 # ----------------------------------------------------------------------------
 
 def init_users_if_needed():
-    ensure_dirs()
-    if not os.path.exists(USERS_CSV_PATH):
-        df = pd.DataFrame(columns=["user_id", "nome", "created_at"])
-        df.to_csv(USERS_CSV_PATH, index=False)
+    get_db_connection()
 
 @st.cache_data(show_spinner=False)
 def load_users_df() -> pd.DataFrame:
-    init_users_if_needed()
-    return pd.read_csv(USERS_CSV_PATH, dtype=str).fillna("")
+    conn = get_db_connection()
+    df = pd.read_sql_query(
+        "SELECT user_id, nome, created_at FROM users ORDER BY created_at",
+        conn,
+    )
+    if df.empty:
+        df = pd.DataFrame(columns=["user_id", "nome", "created_at"])
+    return df.fillna("")
 
 def save_users_df(user_id: str, user_df: pd.DataFrame):
     all_df = load_all()
@@ -199,7 +442,7 @@ def save_users_df(user_id: str, user_df: pd.DataFrame):
     others = all_df[all_df["UserID"] != user_id]
     merged = pd.concat([others, user_df[SCHEMA_COLS]], ignore_index=True)
 
-    save_all(merged)  # escreve em treinos.csv e limpa cache
+    save_all(merged)  # persiste no banco e limpa cache
 
     st.session_state["all_df"] = merged
     st.session_state["df"] = merged[merged["UserID"] == user_id].copy()
@@ -210,23 +453,38 @@ def get_user(user_id: str):
     return row.iloc[0] if not row.empty else None
 
 def save_users_book(df_users: pd.DataFrame):
-    """Salva APENAS a base de usuários em usuarios.csv."""
-    ensure_dirs()
-    df_out = df_users.copy()
-    df_out.to_csv(USERS_CSV_PATH, index=False)
+    """Substitui a base de usuários persistida no banco."""
+    conn = get_db_connection()
+    df_out = df_users.copy().fillna("")
+    records = df_out.to_dict(orient="records")
+    with conn:
+        conn.execute("DELETE FROM users")
+        if records:
+            conn.executemany(
+                "INSERT INTO users (user_id, nome, created_at) VALUES (?, ?, ?)",
+                [
+                    (
+                        rec.get("user_id", ""),
+                        rec.get("nome", ""),
+                        rec.get("created_at", ""),
+                    )
+                    for rec in records
+                ],
+            )
     load_users_df.clear()
 
 def create_user(user_id: str, nome: str) -> bool:
-    df = load_users_df()
-    if (df["user_id"] == user_id).any():
+    conn = get_db_connection()
+    cur = conn.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
+    if cur.fetchone():
         return False
-    new_row = pd.DataFrame([{
-        "user_id": user_id,
-        "nome": nome,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-    }])
-    df = pd.concat([df, new_row], ignore_index=True)
-    save_users_book(df)
+    created_at = datetime.now().isoformat(timespec="seconds")
+    with conn:
+        conn.execute(
+            "INSERT INTO users (user_id, nome, created_at) VALUES (?, ?, ?)",
+            (user_id, nome, created_at),
+        )
+    load_users_df.clear()
     return True
 
 def logout():
@@ -239,26 +497,31 @@ def logout():
     safe_rerun()
 
 # ----------------------------------------------------------------------------
-# Treinos CSV (multiusuário)
+# Treinos (multiusuário)
 # ----------------------------------------------------------------------------
 
 def init_csv_if_needed():
-    ensure_dirs()
-    if not os.path.exists(CSV_PATH):
-        df = pd.DataFrame(columns=SCHEMA_COLS)
-        df.to_csv(CSV_PATH, index=False)
+    get_db_connection()
 
 @st.cache_data(show_spinner=False)
 def load_all() -> pd.DataFrame:
-    init_csv_if_needed()
-    df = pd.read_csv(CSV_PATH, dtype=str).fillna("")
+    conn = get_db_connection()
+    df = pd.read_sql_query(
+        "SELECT "
+        "    \"UserID\", \"UID\", \"Data\", \"Start\", \"End\", \"Modalidade\","
+        "    \"Tipo de Treino\", \"Volume\", \"Unidade\", \"RPE\", \"Detalhamento\","
+        "    \"Observações\", \"Status\", \"adj\", \"AdjAppliedAt\", \"ChangeLog\","
+        "    \"LastEditedAt\", \"WeekStart\""
+        " FROM treinos",
+        conn,
+    )
+    if df.empty:
+        df = pd.DataFrame(columns=SCHEMA_COLS)
 
     for col in SCHEMA_COLS:
         if col not in df.columns:
             if col in ["Volume", "RPE", "adj"]:
                 df[col] = 0.0
-            elif col == "UserID":
-                df[col] = "default"
             else:
                 df[col] = ""
 
@@ -279,19 +542,51 @@ def load_all() -> pd.DataFrame:
                 if r.get("Unidade", "") != unit_ok:
                     df.at[i, "Unidade"] = unit_ok
 
-    if "UID" not in df.columns:
-        df["UID"] = ""
-    if "UserID" not in df.columns:
-        df["UserID"] = "default"
-
     return df[SCHEMA_COLS].copy()
 
 def save_all(df: pd.DataFrame):
+    conn = get_db_connection()
     df_out = df.copy()
     if not df_out.empty:
-        df_out["Data"] = pd.to_datetime(df_out["Data"], errors="coerce").dt.date.astype(str)
-        df_out["WeekStart"] = pd.to_datetime(df_out["WeekStart"], errors="coerce").dt.date.astype(str)
-    df_out.to_csv(CSV_PATH, index=False)
+        data_series = pd.to_datetime(df_out["Data"], errors="coerce")
+        week_series = pd.to_datetime(df_out["WeekStart"], errors="coerce")
+        df_out["Data"] = data_series.dt.date.astype(str)
+        df_out["WeekStart"] = week_series.dt.date.astype(str)
+        df_out.loc[data_series.isna(), "Data"] = ""
+        df_out.loc[week_series.isna(), "WeekStart"] = ""
+    records = df_out.fillna("").to_dict(orient="records")
+    with conn:
+        conn.execute("DELETE FROM treinos")
+        if records:
+            conn.executemany(
+                ""
+                "INSERT INTO treinos (\"UserID\", \"UID\", \"Data\", \"Start\", \"End\", \"Modalidade\", \"Tipo de Treino\", \"Volume\", \"Unidade\", \"RPE\", \"Detalhamento\", \"Observações\", \"Status\", \"adj\", \"AdjAppliedAt\", \"ChangeLog\", \"LastEditedAt\", \"WeekStart\")"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                "",
+                [
+                    (
+                        rec.get("UserID", ""),
+                        rec.get("UID", ""),
+                        rec.get("Data", ""),
+                        rec.get("Start", ""),
+                        rec.get("End", ""),
+                        rec.get("Modalidade", ""),
+                        rec.get("Tipo de Treino", ""),
+                        float(rec.get("Volume", 0.0) or 0.0),
+                        rec.get("Unidade", ""),
+                        float(rec.get("RPE", 0.0) or 0.0),
+                        rec.get("Detalhamento", ""),
+                        rec.get("Observações", ""),
+                        rec.get("Status", ""),
+                        float(rec.get("adj", 0.0) or 0.0),
+                        rec.get("AdjAppliedAt", ""),
+                        rec.get("ChangeLog", ""),
+                        rec.get("LastEditedAt", ""),
+                        rec.get("WeekStart", ""),
+                    )
+                    for rec in records
+                ],
+            )
     load_all.clear()
 
 def generate_uid(user_id: str) -> str:
@@ -324,15 +619,17 @@ def save_user_df(user_id: str, user_df: pd.DataFrame):
 # ----------------------------------------------------------------------------
 
 def init_availability_if_needed():
-    ensure_dirs()
-    if not os.path.exists(AVAIL_CSV_PATH):
-        df = pd.DataFrame(columns=["UserID", "WeekStart", "Start", "End"])
-        df.to_csv(AVAIL_CSV_PATH, index=False)
+    get_db_connection()
 
 @st.cache_data(show_spinner=False)
 def load_all_availability() -> pd.DataFrame:
-    init_availability_if_needed()
-    df = pd.read_csv(AVAIL_CSV_PATH, dtype=str).fillna("")
+    conn = get_db_connection()
+    df = pd.read_sql_query(
+        "SELECT \"UserID\", \"WeekStart\", \"Start\", \"End\" FROM availability",
+        conn,
+    )
+    if df.empty:
+        df = pd.DataFrame(columns=["UserID", "WeekStart", "Start", "End"])
     if not df.empty:
         df["WeekStart"] = pd.to_datetime(df["WeekStart"], errors="coerce").dt.date
         df["Start"] = pd.to_datetime(df["Start"], errors="coerce")
@@ -340,12 +637,34 @@ def load_all_availability() -> pd.DataFrame:
     return df
 
 def save_all_availability(df: pd.DataFrame):
+    conn = get_db_connection()
     df_out = df.copy()
     if not df_out.empty:
-        df_out["WeekStart"] = pd.to_datetime(df_out["WeekStart"], errors="coerce").dt.date.astype(str)
-        df_out["Start"] = pd.to_datetime(df_out["Start"], errors="coerce").astype(str)
-        df_out["End"] = pd.to_datetime(df_out["End"], errors="coerce").astype(str)
-    df_out.to_csv(AVAIL_CSV_PATH, index=False)
+        week_series = pd.to_datetime(df_out["WeekStart"], errors="coerce")
+        start_series = pd.to_datetime(df_out["Start"], errors="coerce")
+        end_series = pd.to_datetime(df_out["End"], errors="coerce")
+        df_out["WeekStart"] = week_series.dt.date.astype(str)
+        df_out["Start"] = start_series.astype(str)
+        df_out["End"] = end_series.astype(str)
+        df_out.loc[week_series.isna(), "WeekStart"] = ""
+        df_out.loc[start_series.isna(), "Start"] = ""
+        df_out.loc[end_series.isna(), "End"] = ""
+    records = df_out.fillna("").to_dict(orient="records")
+    with conn:
+        conn.execute("DELETE FROM availability")
+        if records:
+            conn.executemany(
+                "INSERT INTO availability (\"UserID\", \"WeekStart\", \"Start\", \"End\") VALUES (?, ?, ?, ?)",
+                [
+                    (
+                        rec.get("UserID", ""),
+                        rec.get("WeekStart", ""),
+                        rec.get("Start", ""),
+                        rec.get("End", ""),
+                    )
+                    for rec in records
+                ],
+            )
     load_all_availability.clear()
 
 def normalize_slots(slots):
@@ -394,40 +713,47 @@ def set_week_availability(user_id: str, week_start: date, slots):
 # ----------------------------------------------------------------------------
 
 def init_timepattern_if_needed():
-    ensure_dirs()
-    if not os.path.exists(TIMEPATTERN_CSV_PATH):
-        df = pd.DataFrame(columns=["UserID", "PatternJSON"])
-        df.to_csv(TIMEPATTERN_CSV_PATH, index=False)
+    get_db_connection()
 
 
 @st.cache_data(show_spinner=False)
 def load_all_timepatterns() -> pd.DataFrame:
-    init_timepattern_if_needed()
-    return pd.read_csv(TIMEPATTERN_CSV_PATH, dtype=str).fillna("")
+    conn = get_db_connection()
+    df = pd.read_sql_query(
+        "SELECT \"UserID\", \"PatternJSON\" FROM time_patterns",
+        conn,
+    )
+    if df.empty:
+        df = pd.DataFrame(columns=["UserID", "PatternJSON"])
+    return df.fillna("")
 
 
 def save_timepattern_for_user(user_id: str, pattern: dict):
-    df = load_all_timepatterns()
-    df = df[df["UserID"] != user_id]
-
-    new_row = pd.DataFrame([
-        {
-            "UserID": user_id,
-            "PatternJSON": json.dumps(pattern, ensure_ascii=False),
-        }
-    ])
-    df = pd.concat([df, new_row], ignore_index=True)
-    df.to_csv(TIMEPATTERN_CSV_PATH, index=False)
+    conn = get_db_connection()
+    serialized = json.dumps(pattern, ensure_ascii=False)
+    with conn:
+        conn.execute(
+            "DELETE FROM time_patterns WHERE \"UserID\" = ?",
+            (user_id,),
+        )
+        conn.execute(
+            "INSERT INTO time_patterns (\"UserID\", \"PatternJSON\") VALUES (?, ?)",
+            (user_id, serialized),
+        )
     load_all_timepatterns.clear()
 
 
 def load_timepattern_for_user(user_id: str):
-    df = load_all_timepatterns()
-    row = df[df["UserID"] == user_id]
-    if row.empty:
+    conn = get_db_connection()
+    cur = conn.execute(
+        "SELECT \"PatternJSON\" FROM time_patterns WHERE \"UserID\" = ?",
+        (user_id,),
+    )
+    row = cur.fetchone()
+    if not row:
         return None
     try:
-        return json.loads(row.iloc[0]["PatternJSON"])
+        return json.loads(row[0]) if row[0] else None
     except Exception:
         return None
 
@@ -437,16 +763,19 @@ def load_timepattern_for_user(user_id: str):
 
 
 def init_preferences_if_needed():
-    ensure_dirs()
-    if not os.path.exists(PREFERENCES_CSV_PATH):
-        df = pd.DataFrame(columns=["UserID", "PreferencesJSON"])
-        df.to_csv(PREFERENCES_CSV_PATH, index=False)
+    get_db_connection()
 
 
 @st.cache_data(show_spinner=False)
 def load_all_preferences() -> pd.DataFrame:
-    init_preferences_if_needed()
-    return pd.read_csv(PREFERENCES_CSV_PATH, dtype=str).fillna("")
+    conn = get_db_connection()
+    df = pd.read_sql_query(
+        "SELECT \"UserID\", \"PreferencesJSON\" FROM preferences",
+        conn,
+    )
+    if df.empty:
+        df = pd.DataFrame(columns=["UserID", "PreferencesJSON"])
+    return df.fillna("")
 
 
 def load_preferences_for_user(user_id: str) -> dict:
@@ -471,18 +800,17 @@ def load_preferences_for_user(user_id: str) -> dict:
 
 
 def save_preferences_for_user(user_id: str, preferences: dict):
-    df = load_all_preferences()
-    df = df[df["UserID"] != user_id]
-
+    conn = get_db_connection()
     serialized = json.dumps(preferences, ensure_ascii=False)
-    new_row = pd.DataFrame([
-        {
-            "UserID": user_id,
-            "PreferencesJSON": serialized,
-        }
-    ])
-    df = pd.concat([df, new_row], ignore_index=True)
-    df.to_csv(PREFERENCES_CSV_PATH, index=False)
+    with conn:
+        conn.execute(
+            "DELETE FROM preferences WHERE \"UserID\" = ?",
+            (user_id,),
+        )
+        conn.execute(
+            "INSERT INTO preferences (\"UserID\", \"PreferencesJSON\") VALUES (?, ?)",
+            (user_id, serialized),
+        )
     load_all_preferences.clear()
 
 
@@ -492,16 +820,18 @@ def save_preferences_for_user(user_id: str, preferences: dict):
 
 
 def init_daily_notes_if_needed():
-    ensure_dirs()
-    if not os.path.exists(DAILY_NOTES_CSV_PATH):
-        df = pd.DataFrame(columns=["UserID", "Date", "Note", "UpdatedAt"])
-        df.to_csv(DAILY_NOTES_CSV_PATH, index=False)
+    get_db_connection()
 
 
 @st.cache_data(show_spinner=False)
 def load_all_daily_notes() -> pd.DataFrame:
-    init_daily_notes_if_needed()
-    df = pd.read_csv(DAILY_NOTES_CSV_PATH, dtype=str).fillna("")
+    conn = get_db_connection()
+    df = pd.read_sql_query(
+        "SELECT \"UserID\", \"Date\", \"Note\", \"UpdatedAt\" FROM daily_notes",
+        conn,
+    )
+    if df.empty:
+        df = pd.DataFrame(columns=["UserID", "Date", "Note", "UpdatedAt"])
     if not df.empty:
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
     return df
@@ -518,21 +848,23 @@ def load_daily_note_for_user(user_id: str, target_date: date) -> str:
 
 
 def save_daily_note_for_user(user_id: str, target_date: date, note: str):
-    df = load_all_daily_notes()
-    if not df.empty:
-        df = df[~((df["UserID"] == user_id) & (df["Date"] == target_date))]
-
-    new_row = pd.DataFrame([
-        {
-            "UserID": user_id,
-            "Date": target_date,
-            "Note": note,
-            "UpdatedAt": datetime.now().isoformat(timespec="seconds"),
-        }
-    ])
-
-    df = pd.concat([df, new_row], ignore_index=True)
-    df.to_csv(DAILY_NOTES_CSV_PATH, index=False)
+    conn = get_db_connection()
+    updated_at = datetime.now().isoformat(timespec="seconds")
+    if isinstance(target_date, str):
+        date_str = target_date
+    elif isinstance(target_date, datetime):
+        date_str = target_date.date().isoformat()
+    else:
+        date_str = target_date.isoformat()
+    with conn:
+        conn.execute(
+            "DELETE FROM daily_notes WHERE \"UserID\" = ? AND \"Date\" = ?",
+            (user_id, date_str),
+        )
+        conn.execute(
+            "INSERT INTO daily_notes (\"UserID\", \"Date\", \"Note\", \"UpdatedAt\") VALUES (?, ?, ?, ?)",
+            (user_id, date_str, note, updated_at),
+        )
     load_all_daily_notes.clear()
 
 
@@ -1923,7 +2255,7 @@ def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
             week_df.at[idx, "UID"] = new_uid
             base_df.at[idx, "UID"] = new_uid
 
-        # Atualiza sessão + CSV para que os handlers (eventDrop/eventClick) enxerguem os mesmos UIDs do calendário
+        # Atualiza sessão + banco para que os handlers (eventDrop/eventClick) enxerguem os mesmos UIDs do calendário
         save_user_df(user_id, base_df)
 
     # StartDT / EndDT canônicos
@@ -2512,7 +2844,7 @@ def main():
                 canonical_week_df.clear()
                 safe_rerun()
 
-            # Clique em treino -> SALVA horário do calendário no CSV e só depois abre o popup
+            # Clique em treino -> SALVA horário do calendário no banco e só depois abre o popup
             if etype == "treino":
                 uid = ext.get("uid") or ev.get("id")
 
@@ -2538,7 +2870,7 @@ def main():
                         df_current.loc[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
                         df_current.loc[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
 
-                        # 2) Persiste de verdade no CSV
+                        # 2) Persiste de verdade no banco
                         save_user_df(user_id, df_current)
                         st.session_state["df"] = df_current
                         canonical_week_df.clear()
