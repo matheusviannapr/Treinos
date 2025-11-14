@@ -62,6 +62,7 @@ EXPORT_DIR = "exports"
 CSV_PATH = os.path.join(DATA_DIR, "treinos.csv")
 USERS_CSV_PATH = os.path.join(DATA_DIR, "usuarios.csv")
 AVAIL_CSV_PATH = os.path.join(DATA_DIR, "availability.csv")
+TIMEPATTERN_CSV_PATH = os.path.join(DATA_DIR, "time_patterns.csv")
 
 SCHEMA_COLS = [
     "UserID",
@@ -374,6 +375,190 @@ def set_week_availability(user_id: str, week_start: date, slots):
         all_df = pd.concat([all_df, pd.DataFrame(rows)], ignore_index=True)
 
     save_all_availability(all_df)
+
+# ----------------------------------------------------------------------------
+# Padrões de horário por usuário
+# ----------------------------------------------------------------------------
+
+def init_timepattern_if_needed():
+    ensure_dirs()
+    if not os.path.exists(TIMEPATTERN_CSV_PATH):
+        df = pd.DataFrame(columns=["UserID", "PatternJSON"])
+        df.to_csv(TIMEPATTERN_CSV_PATH, index=False)
+
+
+@st.cache_data(show_spinner=False)
+def load_all_timepatterns() -> pd.DataFrame:
+    init_timepattern_if_needed()
+    return pd.read_csv(TIMEPATTERN_CSV_PATH, dtype=str).fillna("")
+
+
+def save_timepattern_for_user(user_id: str, pattern: dict):
+    df = load_all_timepatterns()
+    df = df[df["UserID"] != user_id]
+
+    new_row = pd.DataFrame([
+        {
+            "UserID": user_id,
+            "PatternJSON": json.dumps(pattern, ensure_ascii=False),
+        }
+    ])
+    df = pd.concat([df, new_row], ignore_index=True)
+    df.to_csv(TIMEPATTERN_CSV_PATH, index=False)
+    load_all_timepatterns.clear()
+
+
+def load_timepattern_for_user(user_id: str):
+    df = load_all_timepatterns()
+    row = df[df["UserID"] == user_id]
+    if row.empty:
+        return None
+    try:
+        return json.loads(row.iloc[0]["PatternJSON"])
+    except Exception:
+        return None
+
+
+def _ensure_py_datetime(value):
+    if isinstance(value, pd.Timestamp):
+        return value.to_pydatetime()
+    return value
+
+
+def extract_time_pattern_from_week(week_df: pd.DataFrame) -> dict:
+    """Extrai slots de horários (start/dur) para cada dia da semana."""
+
+    pattern = {i: [] for i in range(7)}
+    if week_df.empty:
+        return pattern
+
+    for _, r in week_df.iterrows():
+        if r.get("Modalidade") == "Descanso":
+            continue
+
+        data = r.get("Data")
+        if pd.isna(data):
+            continue
+        if isinstance(data, str):
+            try:
+                data = datetime.fromisoformat(data).date()
+            except Exception:
+                continue
+        weekday = data.weekday()
+
+        start = r.get("StartDT")
+        end = r.get("EndDT")
+        if start is None or end is None or pd.isna(start) or pd.isna(end):
+            continue
+
+        start = _ensure_py_datetime(start).replace(tzinfo=None)
+        end = _ensure_py_datetime(end).replace(tzinfo=None)
+
+        duration_min = int((end - start).total_seconds() / 60)
+        if duration_min <= 0:
+            duration_min = DEFAULT_TRAINING_DURATION_MIN
+
+        pattern[weekday].append(
+            {
+                "start": start.time().strftime("%H:%M"),
+                "dur": duration_min,
+            }
+        )
+
+    for wd in pattern:
+        pattern[wd] = sorted(pattern[wd], key=lambda slot: slot["start"])
+
+    return pattern
+
+
+def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataFrame:
+    """Aplica slots de horário por dia em um DataFrame de semana."""
+
+    if not pattern or week_df.empty:
+        return week_df
+
+    df = week_df.copy()
+
+    if not np.issubdtype(df["Data"].dtype, np.datetime64):
+        df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
+
+    for wd in range(7):
+        slots = pattern.get(wd) or pattern.get(str(wd)) or []
+        if not slots:
+            continue
+
+        day_mask = df["Data"].apply(lambda d: False if pd.isna(d) else d.weekday() == wd)
+        if not day_mask.any():
+            continue
+
+        day_df = df[day_mask].copy()
+        if "StartDT" in day_df.columns:
+            day_df = day_df.sort_values("StartDT")
+        else:
+            day_df = day_df.sort_values("Data")
+
+        slot_idx = 0
+        for idx, row in day_df.iterrows():
+            if row.get("Modalidade") == "Descanso":
+                continue
+
+            if slot_idx >= len(slots):
+                base_time = time(6, 0)
+                duration = DEFAULT_TRAINING_DURATION_MIN
+            else:
+                slot = slots[slot_idx]
+                try:
+                    hour, minute = map(int, str(slot.get("start", "06:00")).split(":"))
+                except Exception:
+                    hour, minute = 6, 0
+                base_time = time(hour, minute)
+                duration = int(slot.get("dur", DEFAULT_TRAINING_DURATION_MIN) or DEFAULT_TRAINING_DURATION_MIN)
+
+            current_date = row["Data"]
+            if pd.isna(current_date):
+                continue
+
+            start_dt = datetime.combine(current_date, base_time)
+            end_dt = start_dt + timedelta(minutes=duration)
+
+            df.at[idx, "Start"] = start_dt.isoformat()
+            df.at[idx, "End"] = end_dt.isoformat()
+            df.at[idx, "StartDT"] = start_dt
+            df.at[idx, "EndDT"] = end_dt
+
+            slot_idx += 1
+
+    return df
+
+
+def apply_time_pattern_to_cycle(cycle_df: pd.DataFrame, pattern: dict) -> pd.DataFrame:
+    if cycle_df.empty or not pattern:
+        return cycle_df
+
+    df = cycle_df.copy()
+
+    if "Data" in df.columns and not np.issubdtype(df["Data"].dtype, np.datetime64):
+        df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
+
+    if "WeekStart" not in df.columns:
+        return df
+
+    if not np.issubdtype(df["WeekStart"].dtype, np.datetime64):
+        df["WeekStart"] = pd.to_datetime(df["WeekStart"], errors="coerce").dt.date
+
+    week_starts = sorted(pd.Series(df["WeekStart"]).dropna().unique())
+    for ws in week_starts:
+        week_mask = df["WeekStart"] == ws
+        if not week_mask.any():
+            continue
+
+        week_chunk = df[week_mask].copy()
+        week_chunk = apply_time_pattern_to_week(week_chunk, pattern)
+
+        df.loc[week_mask, "Start"] = week_chunk["Start"].values
+        df.loc[week_mask, "End"] = week_chunk["End"].values
+
+    return df
 
 # ----------------------------------------------------------------------------
 # Helpers gerais
@@ -1357,6 +1542,11 @@ def main():
             ["Usar horários livres", "Ignorar horários livres"],
             horizontal=True,
         )
+        use_time_pattern = st.checkbox(
+            "Usar padrão de horários salvo (se existir)",
+            value=False,
+            key="use_time_pattern_week",
+        )
 
         st.markdown("---")
 
@@ -1380,16 +1570,24 @@ def main():
                 user_id,
             )
 
-            use_avail = (modo_agendamento == "Usar horários livres")
-            new_week_df, updated_slots = assign_times_to_week(
-                new_week_df,
-                week_slots,
-                use_avail,
-            )
+            pattern = load_timepattern_for_user(user_id) if use_time_pattern else None
+            if use_time_pattern and not pattern:
+                st.warning("Nenhum padrão de horários salvo ainda. Usando lógica padrão.")
 
-            if use_avail:
-                updated_slots = subtract_trainings_from_slots(new_week_df, updated_slots)
-                set_week_availability(user_id, week_start, updated_slots)
+            if pattern:
+                new_week_df = apply_time_pattern_to_week(new_week_df, pattern)
+                updated_slots = week_slots
+            else:
+                use_avail = (modo_agendamento == "Usar horários livres")
+                new_week_df, updated_slots = assign_times_to_week(
+                    new_week_df,
+                    week_slots,
+                    use_avail,
+                )
+
+                if use_avail:
+                    updated_slots = subtract_trainings_from_slots(new_week_df, updated_slots)
+                    set_week_availability(user_id, week_start, updated_slots)
 
             user_df = st.session_state["df"]
             others = user_df[user_df["WeekStart"] != week_start]
@@ -1408,6 +1606,40 @@ def main():
         st.subheader("4. Calendário da Semana")
 
         week_df_can = canonical_week_df(user_id, week_start)
+
+        col_pat1, col_pat2 = st.columns(2)
+        if col_pat1.button("📌 Capturar padrão de horários desta semana"):
+            pattern = extract_time_pattern_from_week(week_df_can)
+            save_timepattern_for_user(user_id, pattern)
+            st.success("Padrão de horários salvo para este usuário.")
+
+        if col_pat2.button("↩️ Aplicar padrão salvo nesta semana"):
+            pattern = load_timepattern_for_user(user_id)
+            if not pattern:
+                st.warning("Nenhum padrão de horários salvo ainda.")
+            else:
+                df_current = st.session_state["df"].copy()
+                week_start_series = pd.to_datetime(
+                    df_current.get("WeekStart"), errors="coerce"
+                ).dt.date
+                week_mask = (
+                    (df_current["UserID"] == user_id)
+                    & (week_start_series == week_start)
+                )
+                week_chunk = df_current[week_mask].copy()
+
+                if week_chunk.empty:
+                    st.warning("Nenhum treino encontrado nesta semana para aplicar o padrão.")
+                else:
+                    week_chunk = apply_time_pattern_to_week(week_chunk, pattern)
+                    df_current.loc[week_mask, "Start"] = week_chunk["Start"].values
+                    df_current.loc[week_mask, "End"] = week_chunk["End"].values
+
+                    save_user_df(user_id, df_current)
+                    canonical_week_df.clear()
+                    st.success("Padrão aplicado nesta semana.")
+                    safe_rerun()
+
         events = []
 
         # Treinos
@@ -1822,6 +2054,12 @@ def main():
                         key=f"prop_{phase}_{mod}"
                     )
 
+            use_time_pattern_cycle = st.checkbox(
+                "Aplicar padrão de horários salvo em todas as semanas do ciclo",
+                value=True,
+                key="use_time_pattern_cycle",
+            )
+
             submitted = st.form_submit_button("Gerar Ciclo de Treinamento")
             if submitted:
                 dias_map = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4, "Sáb": 5, "Dom": 6}
@@ -1840,6 +2078,12 @@ def main():
                     key_sess,
                     user_id,
                 )
+
+                pattern = load_timepattern_for_user(user_id) if use_time_pattern_cycle else None
+                if use_time_pattern_cycle and not pattern:
+                    st.warning("Nenhum padrão de horários salvo ainda. Ciclo gerado com horários padrão.")
+                if pattern:
+                    new_cycle_df = apply_time_pattern_to_cycle(new_cycle_df, pattern)
 
                 # Remove semanas existentes que serão substituídas
                 existing_df = st.session_state["df"]
