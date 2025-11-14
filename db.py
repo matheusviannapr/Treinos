@@ -36,11 +36,18 @@ def _get_database_url() -> str:
 @lru_cache(maxsize=1)
 def get_engine() -> Engine:
     """Return a cached SQLAlchemy engine."""
-    url = _get_database_url()
+    raw_url = _get_database_url()
+    normalized_url = _normalize_driver(raw_url)
+    return create_engine(normalized_url, pool_pre_ping=True, future=True)
+
+
+def _normalize_driver(url: str) -> str:
+    """Ensure the SQLAlchemy URL uses the psycopg driver for Postgres."""
     parsed = make_url(url)
-    if parsed.drivername == "postgresql":
+    drivername = parsed.drivername or ""
+    if drivername.startswith("postgresql") and "psycopg" not in drivername:
         parsed = parsed.set(drivername="postgresql+psycopg")
-    return create_engine(parsed, pool_pre_ping=True, future=True)
+    return parsed.render_as_string(hide_password=False)
 
 
 @contextmanager
