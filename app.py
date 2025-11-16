@@ -1,5 +1,5 @@
 
-# app.py — TriPlano (evolução do TriCiclo Planner)
+# app.py — TriPlanner (evolução do TriCiclo Planner)
 # ----------------------------------------------------------------------------
 # Funcionalidades:
 # - Login/cadastro multiusuário (SQLite)
@@ -102,6 +102,14 @@ MODALITY_COLORS = {
 MODALITY_TEXT_COLORS = {
     "Ciclismo": (255, 255, 255),
 }
+MODALITY_EMOJI = {
+    "Corrida": "🏃‍♂️",
+    "Ciclismo": "🚴‍♂️",
+    "Natação": "🏊‍♂️",
+    "Força/Calistenia": "🏋️‍♂️",
+    "Mobilidade": "🤸‍♂️",
+    "Descanso": "😴",
+}
 
 PDF_REPLACE = str.maketrans({
     "—": "-",
@@ -117,6 +125,11 @@ def pdf_safe(s: str) -> str:
         return ""
     t = str(s).translate(PDF_REPLACE)
     return unicodedata.normalize("NFKD", t).encode("latin-1", "ignore").decode("latin-1")
+
+
+def modality_label(mod: str) -> str:
+    emoji = MODALITY_EMOJI.get(mod, "")
+    return f"{emoji} {mod}".strip()
 
 UNITS_ALLOWED = {
     "Corrida": "km",
@@ -498,10 +511,10 @@ def load_all() -> pd.DataFrame:
     init_database()
     df = db.fetch_dataframe(
         "SELECT "
-        "    \"UserID\", \"UID\", \"Data\", \"Start\", \"End\", \"Modalidade\"," 
+        "    \"UserID\", \"UID\", \"Data\"::text AS \"Data\", \"Start\"::text AS \"Start\", \"End\"::text AS \"End\", \"Modalidade\","
         "    \"Tipo de Treino\", \"Volume\", \"Unidade\", \"RPE\", \"Detalhamento\"," 
         "    \"Observações\", \"Status\", \"adj\", \"AdjAppliedAt\", \"ChangeLog\"," 
-        "    \"LastEditedAt\", \"WeekStart\"" 
+        "    \"LastEditedAt\", \"WeekStart\"::text AS \"WeekStart\""
         " FROM treinos"
     )
     if df.empty:
@@ -622,7 +635,7 @@ def init_availability_if_needed():
 def load_all_availability() -> pd.DataFrame:
     init_database()
     df = db.fetch_dataframe(
-        "SELECT \"UserID\", \"WeekStart\", \"Start\", \"End\" FROM availability"
+        "SELECT \"UserID\", \"WeekStart\"::text AS \"WeekStart\", \"Start\"::text AS \"Start\", \"End\"::text AS \"End\" FROM availability"
     )
     if df.empty:
         df = pd.DataFrame(columns=["UserID", "WeekStart", "Start", "End"])
@@ -1590,11 +1603,11 @@ def update_availability_from_current_week(user_id: str, week_start: date):
 # ----------------------------------------------------------------------------
 
 def generate_ics(df: pd.DataFrame) -> str:
-    ics = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//TriPlano//Planner//EN\n"
+    ics = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//TriPlanner//Planner//EN\n"
     for _, row in df.iterrows():
         start = row["StartDT"]
         end = row["EndDT"]
-        summary = f"{row['Modalidade']} - {row['Tipo de Treino']}"
+        summary = f"{modality_label(row['Modalidade'])} - {row['Tipo de Treino']}"
         vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
         description = (
             f"Volume: {vol_val:g} {row['Unidade']}\n"
@@ -1602,7 +1615,7 @@ def generate_ics(df: pd.DataFrame) -> str:
             f"Status: {row['Status']}"
         )
         ics += "BEGIN:VEVENT\n"
-        ics += f"UID:{start.strftime('%Y%m%d%H%M%S')}-{hash(summary)}@triplano.app\n"
+        ics += f"UID:{start.strftime('%Y%m%d%H%M%S')}-{hash(summary)}@triplanner.app\n"
         ics += f"DTSTAMP:{datetime.now().strftime('%Y%m%dT%H%M%SZ')}\n"
         ics += f"DTSTART:{start.strftime('%Y%m%dT%H%M%S')}\n"
         ics += f"DTEND:{end.strftime('%Y%m%dT%H%M%S')}\n"
@@ -1716,7 +1729,7 @@ def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
         pdf.cell(col_widths[0], line_h, pdf_safe(data_str), 1, 0, "L", 1)
         pdf.cell(col_widths[1], line_h, pdf_safe(ini_str), 1, 0, "C", 1)
         pdf.cell(col_widths[2], line_h, pdf_safe(fim_str), 1, 0, "C", 1)
-        pdf.cell(col_widths[3], line_h, pdf_safe(mod), 1, 0, "L", 1)
+        pdf.cell(col_widths[3], line_h, pdf_safe(modality_label(mod)), 1, 0, "L", 1)
         pdf.cell(col_widths[4], line_h, pdf_safe(tipo), 1, 0, "L", 1)
         pdf.cell(col_widths[5], line_h, pdf_safe(vol), 1, 0, "R", 1)
         pdf.cell(col_widths[6], line_h, pdf_safe(unit), 1, 0, "C", 1)
@@ -2120,7 +2133,7 @@ def build_week_changelog(df: pd.DataFrame, week_start: date) -> list[dict]:
 
     events = []
     for _, row in chunk.iterrows():
-        training_desc = f"{row['Modalidade']} - {row['Tipo de Treino']} ({row['Data']})"
+        training_desc = f"{modality_label(row['Modalidade'])} - {row['Tipo de Treino']} ({row['Data']})"
         for entry in extract_training_changelog(row):
             events.append(
                 {
@@ -2274,11 +2287,11 @@ def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
 
 
 def main():
-    st.set_page_config(page_title="TriPlano", layout="wide")
+    st.set_page_config(page_title="TriPlanner", layout="wide")
 
     # LOGIN
     if "user_id" not in st.session_state:
-        st.title("Bem-vindo ao TriPlano 🌀")
+        st.title("Bem-vindo ao TriPlanner 🏊‍♂️🚴‍♂️🏃‍♂️🏋️‍♂️")
         st.markdown("Faça login ou crie sua conta para começar.")
 
         tab1, tab2 = st.tabs(["Entrar", "Criar Conta"])
@@ -2349,7 +2362,7 @@ def main():
     user_preferences = st.session_state.get("user_preferences_cache", load_preferences_for_user(user_id))
 
     # SIDEBAR
-    st.sidebar.title("TriPlano 🌀")
+    st.sidebar.title("TriPlanner 🏊‍♂️🚴‍♂️🏃‍♂️🏋️‍♂️")
     st.sidebar.markdown(f"👤 **{user_name}**  \n`{user_id}`")
     if st.sidebar.button("Sair"):
         logout()
@@ -2382,7 +2395,7 @@ def main():
                     default_label = "Indiferente"
                 default_index = time_options.index(default_label)
                 time_pref_inputs[mod] = pref_cols[idx % 3].selectbox(
-                    mod,
+                    modality_label(mod),
                     options=time_options,
                     index=default_index,
                     key=f"timepref_{mod}",
@@ -2462,7 +2475,7 @@ def main():
             unit = UNITS_ALLOWED[mod]
 
             weekly_targets[mod] = cols_mod[i].number_input(
-                f"{mod} ({unit})/sem",
+                f"{modality_label(mod)} ({unit})/sem",
                 value=float(st.session_state.get(f"target_{mod}", 0.0)),
                 min_value=0.0,
                 step=_unit_step(unit),
@@ -2475,21 +2488,21 @@ def main():
                 if idx in default_days.get(mod, []) and idx not in off_days_set
             ]
             cols_mod[i].multiselect(
-                f"Dias {mod}",
+                f"Dias {modality_label(mod)}",
                 options=list(dias_semana_options.keys()),
                 key=f"pref_days_{mod}",
                 default=default_selected,
             )
 
             cols_sess[i].selectbox(
-                f"Treino chave {mod}",
+                f"Treino chave {modality_label(mod)}",
                 options=[""] + TIPOS_MODALIDADE.get(mod, []),
                 key=f"key_sess_{mod}",
             )
 
             default_sessions = 3 if mod in ["Corrida", "Ciclismo"] else 2
             sessions_per_mod[mod] = cols_sess[i].number_input(
-                f"Sessões {mod}",
+                f"Sessões {modality_label(mod)}",
                 value=int(st.session_state.get(f"sess_{mod}", default_sessions)),
                 min_value=0,
                 max_value=5,
@@ -2645,7 +2658,7 @@ def main():
             uid = row["UID"]
             vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
 
-            title = f"{row['Modalidade']} - {row['Tipo de Treino']}"
+            title = f"{modality_label(row['Modalidade'])} - {row['Tipo de Treino']}"
             if vol_val > 0:
                 title += f" ({vol_val:g} {row['Unidade']})"
 
@@ -3277,7 +3290,7 @@ def main():
                         st.info("Nenhum treino encontrado na semana selecionada.")
                     else:
                         training_options = [
-                            f"{r['Data'].strftime('%d/%m')} — {r['Modalidade']} ({r['Tipo de Treino']})"
+                            f"{r['Data'].strftime('%d/%m')} — {modality_label(r['Modalidade'])} ({r['Tipo de Treino']})"
                             for _, r in week_df.iterrows()
                         ]
                         training_map = dict(zip(training_options, week_df.index))
@@ -3318,7 +3331,7 @@ def main():
                 for mod in MODALIDADES:
                     default_prop = {"Base": 0.8, "Build": 1.0, "Peak": 1.2, "Recovery": 0.6}.get(phase, 0.8)
                     phase_props[phase][mod] = cols_phase[i].number_input(
-                        f"% {mod}",
+                        f"% {modality_label(mod)}",
                         min_value=0.0, max_value=2.0, value=default_prop, step=0.1, format="%.1f",
                         key=f"prop_{phase}_{mod}"
                     )
