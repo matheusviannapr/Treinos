@@ -1750,6 +1750,63 @@ def render_triplanner_cycle_planner(user_id: str, user_preferences: dict):
         )
 
     st.subheader("Aplicar no calendário semanal")
+    default_initial_targets = _convert_triplanner_targets(
+        (plan.get("semanas") or [{}])[0].get("volume_por_modalidade", {}),
+        plan.get("unidade_volume", ""),
+    )
+    default_initial_targets.setdefault("Força/Calistenia", 60.0)
+    default_initial_targets.setdefault("Mobilidade", 20.0)
+
+    presc_popover = st.popover(
+        "🎯 Parâmetros de prescrição do ciclo",
+        use_container_width=True,
+    )
+    with presc_popover:
+        st.subheader("Ritmos médios do atleta")
+        pace_col1, pace_col2, pace_col3 = st.columns(3)
+        paces_cycle = {
+            "run_pace_min_per_km": pace_col1.number_input(
+                "Corrida (min/km)",
+                value=float(st.session_state.get("pace_run_cycle", 5.0)),
+                min_value=3.0,
+                max_value=10.0,
+                step=0.1,
+                format="%.1f",
+                key="pace_run_cycle",
+            ),
+            "swim_sec_per_100m": pace_col2.number_input(
+                "Natação (seg/100m)",
+                value=int(st.session_state.get("pace_swim_cycle", 110)),
+                min_value=60,
+                max_value=200,
+                step=5,
+                key="pace_swim_cycle",
+            ),
+            "bike_kmh": pace_col3.number_input(
+                "Ciclismo (km/h)",
+                value=float(st.session_state.get("pace_bike_cycle", 32.0)),
+                min_value=15.0,
+                max_value=50.0,
+                step=0.5,
+                format="%.1f",
+                key="pace_bike_cycle",
+            ),
+        }
+
+        st.subheader("Volume inicial da 1ª semana (pré-definido pela prova)")
+        initial_cols = st.columns(len(default_initial_targets))
+        initial_cycle_targets: dict[str, float] = {}
+        for i, (mod, default_val) in enumerate(default_initial_targets.items()):
+            unit = UNITS_ALLOWED.get(mod, "km")
+            initial_cycle_targets[mod] = initial_cols[i].number_input(
+                f"{mod} ({unit}) — Semana 1",
+                min_value=0.0,
+                value=float(default_val),
+                step=_unit_step(unit),
+                format="%.1f" if unit == "km" else "%g",
+                key=f"cycle_target_{mod}",
+            )
+
     use_time_pattern_cycle = st.checkbox(
         "Usar padrão de horários salvo (se existir)",
         value=True,
@@ -1784,8 +1841,20 @@ def render_triplanner_cycle_planner(user_id: str, user_preferences: dict):
     key_sessions = {mod: st.session_state.get(f"key_sess_{mod}", "") for mod in MODALIDADES}
     sessions_per_mod = {mod: st.session_state.get(f"sess_{mod}", 2) for mod in MODALIDADES}
 
-    converted = _convert_triplanner_targets(plan.get("volume_estimado_por_mod", {}), plan.get("unidade_volume", ""))
-    week_targets = {mod: converted.get(mod, 0.0) for mod in MODALIDADES}
+    def _scaled_targets_for_week(week_block: dict) -> dict[str, float]:
+        converted = _convert_triplanner_targets(
+            week_block.get("volume_por_modalidade", {}), plan.get("unidade_volume", "")
+        )
+        scaled = {}
+        for mod in MODALIDADES:
+            base_val = converted.get(mod, 0.0)
+            if base_val <= 0 and mod in initial_cycle_targets:
+                base_val = initial_cycle_targets[mod]
+            elif mod in initial_cycle_targets and default_initial_targets.get(mod, 0) > 0:
+                factor = initial_cycle_targets[mod] / float(default_initial_targets.get(mod, 1) or 1)
+                base_val = round(base_val * factor, 1)
+            scaled[mod] = base_val
+        return scaled
 
     user_df = st.session_state.get("df", pd.DataFrame()).copy()
     all_warnings: list[str] = []
@@ -1807,10 +1876,10 @@ def render_triplanner_cycle_planner(user_id: str, user_preferences: dict):
 
         week_df = distribute_week_by_targets(
             week_start,
-            week_targets,
+            _scaled_targets_for_week(week_block),
             dynamic_sessions,
             key_sessions_dynamic,
-            plan.get("ritmos", {}),
+            paces_cycle,
             pref_days_override,
             user_id,
             off_days=week_block.get("off_days", user_preferences.get("off_days")),
@@ -1840,6 +1909,8 @@ def render_triplanner_cycle_planner(user_id: str, user_preferences: dict):
         )
         user_df = user_df[~mask]
         user_df = pd.concat([user_df, week_df], ignore_index=True)
+        save_user_df(user_id, user_df)
+        canonical_week_df.clear()
 
     save_user_df(user_id, user_df)
     canonical_week_df.clear()
