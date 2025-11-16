@@ -1794,8 +1794,6 @@ def render_triplanner_cycle_planner(user_id: str, user_preferences: dict):
     user_df = st.session_state.get("df", pd.DataFrame()).copy()
     all_warnings: list[str] = []
 
-    no_slots_any_week = False
-
     for week_block in plan.get("semanas", []):
         week_start = pd.to_datetime(week_block.get("inicio")).date()
         sessions_per_week = week_block.get("sessoes", {})
@@ -1806,6 +1804,10 @@ def render_triplanner_cycle_planner(user_id: str, user_preferences: dict):
 
         dynamic_sessions = {mod: sessions_per_week.get(mod, sessions_per_mod.get(mod, 0)) for mod in MODALIDADES}
         key_sessions_dynamic = {mod: sessions_per_week.get(f"key_{mod}", key_sessions.get(mod, "")) for mod in MODALIDADES}
+
+        pattern = load_timepattern_for_user(user_id) if use_time_pattern_cycle else None
+        if use_time_pattern_cycle and not pattern:
+            st.warning("Nenhum padrão de horários salvo ainda. Usando lógica padrão.")
 
         week_df = distribute_week_by_targets(
             week_start,
@@ -1823,8 +1825,6 @@ def render_triplanner_cycle_planner(user_id: str, user_preferences: dict):
             warnings = []
         else:
             week_slots = get_week_availability(user_id, week_start) if use_saved_slots == "Sim" else []
-            if use_saved_slots == "Sim" and not week_slots:
-                no_slots_any_week = True
             week_df, updated_slots, warnings = assign_times_to_week(
                 week_df,
                 week_slots,
@@ -1846,14 +1846,8 @@ def render_triplanner_cycle_planner(user_id: str, user_preferences: dict):
         user_df = pd.concat([user_df, week_df], ignore_index=True)
 
     save_user_df(user_id, user_df)
-    refreshed_all = load_all()
-    st.session_state["all_df"] = refreshed_all
-    st.session_state["df"] = refreshed_all[refreshed_all["UserID"] == user_id].copy()
     canonical_week_df.clear()
-
     st.success("Ciclo enviado para o calendário. As semanas já aparecem na visualização padrão.")
-    if no_slots_any_week:
-        st.warning("Algumas semanas não tinham slots salvos; usamos os horários preferidos do atleta.")
     for warn in all_warnings:
         st.warning(warn)
 
@@ -3602,11 +3596,130 @@ def main():
                                 else:
                                     st.caption("Alteração sem detalhes adicionais.")
 
-    
     # ---------------- TRIPLANNER ENGINE ----------------
     elif menu == "🧠 TriPlanner":
-        st.info("O TriPlanner também pode ser acessado direto no começo do planejamento semanal.")
-        render_triplanner_cycle_planner(user_id, user_preferences)
+        st.header("🧠 TriPlanner — Motor de Ciclos Inteligente")
+        st.markdown(
+            "Transforme o briefing do atleta em um ciclo estruturado seguindo as "
+            "regras oficiais do TriPlanner (volumes realistas, método dominante, "
+            "fases proporcionais e progressão 3:1). O resultado já sai em JSON "
+            "para alimentar o app ou ser enviado ao atleta."
+        )
+
+        default_start = monday_of_week(today())
+        modality_label = st.selectbox(
+            "Modalidade principal",
+            options=["Triathlon", "Corrida", "Bike", "Natação"],
+            help="O motor aplica automaticamente o método adequado para cada modalidade/distância.",
+        )
+
+        if modality_label == "Triathlon":
+            distance_value = st.selectbox(
+                "Distância alvo",
+                ["Sprint", "Olímpico", "70.3", "Ironman"],
+            )
+        elif modality_label == "Corrida":
+            distance_value = st.selectbox(
+                "Distância alvo",
+                ["5k", "10k", "21k", "42k"],
+            )
+        else:
+            placeholder = "Gran Fondo" if modality_label == "Bike" else "2 km"
+            distance_value = st.text_input(
+                "Distância / prova alvo",
+                value=placeholder,
+                help="Use uma descrição curta (ex.: Gran Fondo 120 km, Travessia 5 km).",
+            )
+            if not distance_value.strip():
+                distance_value = placeholder
+
+        goal_label = st.radio("Objetivo", ["Completar", "Performar"], horizontal=True)
+
+        with st.form("triplanner_form"):
+            start_date = st.date_input(
+                "Início do ciclo",
+                value=default_start,
+                help="O plano usa semanas fechadas (segunda a domingo).",
+            )
+            weeks_value = st.number_input(
+                "Semanas de preparação (opcional)",
+                min_value=0,
+                max_value=52,
+                value=12,
+                step=1,
+                help="Informe 0 se preferir calcular automaticamente pela data da prova.",
+            )
+            use_event_date = st.checkbox("Informar data da prova?", value=False)
+            event_date = None
+            if use_event_date:
+                default_event = start_date + timedelta(weeks=max(weeks_value or 12, 8))
+                event_date = st.date_input(
+                    "Data da prova",
+                    min_value=start_date + timedelta(days=7),
+                    value=default_event,
+                )
+
+            notes = st.text_area(
+                "Observações complementares",
+                placeholder="Ex.: Limitação de disponibilidade, histórico de lesão, preferências de dia longo...",
+            )
+
+            if weeks_value == 0 and not use_event_date:
+                st.info(required_weeks_message())
+
+            submitted = st.form_submit_button("Gerar ciclo TriPlanner")
+
+        if submitted:
+            computed_weeks: int | None = None
+            if weeks_value > 0:
+                computed_weeks = int(weeks_value)
+            elif use_event_date and event_date:
+                if event_date <= start_date:
+                    st.error("A data da prova deve ser posterior ao início do ciclo.")
+                else:
+                    computed_weeks = compute_weeks_from_date(event_date, start_date)
+
+            if not computed_weeks:
+                st.warning(required_weeks_message())
+            else:
+                if computed_weeks < 4:
+                    st.warning(
+                        "Ciclos muito curtos foram ajustados para pelo menos 4 semanas para manter a regra 3:1."
+                    )
+                    computed_weeks = 4
+
+                plan = build_triplanner_plan(
+                    modality_label,
+                    distance_value,
+                    goal_label.lower(),
+                    computed_weeks,
+                    start_date,
+                    notes=notes,
+                )
+                plan_json = plan_to_json(plan)
+
+                st.success(
+                    f"Plano gerado com {computed_weeks} semanas seguindo o método {plan['metodo']}."
+                )
+                st.metric(
+                    "Volume alvo (semanal)",
+                    f"{plan['volume_estimado']['min']}–{plan['volume_estimado']['max']} {plan['unidade_volume']}",
+                )
+
+                st.subheader("JSON do ciclo")
+                st.json(plan)
+
+                st.download_button(
+                    "⬇️ Baixar JSON",
+                    data=plan_json.encode("utf-8"),
+                    file_name=f"triplanner_{modality_label.lower()}_{distance_value}.json",
+                    mime="application/json",
+                )
+
+                st.subheader("Tipos de treino (ℹ️)")
+                tipos_df = pd.DataFrame.from_dict(plan["tipos_de_treino"], orient="index")
+                tipos_df = tipos_df.rename(columns={"nome": "Tipo", "descricao": "Descrição"})
+                st.table(tipos_df)
 
     # ---------------- PERIODIZAÇÃO ----------------
     elif menu == "⚙️ Periodização":
