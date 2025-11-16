@@ -1,5 +1,5 @@
 
-# app.py — TriPlanner (evolução do TriCiclo Planner)
+# app.py — TriPlano (evolução do TriCiclo Planner)
 # ----------------------------------------------------------------------------
 # Funcionalidades:
 # - Login/cadastro multiusuário (SQLite)
@@ -45,12 +45,6 @@ import unicodedata
 from streamlit_calendar import calendar as st_calendar  # pip install streamlit-calendar
 
 import db
-from triplanner_engine import (
-    build_triplanner_plan,
-    compute_weeks_from_date,
-    plan_to_json,
-    required_weeks_message,
-)
 
 # ----------------------------------------------------------------------------
 # Utilitários básicos
@@ -108,14 +102,6 @@ MODALITY_COLORS = {
 MODALITY_TEXT_COLORS = {
     "Ciclismo": (255, 255, 255),
 }
-MODALITY_EMOJI = {
-    "Corrida": "🏃‍♂️",
-    "Ciclismo": "🚴‍♂️",
-    "Natação": "🏊‍♂️",
-    "Força/Calistenia": "🏋️‍♂️",
-    "Mobilidade": "🤸‍♂️",
-    "Descanso": "😴",
-}
 
 PDF_REPLACE = str.maketrans({
     "—": "-",
@@ -131,11 +117,6 @@ def pdf_safe(s: str) -> str:
         return ""
     t = str(s).translate(PDF_REPLACE)
     return unicodedata.normalize("NFKD", t).encode("latin-1", "ignore").decode("latin-1")
-
-
-def modality_label(mod: str) -> str:
-    emoji = MODALITY_EMOJI.get(mod, "")
-    return f"{emoji} {mod}".strip()
 
 UNITS_ALLOWED = {
     "Corrida": "km",
@@ -1593,346 +1574,6 @@ def subtract_trainings_from_slots(week_df: pd.DataFrame, slots):
         new_slots.extend(segs)
     return normalize_slots(new_slots)
 
-
-def _convert_triplanner_targets(volume_map: dict, base_unit: str) -> dict[str, float]:
-    """Converte o volume semanal do TriPlanner para as unidades usadas no app."""
-
-    def _hours_to_unit(mod: str, hours_value: float) -> float:
-        if mod == "Ciclismo":
-            return hours_value * 30  # km aproximados a 30 km/h
-        if mod == "Corrida":
-            return hours_value * 10  # km aproximados a 6:00/km
-        if mod == "Natação":
-            return hours_value * 2000  # metros a ~2 km/h
-        return hours_value * 60  # minutos para modalidades genéricas
-
-    converted: dict[str, float] = {}
-    for mod, raw_volume in (volume_map or {}).items():
-        try:
-            value = float(raw_volume)
-        except (TypeError, ValueError):
-            value = 0.0
-
-        if base_unit == "horas":
-            converted[mod] = round(_hours_to_unit(mod, value), 1)
-        elif base_unit == "sessões":
-            if mod == "Natação":
-                converted[mod] = round(value * 1500, 0)  # 1,5 km por sessão
-            else:
-                converted[mod] = round(value, 1)
-        else:
-            converted[mod] = round(value, 1)
-
-    return converted
-
-
-def render_triplanner_cycle_planner(user_id: str, user_preferences: dict):
-    st.header("🧠 TriPlanner — Motor de Ciclos Inteligente")
-    st.markdown(
-        "Transforme o briefing do atleta em um ciclo estruturado seguindo as "
-        "regras oficiais do TriPlanner (volumes realistas, método dominante, "
-        "fases proporcionais e progressão 3:1). O resultado já sai pronto para o calendário."
-    )
-
-    default_start = monday_of_week(today())
-    modality_label = st.selectbox(
-        "Modalidade principal",
-        options=["Triathlon", "Corrida", "Bike", "Natação"],
-        help="O motor aplica automaticamente o método adequado para cada modalidade/distância.",
-    )
-
-    if modality_label == "Triathlon":
-        distance_value = st.selectbox(
-            "Distância alvo",
-            ["Sprint", "Olímpico", "70.3", "Ironman"],
-        )
-    elif modality_label == "Corrida":
-        distance_value = st.selectbox(
-            "Distância alvo",
-            ["5k", "10k", "21k", "42k"],
-        )
-    else:
-        placeholder = "Gran Fondo" if modality_label == "Bike" else "2 km"
-        distance_value = st.text_input(
-            "Distância / prova alvo",
-            value=placeholder,
-            help="Use uma descrição curta (ex.: Gran Fondo 120 km, Travessia 5 km).",
-        )
-        if not distance_value.strip():
-            distance_value = placeholder
-
-    goal_label = st.radio("Objetivo", ["Completar", "Performar"], horizontal=True)
-
-    with st.form("triplanner_form"):
-        start_date = st.date_input(
-            "Início do ciclo",
-            value=default_start,
-            help="O plano usa semanas fechadas (segunda a domingo).",
-        )
-        weeks_value = st.number_input(
-            "Semanas de preparação (opcional)",
-            min_value=0,
-            max_value=52,
-            value=12,
-            step=1,
-            help="Informe 0 se preferir calcular automaticamente pela data da prova.",
-        )
-        use_event_date = st.checkbox("Informar data da prova?", value=False)
-        event_date = None
-        if use_event_date:
-            default_event = start_date + timedelta(weeks=max(weeks_value or 12, 8))
-            event_date = st.date_input(
-                "Data da prova",
-                min_value=start_date + timedelta(days=7),
-                value=default_event,
-            )
-
-        notes = st.text_area(
-            "Observações complementares",
-            placeholder="Ex.: Limitação de disponibilidade, histórico de lesão, preferências de dia longo...",
-        )
-
-        if weeks_value == 0 and not use_event_date:
-            st.info(required_weeks_message())
-
-        submitted = st.form_submit_button("Gerar ciclo TriPlanner")
-
-    if not submitted:
-        return
-
-    computed_weeks: int | None = None
-    if weeks_value > 0:
-        computed_weeks = int(weeks_value)
-    elif use_event_date and event_date:
-        if event_date <= start_date:
-            st.error("A data da prova deve ser posterior ao início do ciclo.")
-        else:
-            computed_weeks = compute_weeks_from_date(event_date, start_date)
-
-    if not computed_weeks:
-        st.warning(required_weeks_message())
-        return
-
-    if computed_weeks < 4:
-        st.warning(
-            "Ciclos muito curtos foram ajustados para pelo menos 4 semanas para manter a regra 3:1."
-        )
-        computed_weeks = 4
-
-    plan = build_triplanner_plan(
-        modality_label,
-        distance_value,
-        goal_label.lower(),
-        computed_weeks,
-        start_date,
-        notes=notes,
-    )
-    plan_json = plan_to_json(plan)
-
-    st.success(
-        f"Plano gerado com {computed_weeks} semanas seguindo o método {plan['metodo']}."
-    )
-    st.metric(
-        "Volume alvo (semanal)",
-        f"{plan['volume_estimado']['min']}–{plan['volume_estimado']['max']} {plan['unidade_volume']}",
-    )
-
-    st.subheader("Pré-visualização do ciclo")
-    preview_rows = []
-    for w in plan["semanas"]:
-        preview_rows.append(
-            {
-                "Semana": w.get("semana"),
-                "Início": pd.to_datetime(w.get("inicio")).date(),
-                "Fase": w.get("fase"),
-                "Status": w.get("status"),
-                "Volume": w.get("volume_total"),
-                "Unidade": w.get("unidade"),
-                "Focos": ", ".join(w.get("focos_da_semana", [])),
-            }
-        )
-    preview_df = pd.DataFrame(preview_rows)
-    st.dataframe(preview_df, use_container_width=True, hide_index=True)
-
-    with st.expander("📁 Guardar JSON (opcional)"):
-        st.download_button(
-            "⬇️ Baixar JSON",
-            data=plan_json.encode("utf-8"),
-            file_name=f"triplanner_{modality_label.lower()}_{distance_value}.json",
-            mime="application/json",
-        )
-
-    st.subheader("Aplicar no calendário semanal")
-    default_initial_targets = _convert_triplanner_targets(
-        (plan.get("semanas") or [{}])[0].get("volume_por_modalidade", {}),
-        plan.get("unidade_volume", ""),
-    )
-    default_initial_targets.setdefault("Força/Calistenia", 60.0)
-    default_initial_targets.setdefault("Mobilidade", 20.0)
-
-    presc_popover = st.popover(
-        "🎯 Parâmetros de prescrição do ciclo",
-        use_container_width=True,
-    )
-    with presc_popover:
-        st.subheader("Ritmos médios do atleta")
-        pace_col1, pace_col2, pace_col3 = st.columns(3)
-        paces_cycle = {
-            "run_pace_min_per_km": pace_col1.number_input(
-                "Corrida (min/km)",
-                value=float(st.session_state.get("pace_run_cycle", 5.0)),
-                min_value=3.0,
-                max_value=10.0,
-                step=0.1,
-                format="%.1f",
-                key="pace_run_cycle",
-            ),
-            "swim_sec_per_100m": pace_col2.number_input(
-                "Natação (seg/100m)",
-                value=int(st.session_state.get("pace_swim_cycle", 110)),
-                min_value=60,
-                max_value=200,
-                step=5,
-                key="pace_swim_cycle",
-            ),
-            "bike_kmh": pace_col3.number_input(
-                "Ciclismo (km/h)",
-                value=float(st.session_state.get("pace_bike_cycle", 32.0)),
-                min_value=15.0,
-                max_value=50.0,
-                step=0.5,
-                format="%.1f",
-                key="pace_bike_cycle",
-            ),
-        }
-
-        st.subheader("Volume inicial da 1ª semana (pré-definido pela prova)")
-        initial_cols = st.columns(len(default_initial_targets))
-        initial_cycle_targets: dict[str, float] = {}
-        for i, (mod, default_val) in enumerate(default_initial_targets.items()):
-            unit = UNITS_ALLOWED.get(mod, "km")
-            initial_cycle_targets[mod] = initial_cols[i].number_input(
-                f"{mod} ({unit}) — Semana 1",
-                min_value=0.0,
-                value=float(default_val),
-                step=_unit_step(unit),
-                format="%.1f" if unit == "km" else "%g",
-                key=f"cycle_target_{mod}",
-            )
-
-    use_time_pattern_cycle = st.checkbox(
-        "Usar padrão de horários salvo (se existir)",
-        value=True,
-        key="use_time_pattern_triplanner",
-    )
-    use_saved_slots = st.radio(
-        "Usar slots de disponibilidade salvos ao distribuir horários?",
-        ["Sim", "Não"],
-        horizontal=True,
-        index=0,
-        key="use_saved_slots_triplanner",
-    )
-
-    # Preferências de distribuição herdadas do app
-    dias_map = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4, "Sáb": 5, "Dom": 6}
-    off_days_cycle = set(user_preferences.get("off_days", []))
-    default_days = {
-        "Corrida": [2, 4, 6],
-        "Ciclismo": [1, 3, 5],
-        "Natação": [0, 2],
-        "Força/Calistenia": [1, 4],
-        "Mobilidade": [0, 6],
-    }
-    pref_days = {}
-    for mod in MODALIDADES:
-        raw_selection = [dias_map[d] for d in st.session_state.get(f"pref_days_{mod}", []) if d in dias_map]
-        filtered = [d for d in raw_selection if d not in off_days_cycle]
-        if not filtered:
-            filtered = [idx for idx in dias_map.values() if idx not in off_days_cycle]
-        pref_days[mod] = filtered
-
-    key_sessions = {mod: st.session_state.get(f"key_sess_{mod}", "") for mod in MODALIDADES}
-    sessions_per_mod = {mod: st.session_state.get(f"sess_{mod}", 2) for mod in MODALIDADES}
-
-    def _scaled_targets_for_week(week_block: dict) -> dict[str, float]:
-        converted = _convert_triplanner_targets(
-            week_block.get("volume_por_modalidade", {}), plan.get("unidade_volume", "")
-        )
-        scaled = {}
-        for mod in MODALIDADES:
-            base_val = converted.get(mod, 0.0)
-            if base_val <= 0 and mod in initial_cycle_targets:
-                base_val = initial_cycle_targets[mod]
-            elif mod in initial_cycle_targets and default_initial_targets.get(mod, 0) > 0:
-                factor = initial_cycle_targets[mod] / float(default_initial_targets.get(mod, 1) or 1)
-                base_val = round(base_val * factor, 1)
-            scaled[mod] = base_val
-        return scaled
-
-    user_df = st.session_state.get("df", pd.DataFrame()).copy()
-    all_warnings: list[str] = []
-
-    pattern = load_timepattern_for_user(user_id) if use_time_pattern_cycle else None
-    if use_time_pattern_cycle and not pattern:
-        st.warning("Nenhum padrão de horários salvo ainda. Usando lógica padrão.")
-
-    for week_block in plan.get("semanas", []):
-        week_start = pd.to_datetime(week_block.get("inicio")).date()
-        sessions_per_week = week_block.get("sessoes", {})
-        pref_days_override = pref_days.copy()
-        if week_block.get("off_days"):
-            off_week = set(week_block.get("off_days", []))
-            pref_days_override = {k: [d for d in v if d not in off_week] for k, v in pref_days.items()}
-
-        dynamic_sessions = {mod: sessions_per_week.get(mod, sessions_per_mod.get(mod, 0)) for mod in MODALIDADES}
-        key_sessions_dynamic = {mod: sessions_per_week.get(f"key_{mod}", key_sessions.get(mod, "")) for mod in MODALIDADES}
-
-        week_df = distribute_week_by_targets(
-            week_start,
-            _scaled_targets_for_week(week_block),
-            dynamic_sessions,
-            key_sessions_dynamic,
-            paces_cycle,
-            pref_days_override,
-            user_id,
-            off_days=week_block.get("off_days", user_preferences.get("off_days")),
-        )
-
-        if pattern:
-            week_df = apply_time_pattern_to_week(week_df, pattern)
-            warnings = []
-        else:
-            week_slots = get_week_availability(user_id, week_start) if use_saved_slots == "Sim" else []
-            week_df, updated_slots, warnings = assign_times_to_week(
-                week_df,
-                week_slots,
-                use_availability=(use_saved_slots == "Sim"),
-                preferences=user_preferences,
-            )
-            if use_saved_slots == "Sim":
-                updated_slots = subtract_trainings_from_slots(week_df, updated_slots)
-                set_week_availability(user_id, week_start, updated_slots)
-
-        all_warnings.extend(warnings)
-
-        mask = (
-            (user_df["UserID"] == user_id)
-            & (user_df["Data"] >= week_start)
-            & (user_df["Data"] < week_start + timedelta(days=7))
-        )
-        user_df = user_df[~mask]
-        user_df = pd.concat([user_df, week_df], ignore_index=True)
-        save_user_df(user_id, user_df)
-        canonical_week_df.clear()
-
-    save_user_df(user_id, user_df)
-    canonical_week_df.clear()
-    st.session_state["calendar_snapshot"] = []
-    st.session_state["calendar_forcar_snapshot"] = False
-    st.success("Ciclo enviado para o calendário. As semanas já aparecem na visualização padrão.")
-    for warn in all_warnings:
-        st.warning(warn)
-
 def update_availability_from_current_week(user_id: str, week_start: date):
     slots = get_week_availability(user_id, week_start)
     if not slots:
@@ -1949,11 +1590,11 @@ def update_availability_from_current_week(user_id: str, week_start: date):
 # ----------------------------------------------------------------------------
 
 def generate_ics(df: pd.DataFrame) -> str:
-    ics = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//TriPlanner//Planner//EN\n"
+    ics = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//TriPlano//Planner//EN\n"
     for _, row in df.iterrows():
         start = row["StartDT"]
         end = row["EndDT"]
-        summary = f"{modality_label(row['Modalidade'])} - {row['Tipo de Treino']}"
+        summary = f"{row['Modalidade']} - {row['Tipo de Treino']}"
         vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
         description = (
             f"Volume: {vol_val:g} {row['Unidade']}\n"
@@ -1961,7 +1602,7 @@ def generate_ics(df: pd.DataFrame) -> str:
             f"Status: {row['Status']}"
         )
         ics += "BEGIN:VEVENT\n"
-        ics += f"UID:{start.strftime('%Y%m%d%H%M%S')}-{hash(summary)}@triplanner.app\n"
+        ics += f"UID:{start.strftime('%Y%m%d%H%M%S')}-{hash(summary)}@triplano.app\n"
         ics += f"DTSTAMP:{datetime.now().strftime('%Y%m%dT%H%M%SZ')}\n"
         ics += f"DTSTART:{start.strftime('%Y%m%dT%H%M%S')}\n"
         ics += f"DTEND:{end.strftime('%Y%m%dT%H%M%S')}\n"
@@ -2075,7 +1716,7 @@ def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
         pdf.cell(col_widths[0], line_h, pdf_safe(data_str), 1, 0, "L", 1)
         pdf.cell(col_widths[1], line_h, pdf_safe(ini_str), 1, 0, "C", 1)
         pdf.cell(col_widths[2], line_h, pdf_safe(fim_str), 1, 0, "C", 1)
-        pdf.cell(col_widths[3], line_h, pdf_safe(modality_label(mod)), 1, 0, "L", 1)
+        pdf.cell(col_widths[3], line_h, pdf_safe(mod), 1, 0, "L", 1)
         pdf.cell(col_widths[4], line_h, pdf_safe(tipo), 1, 0, "L", 1)
         pdf.cell(col_widths[5], line_h, pdf_safe(vol), 1, 0, "R", 1)
         pdf.cell(col_widths[6], line_h, pdf_safe(unit), 1, 0, "C", 1)
@@ -2479,7 +2120,7 @@ def build_week_changelog(df: pd.DataFrame, week_start: date) -> list[dict]:
 
     events = []
     for _, row in chunk.iterrows():
-        training_desc = f"{modality_label(row['Modalidade'])} - {row['Tipo de Treino']} ({row['Data']})"
+        training_desc = f"{row['Modalidade']} - {row['Tipo de Treino']} ({row['Data']})"
         for entry in extract_training_changelog(row):
             events.append(
                 {
@@ -2633,11 +2274,11 @@ def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
 
 
 def main():
-    st.set_page_config(page_title="TriPlanner", layout="wide")
+    st.set_page_config(page_title="TriPlano", layout="wide")
 
     # LOGIN
     if "user_id" not in st.session_state:
-        st.title("Bem-vindo ao TriPlanner 🏊‍♂️🚴‍♂️🏃‍♂️🏋️‍♂️")
+        st.title("Bem-vindo ao TriPlano 🌀")
         st.markdown("Faça login ou crie sua conta para começar.")
 
         tab1, tab2 = st.tabs(["Entrar", "Criar Conta"])
@@ -2708,20 +2349,14 @@ def main():
     user_preferences = st.session_state.get("user_preferences_cache", load_preferences_for_user(user_id))
 
     # SIDEBAR
-    st.sidebar.title("TriPlanner 🏊‍♂️🚴‍♂️🏃‍♂️🏋️‍♂️")
+    st.sidebar.title("TriPlano 🌀")
     st.sidebar.markdown(f"👤 **{user_name}**  \n`{user_id}`")
     if st.sidebar.button("Sair"):
         logout()
 
     menu = st.sidebar.radio(
         "Navegação",
-        [
-            "📅 Planejamento Semanal",
-            "🗓️ Resumo do Dia",
-            "📈 Dashboard",
-            "🧠 TriPlanner",
-            "⚙️ Periodização",
-        ],
+        ["📅 Planejamento Semanal", "🗓️ Resumo do Dia", "📈 Dashboard", "⚙️ Periodização"],
         index=0,
     )
     st.sidebar.markdown("---")
@@ -2730,13 +2365,6 @@ def main():
     # ---------------- PLANEJAMENTO SEMANAL ----------------
     if menu == "📅 Planejamento Semanal":
         st.header("📅 Planejamento Semanal")
-
-        planning_mode = st.radio(
-            "Escolha o fluxo de planejamento",
-            ["Semana atual", "Ciclo (TriPlanner)"],
-            horizontal=True,
-            key="planning_mode_week",
-        )
 
         off_days_set = set(user_preferences.get("off_days", []))
         time_preferences = user_preferences.get("time_preferences", {}) or {}
@@ -2754,7 +2382,7 @@ def main():
                     default_label = "Indiferente"
                 default_index = time_options.index(default_label)
                 time_pref_inputs[mod] = pref_cols[idx % 3].selectbox(
-                    modality_label(mod),
+                    mod,
                     options=time_options,
                     index=default_index,
                     key=f"timepref_{mod}",
@@ -2799,82 +2427,75 @@ def main():
             else:
                 off_days_set = set(user_preferences.get("off_days", []))
 
-        if planning_mode == "Ciclo (TriPlanner)":
-            st.info("Use o motor inteligente para preencher o calendário com várias semanas de uma vez.")
-            render_triplanner_cycle_planner(user_id, user_preferences)
-            st.stop()
+        # 1. Paces
+        st.subheader("1. Parâmetros de Prescrição")
+        col_p1, col_p2, col_p3 = st.columns(3)
+        paces = {
+            "run_pace_min_per_km": col_p1.number_input(
+                "Corrida (min/km)", value=5.0, min_value=3.0, max_value=10.0, step=0.1, format="%.1f"
+            ),
+            "swim_sec_per_100m": col_p2.number_input(
+                "Natação (seg/100m)", value=110, min_value=60, max_value=200, step=5
+            ),
+            "bike_kmh": col_p3.number_input(
+                "Ciclismo (km/h)", value=32.0, min_value=15.0, max_value=50.0, step=0.5, format="%.1f"
+            ),
+        }
 
-        metas_popover = st.popover("🎯 Parâmetros de prescrição e metas semanais", use_container_width=True)
-        with metas_popover:
-            st.subheader("1. Parâmetros de Prescrição")
-            col_p1, col_p2, col_p3 = st.columns(3)
-            paces = {
-                "run_pace_min_per_km": col_p1.number_input(
-                    "Corrida (min/km)", value=5.0, min_value=3.0, max_value=10.0, step=0.1, format="%.1f"
-                ),
-                "swim_sec_per_100m": col_p2.number_input(
-                    "Natação (seg/100m)", value=110, min_value=60, max_value=200, step=5
-                ),
-                "bike_kmh": col_p3.number_input(
-                    "Ciclismo (km/h)", value=32.0, min_value=15.0, max_value=50.0, step=0.5, format="%.1f"
-                ),
-            }
+        # 2. Metas
+        st.subheader("2. Metas Semanais (Volume, Sessões, Preferências)")
+        weekly_targets = {}
+        sessions_per_mod = {}
+        cols_mod = st.columns(len(MODALIDADES))
+        cols_sess = st.columns(len(MODALIDADES))
 
-            st.subheader("2. Metas Semanais (Volume, Sessões, Preferências)")
-            weekly_targets = {}
-            sessions_per_mod = {}
-            cols_mod = st.columns(len(MODALIDADES))
-            cols_sess = st.columns(len(MODALIDADES))
+        dias_semana_options = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4, "Sáb": 5, "Dom": 6}
+        default_days = {
+            "Corrida": [2, 4, 6],
+            "Ciclismo": [1, 3, 5],
+            "Natação": [0, 2],
+            "Força/Calistenia": [1, 4],
+            "Mobilidade": [0, 6],
+        }
 
-            dias_semana_options = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4, "Sáb": 5, "Dom": 6}
-            default_days = {
-                "Corrida": [2, 4, 6],
-                "Ciclismo": [1, 3, 5],
-                "Natação": [0, 2],
-                "Força/Calistenia": [1, 4],
-                "Mobilidade": [0, 6],
-            }
+        for i, mod in enumerate(MODALIDADES):
+            unit = UNITS_ALLOWED[mod]
 
-            for i, mod in enumerate(MODALIDADES):
-                unit = UNITS_ALLOWED[mod]
+            weekly_targets[mod] = cols_mod[i].number_input(
+                f"{mod} ({unit})/sem",
+                value=float(st.session_state.get(f"target_{mod}", 0.0)),
+                min_value=0.0,
+                step=_unit_step(unit),
+                format="%.1f" if unit == "km" else "%g",
+                key=f"target_{mod}",
+            )
 
-                weekly_targets[mod] = cols_mod[i].number_input(
-                    f"{mod} ({unit})/sem",
-                    value=float(st.session_state.get(f"target_{mod}", 0.0)),
-                    min_value=0.0,
-                    step=_unit_step(unit),
-                    format="%.1f" if unit == "km" else "%g",
-                    key=f"target_{mod}",
-                )
+            default_selected = [
+                abrev for abrev, idx in dias_semana_options.items()
+                if idx in default_days.get(mod, []) and idx not in off_days_set
+            ]
+            cols_mod[i].multiselect(
+                f"Dias {mod}",
+                options=list(dias_semana_options.keys()),
+                key=f"pref_days_{mod}",
+                default=default_selected,
+            )
 
-                default_selected = [
-                    abrev for abrev, idx in dias_semana_options.items()
-                    if idx in default_days.get(mod, []) and idx not in off_days_set
-                ]
-                cols_mod[i].multiselect(
-                    f"Dias {mod}",
-                    options=list(dias_semana_options.keys()),
-                    key=f"pref_days_{mod}",
-                    default=default_selected,
-                )
+            cols_sess[i].selectbox(
+                f"Treino chave {mod}",
+                options=[""] + TIPOS_MODALIDADE.get(mod, []),
+                key=f"key_sess_{mod}",
+            )
 
-                cols_sess[i].selectbox(
-                    f"Treino chave {mod}",
-                    options=[""] + TIPOS_MODALIDADE.get(mod, []),
-                    key=f"key_sess_{mod}",
-                )
-
-                default_sessions = 3 if mod in ["Corrida", "Ciclismo"] else 2
-                sessions_per_mod[mod] = cols_sess[i].number_input(
-                    f"Sessões {mod}",
-                    value=int(st.session_state.get(f"sess_{mod}", default_sessions)),
-                    min_value=0,
-                    max_value=5,
-                    step=1,
-                    key=f"sess_{mod}",
-                )
-
-        st.caption("Use o pop-up para ajustar ritmos, volumes e preferências semanais antes de gerar a agenda.")
+            default_sessions = 3 if mod in ["Corrida", "Ciclismo"] else 2
+            sessions_per_mod[mod] = cols_sess[i].number_input(
+                f"Sessões {mod}",
+                value=int(st.session_state.get(f"sess_{mod}", default_sessions)),
+                min_value=0,
+                max_value=5,
+                step=1,
+                key=f"sess_{mod}",
+            )
 
         st.markdown("---")
 
@@ -3024,7 +2645,7 @@ def main():
             uid = row["UID"]
             vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
 
-            title = f"{modality_label(row['Modalidade'])} - {row['Tipo de Treino']}"
+            title = f"{row['Modalidade']} - {row['Tipo de Treino']}"
             if vol_val > 0:
                 title += f" ({vol_val:g} {row['Unidade']})"
 
@@ -3656,7 +3277,7 @@ def main():
                         st.info("Nenhum treino encontrado na semana selecionada.")
                     else:
                         training_options = [
-                            f"{r['Data'].strftime('%d/%m')} — {modality_label(r['Modalidade'])} ({r['Tipo de Treino']})"
+                            f"{r['Data'].strftime('%d/%m')} — {r['Modalidade']} ({r['Tipo de Treino']})"
                             for _, r in week_df.iterrows()
                         ]
                         training_map = dict(zip(training_options, week_df.index))
@@ -3678,131 +3299,6 @@ def main():
                                 else:
                                     st.caption("Alteração sem detalhes adicionais.")
 
-    # ---------------- TRIPLANNER ENGINE ----------------
-    elif menu == "🧠 TriPlanner":
-        st.header("🧠 TriPlanner — Motor de Ciclos Inteligente")
-        st.markdown(
-            "Transforme o briefing do atleta em um ciclo estruturado seguindo as "
-            "regras oficiais do TriPlanner (volumes realistas, método dominante, "
-            "fases proporcionais e progressão 3:1). O resultado já sai em JSON "
-            "para alimentar o app ou ser enviado ao atleta."
-        )
-
-        default_start = monday_of_week(today())
-        modality_label = st.selectbox(
-            "Modalidade principal",
-            options=["Triathlon", "Corrida", "Bike", "Natação"],
-            help="O motor aplica automaticamente o método adequado para cada modalidade/distância.",
-        )
-
-        if modality_label == "Triathlon":
-            distance_value = st.selectbox(
-                "Distância alvo",
-                ["Sprint", "Olímpico", "70.3", "Ironman"],
-            )
-        elif modality_label == "Corrida":
-            distance_value = st.selectbox(
-                "Distância alvo",
-                ["5k", "10k", "21k", "42k"],
-            )
-        else:
-            placeholder = "Gran Fondo" if modality_label == "Bike" else "2 km"
-            distance_value = st.text_input(
-                "Distância / prova alvo",
-                value=placeholder,
-                help="Use uma descrição curta (ex.: Gran Fondo 120 km, Travessia 5 km).",
-            )
-            if not distance_value.strip():
-                distance_value = placeholder
-
-        goal_label = st.radio("Objetivo", ["Completar", "Performar"], horizontal=True)
-
-        with st.form("triplanner_form"):
-            start_date = st.date_input(
-                "Início do ciclo",
-                value=default_start,
-                help="O plano usa semanas fechadas (segunda a domingo).",
-            )
-            weeks_value = st.number_input(
-                "Semanas de preparação (opcional)",
-                min_value=0,
-                max_value=52,
-                value=12,
-                step=1,
-                help="Informe 0 se preferir calcular automaticamente pela data da prova.",
-            )
-            use_event_date = st.checkbox("Informar data da prova?", value=False)
-            event_date = None
-            if use_event_date:
-                default_event = start_date + timedelta(weeks=max(weeks_value or 12, 8))
-                event_date = st.date_input(
-                    "Data da prova",
-                    min_value=start_date + timedelta(days=7),
-                    value=default_event,
-                )
-
-            notes = st.text_area(
-                "Observações complementares",
-                placeholder="Ex.: Limitação de disponibilidade, histórico de lesão, preferências de dia longo...",
-            )
-
-            if weeks_value == 0 and not use_event_date:
-                st.info(required_weeks_message())
-
-            submitted = st.form_submit_button("Gerar ciclo TriPlanner")
-
-        if submitted:
-            computed_weeks: int | None = None
-            if weeks_value > 0:
-                computed_weeks = int(weeks_value)
-            elif use_event_date and event_date:
-                if event_date <= start_date:
-                    st.error("A data da prova deve ser posterior ao início do ciclo.")
-                else:
-                    computed_weeks = compute_weeks_from_date(event_date, start_date)
-
-            if not computed_weeks:
-                st.warning(required_weeks_message())
-            else:
-                if computed_weeks < 4:
-                    st.warning(
-                        "Ciclos muito curtos foram ajustados para pelo menos 4 semanas para manter a regra 3:1."
-                    )
-                    computed_weeks = 4
-
-                plan = build_triplanner_plan(
-                    modality_label,
-                    distance_value,
-                    goal_label.lower(),
-                    computed_weeks,
-                    start_date,
-                    notes=notes,
-                )
-                plan_json = plan_to_json(plan)
-
-                st.success(
-                    f"Plano gerado com {computed_weeks} semanas seguindo o método {plan['metodo']}."
-                )
-                st.metric(
-                    "Volume alvo (semanal)",
-                    f"{plan['volume_estimado']['min']}–{plan['volume_estimado']['max']} {plan['unidade_volume']}",
-                )
-
-                st.subheader("JSON do ciclo")
-                st.json(plan)
-
-                st.download_button(
-                    "⬇️ Baixar JSON",
-                    data=plan_json.encode("utf-8"),
-                    file_name=f"triplanner_{modality_label.lower()}_{distance_value}.json",
-                    mime="application/json",
-                )
-
-                st.subheader("Tipos de treino (ℹ️)")
-                tipos_df = pd.DataFrame.from_dict(plan["tipos_de_treino"], orient="index")
-                tipos_df = tipos_df.rename(columns={"nome": "Tipo", "descricao": "Descrição"})
-                st.table(tipos_df)
-
     # ---------------- PERIODIZAÇÃO ----------------
     elif menu == "⚙️ Periodização":
         st.header("⚙️ Gerador de Periodização")
@@ -3822,7 +3318,7 @@ def main():
                 for mod in MODALIDADES:
                     default_prop = {"Base": 0.8, "Build": 1.0, "Peak": 1.2, "Recovery": 0.6}.get(phase, 0.8)
                     phase_props[phase][mod] = cols_phase[i].number_input(
-                        f"% {modality_label(mod)}",
+                        f"% {mod}",
                         min_value=0.0, max_value=2.0, value=default_prop, step=0.1, format="%.1f",
                         key=f"prop_{phase}_{mod}"
                     )
