@@ -1912,8 +1912,10 @@ def render_triplanner_cycle_planner(user_id: str, user_preferences: dict):
         save_user_df(user_id, user_df)
         canonical_week_df.clear()
 
+    save_user_df(user_id, user_df)
+    canonical_week_df.clear()
     st.session_state["calendar_snapshot"] = []
-    st.session_state["calendar_forcar_snapshot"] = True
+    st.session_state["calendar_forcar_snapshot"] = False
     st.success("Ciclo enviado para o calendário. As semanas já aparecem na visualização padrão.")
     for warn in all_warnings:
         st.warning(warn)
