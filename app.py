@@ -1790,6 +1790,10 @@ def render_triplanner_cycle_planner(user_id: str, user_preferences: dict):
     user_df = st.session_state.get("df", pd.DataFrame()).copy()
     all_warnings: list[str] = []
 
+    pattern = load_timepattern_for_user(user_id) if use_time_pattern_cycle else None
+    if use_time_pattern_cycle and not pattern:
+        st.warning("Nenhum padrão de horários salvo ainda. Usando lógica padrão.")
+
     for week_block in plan.get("semanas", []):
         week_start = pd.to_datetime(week_block.get("inicio")).date()
         sessions_per_week = week_block.get("sessoes", {})
@@ -1800,10 +1804,6 @@ def render_triplanner_cycle_planner(user_id: str, user_preferences: dict):
 
         dynamic_sessions = {mod: sessions_per_week.get(mod, sessions_per_mod.get(mod, 0)) for mod in MODALIDADES}
         key_sessions_dynamic = {mod: sessions_per_week.get(f"key_{mod}", key_sessions.get(mod, "")) for mod in MODALIDADES}
-
-        pattern = load_timepattern_for_user(user_id) if use_time_pattern_cycle else None
-        if use_time_pattern_cycle and not pattern:
-            st.warning("Nenhum padrão de horários salvo ainda. Usando lógica padrão.")
 
         week_df = distribute_week_by_targets(
             week_start,
@@ -1843,6 +1843,8 @@ def render_triplanner_cycle_planner(user_id: str, user_preferences: dict):
 
     save_user_df(user_id, user_df)
     canonical_week_df.clear()
+    st.session_state["calendar_snapshot"] = []
+    st.session_state["calendar_forcar_snapshot"] = False
     st.success("Ciclo enviado para o calendário. As semanas já aparecem na visualização padrão.")
     for warn in all_warnings:
         st.warning(warn)
