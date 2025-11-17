@@ -2338,86 +2338,18 @@ def render_cycle_planning_tab(user_id: str):
             start_date=start_date,
             notes=notes,
         )
-        weeks_payload = plan.get("semanas", [])
-        if not weeks_payload:
-            st.error("Não foi possível montar o ciclo completo.")
-            return
 
-        user_preferences = st.session_state.get("user_preferences_cache", {})
-        off_days = user_preferences.get("off_days")
-        default_sessions = {
-            "Corrida": 3,
-            "Ciclismo": 3,
-            "Natação": 2,
-            "Força/Calistenia": 2,
-            "Mobilidade": 1,
-        }
-        default_days = {
-            "Corrida": [2, 4, 6],
-            "Ciclismo": [1, 3, 5],
-            "Natação": [0, 2],
-            "Força/Calistenia": [1, 4],
-            "Mobilidade": [0, 6],
-        }
+        st.success("Plano semanal do ciclo criado! Use-o como referência para preencher as semanas no app.")
+        st.json(plan)
 
-        generated_weeks = []
-        for week_info in weeks_payload:
-            try:
-                week_start = date.fromisoformat(week_info.get("inicio"))
-            except Exception:
-                continue
-
-            weekly_targets = {m: 0.0 for m in MODALIDADES}
-            for discipline, vol in (week_info.get("volume_por_modalidade") or {}).items():
-                if discipline in weekly_targets:
-                    weekly_targets[discipline] = float(vol or 0.0)
-
-            sessions_per_mod = default_sessions.copy()
-            key_sessions = {m: "" for m in MODALIDADES}
-            preferred_days = {m: default_days.get(m, list(range(7))) for m in MODALIDADES}
-
-            week_df = distribute_week_by_targets(
-                week_start,
-                weekly_targets,
-                sessions_per_mod,
-                key_sessions,
-                paces={"run_pace_min_per_km": 5.0, "swim_sec_per_100m": 115, "bike_kmh": 30.0},
-                user_preferred_days=preferred_days,
-                user_id=user_id,
-                off_days=off_days,
-            )
-
-            week_df, _, _ = assign_times_to_week(
-                week_df,
-                [],
-                use_availability=False,
-                preferences=user_preferences,
-            )
-
-            generated_weeks.append(week_df)
-
-        if not generated_weeks:
-            st.error("Ciclo não pôde ser salvo no calendário.")
-            return
-
-        cycle_df = pd.concat(generated_weeks, ignore_index=True)
-        cycle_df["WeekStart"] = pd.to_datetime(cycle_df["WeekStart"]).dt.date
-        cycle_df = cycle_df[SCHEMA_COLS]
-
-        user_df = st.session_state.get("df", pd.DataFrame(columns=SCHEMA_COLS)).copy()
-        if not user_df.empty:
-            user_df["WeekStart"] = pd.to_datetime(user_df["WeekStart"]).dt.date
-        week_starts = set(cycle_df["WeekStart"].unique().tolist())
-        mask_remove = (~user_df["WeekStart"].isin(week_starts)) | (user_df["UserID"] != user_id)
-        filtered = user_df[mask_remove]
-        final_df = pd.concat([filtered, cycle_df], ignore_index=True)
-        save_user_df(user_id, final_df)
-
-        canonical_week_df.clear()
-        st.session_state["current_week_start"] = start_date
-
-        st.success("Ciclo completo inserido no calendário e salvo no banco externo.")
-        safe_rerun()
+        plan_json = triplanner_engine.plan_to_json(plan)
+        st.download_button(
+            "📥 Baixar plano em JSON",
+            data=plan_json,
+            file_name=f"plano_ciclo_{user_id}.json",
+            mime="application/json",
+            key="download_cycle_plan",
+        )
 
 
 def main():
