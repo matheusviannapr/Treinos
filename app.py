@@ -2208,6 +2208,93 @@ def generate_cycle(
         return pd.DataFrame(columns=SCHEMA_COLS)
     return pd.concat(all_weeks, ignore_index=True)[SCHEMA_COLS]
 
+
+def _pace_defaults_from_state() -> dict:
+    return {
+        "run_pace_min_per_km": float(st.session_state.get("run_pace_min_per_km", 5.0)),
+        "swim_sec_per_100m": float(st.session_state.get("swim_sec_per_100m", 110)),
+        "bike_kmh": float(st.session_state.get("bike_kmh", 32.0)),
+    }
+
+
+def _preferred_days_from_state(off_days: set[int]) -> dict:
+    dias_map = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4, "Sáb": 5, "Dom": 6}
+    preferred = {}
+    for mod in MODALIDADES:
+        raw_selection = [
+            dias_map[d]
+            for d in st.session_state.get(f"pref_days_{mod}", [])
+            if d in dias_map
+        ]
+        filtered_sel = [d for d in raw_selection if d not in off_days]
+        if not filtered_sel:
+            filtered_sel = [idx for idx in dias_map.values() if idx not in off_days]
+        preferred[mod] = filtered_sel
+    return preferred
+
+
+def _sessions_per_mod_from_state() -> dict:
+    return {mod: int(st.session_state.get(f"sess_{mod}", 2)) for mod in MODALIDADES}
+
+
+def _key_sessions_from_state() -> dict:
+    return {mod: st.session_state.get(f"key_sess_{mod}", "") for mod in MODALIDADES}
+
+
+def cycle_plan_to_trainings(
+    plan: dict,
+    sessions_per_mod: dict,
+    key_sessions: dict,
+    preferred_days: dict,
+    paces: dict,
+    user_id: str,
+    user_preferences: dict | None,
+) -> pd.DataFrame:
+    weeks_payload = plan.get("semanas", []) if isinstance(plan, dict) else []
+    if not weeks_payload:
+        return pd.DataFrame(columns=SCHEMA_COLS)
+
+    all_weeks = []
+    off_days = (user_preferences or {}).get("off_days")
+
+    for week_data in weeks_payload:
+        start_raw = week_data.get("inicio") if isinstance(week_data, dict) else None
+        try:
+            ws = date.fromisoformat(start_raw) if start_raw else None
+        except Exception:
+            ws = None
+        if not ws:
+            continue
+
+        volume_targets = week_data.get("volume_por_modalidade") or {}
+        weekly_targets = {
+            mod: float(vol or 0.0)
+            for mod, vol in volume_targets.items()
+            if mod in UNITS_ALLOWED
+        }
+
+        week_df = distribute_week_by_targets(
+            ws,
+            weekly_targets,
+            sessions_per_mod,
+            key_sessions,
+            paces,
+            preferred_days,
+            user_id,
+            off_days=off_days,
+        )
+        week_df, _, _ = assign_times_to_week(
+            week_df,
+            [],
+            use_availability=False,
+            preferences=user_preferences,
+        )
+        all_weeks.append(week_df)
+
+    if not all_weeks:
+        return pd.DataFrame(columns=SCHEMA_COLS)
+    return pd.concat(all_weeks, ignore_index=True)[SCHEMA_COLS]
+
 # ----------------------------------------------------------------------------
 # UI Principal
 # ----------------------------------------------------------------------------
@@ -2275,12 +2362,14 @@ def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
     return week_df
 
 
-def render_cycle_planning_tab(user_id: str):
+def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None):
     st.subheader("Planejamento semanal do ciclo")
     st.markdown(
         "Monte um esqueleto semanal do ciclo inteiro antes de preencher os treinos. "
         "Escolha modalidade, distância e duração e o motor gera a carga semanal com focos e intensidades."
     )
+
+    user_preferences = user_preferences or {}
 
     modality_labels = {
         "triathlon": "Triathlon",
@@ -2329,6 +2418,10 @@ def render_cycle_planning_tab(user_id: str):
 
     notes = st.text_area("Observações", value="", key="cycle_notes")
 
+    use_time_pattern_cycle_plan = st.checkbox(
+        "Aplicar padrão de horários salvo", value=True, key="apply_time_pattern_cycle_plan"
+    )
+
     if st.button("Gerar plano semanal do ciclo", key="cycle_generate_btn"):
         plan = triplanner_engine.build_triplanner_plan(
             modality=modality,
@@ -2339,16 +2432,44 @@ def render_cycle_planning_tab(user_id: str):
             notes=notes,
         )
 
-        st.success("Plano semanal do ciclo criado! Use-o como referência para preencher as semanas no app.")
-        st.json(plan)
+        off_days_cycle = set(user_preferences.get("off_days", []))
+        pref_days = _preferred_days_from_state(off_days_cycle)
+        sess_per_mod = _sessions_per_mod_from_state()
+        key_sess = _key_sessions_from_state()
+        paces = _pace_defaults_from_state()
 
-        plan_json = triplanner_engine.plan_to_json(plan)
-        st.download_button(
-            "📥 Baixar plano em JSON",
-            data=plan_json,
-            file_name=f"plano_ciclo_{user_id}.json",
-            mime="application/json",
-            key="download_cycle_plan",
+        new_cycle_df = cycle_plan_to_trainings(
+            plan,
+            sess_per_mod,
+            key_sess,
+            pref_days,
+            paces,
+            user_id,
+            user_preferences,
+        )
+
+        pattern = load_timepattern_for_user(user_id) if use_time_pattern_cycle_plan else None
+        if pattern:
+            new_cycle_df = apply_time_pattern_to_cycle(new_cycle_df, pattern)
+
+        cycle_end = start_date + timedelta(weeks=cycle_weeks)
+        existing_df = st.session_state["df"].copy()
+        if not existing_df.empty and not np.issubdtype(existing_df["WeekStart"].dtype, np.datetime64):
+            existing_df["WeekStart"] = pd.to_datetime(
+                existing_df["WeekStart"], errors="coerce"
+            ).dt.date
+
+        df_outside_cycle = existing_df[
+            (existing_df["WeekStart"] < start_date)
+            | (existing_df["WeekStart"] >= cycle_end)
+        ]
+
+        final_df = pd.concat([df_outside_cycle, new_cycle_df], ignore_index=True)
+        save_user_df(user_id, final_df)
+        canonical_week_df.clear()
+
+        st.success(
+            f"{cycle_weeks} semanas de ciclo geradas e enviadas para o calendário!"
         )
 
 
@@ -3112,7 +3233,7 @@ def main():
             st.json(st.session_state["frozen_targets"][frozen_key])
     
         with tab_ciclo:
-            render_cycle_planning_tab(user_id)
+            render_cycle_planning_tab(user_id, user_preferences=user_preferences)
 
     # ---------------- RESUMO DO DIA ----------------
     elif menu == "🗓️ Resumo do Dia":
