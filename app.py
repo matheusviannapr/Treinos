@@ -1188,10 +1188,12 @@ def apply_time_pattern_to_cycle(cycle_df: pd.DataFrame, pattern: dict) -> pd.Dat
             continue
 
         week_chunk = df[week_mask].copy()
+        week_chunk = realign_week_types_with_pattern(week_chunk, pattern, ws)
         week_chunk = apply_time_pattern_to_week(week_chunk, pattern)
 
-        df.loc[week_mask, "Start"] = week_chunk["Start"].values
-        df.loc[week_mask, "End"] = week_chunk["End"].values
+        for col in ["Start", "End", "StartDT", "EndDT", "Data", "Tipo de Treino"]:
+            if col in week_chunk.columns:
+                df.loc[week_mask, col] = week_chunk[col].values
 
     return df
 
