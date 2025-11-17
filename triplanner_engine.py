@@ -91,15 +91,15 @@ RUN_VOLUMES = {
 }
 
 TRI_VOLUMES = {
-    "Sprint": {"completar": (3, 5), "performar": (4, 6)},
-    "Olímpico": {"completar": (4, 7), "performar": (6, 9)},
-    "70.3": {"completar": (6, 10), "performar": (8, 12)},
-    "Ironman": {"completar": (8, 14), "performar": (12, 18)},
+    "Sprint": {"completar": (37, 74), "performar": (64, 113)},
+    "Olímpico": {"completar": (56.5, 103.5), "performar": (93.5, 160)},
+    "70.3": {"completar": (105.8, 171.5), "performar": (151, 257)},
+    "Ironman": {"completar": (179.5, 279.5), "performar": (259, 390)},
 }
 
-BIKE_VOLUMES = {"default": {"completar": (2, 4), "performar": (4, 7)}}
+BIKE_VOLUMES = {"default": {"completar": (80, 150), "performar": (150, 220)}}
 
-SWIM_VOLUMES = {"default": {"completar": (1, 2), "performar": (2, 4)}}
+SWIM_VOLUMES = {"default": {"completar": (2000, 3500), "performar": (3000, 5000)}}
 
 TRI_SPLITS = {
     "Sprint": {"Natação": 0.2, "Ciclismo": 0.45, "Corrida": 0.35},
@@ -148,6 +148,89 @@ SESSION_FOCUS_BY_METHOD = {
     "Técnica + USRPT Light": ["técnica", "tempo", "vo2"],
 }
 
+DISTANCE_RANGES = {
+    "triathlon": {
+        "Sprint": {
+            "completar": {
+                "Natação": (1000, 2000),
+                "Ciclismo": (30, 60),
+                "Corrida": (6, 12),
+            },
+            "performar": {
+                "Natação": (2000, 3000),
+                "Ciclismo": (50, 90),
+                "Corrida": (12, 20),
+            },
+        },
+        "Olímpico": {
+            "completar": {
+                "Natação": (1500, 2500),
+                "Ciclismo": (50, 90),
+                "Corrida": (10, 18),
+            },
+            "performar": {
+                "Natação": (2500, 4000),
+                "Ciclismo": (90, 140),
+                "Corrida": (18, 30),
+            },
+        },
+        "70.3": {
+            "completar": {
+                "Natação": (2000, 3500),
+                "Ciclismo": (80, 150),
+                "Corrida": (15, 28),
+            },
+            "performar": {
+                "Natação": (3000, 5000),
+                "Ciclismo": (150, 220),
+                "Corrida": (28, 42),
+            },
+        },
+        "Ironman": {
+            "completar": {
+                "Natação": (2500, 4500),
+                "Ciclismo": (120, 200),
+                "Corrida": (20, 35),
+            },
+            "performar": {
+                "Natação": (4000, 6000),
+                "Ciclismo": (200, 320),
+                "Corrida": (35, 55),
+            },
+        },
+    },
+    "corrida": {
+        "5k": {
+            "completar": {"Corrida": (6, 12)},
+            "performar": {"Corrida": (12, 20)},
+        },
+        "10k": {
+            "completar": {"Corrida": (10, 18)},
+            "performar": {"Corrida": (18, 30)},
+        },
+        "21k": {
+            "completar": {"Corrida": (15, 28)},
+            "performar": {"Corrida": (28, 42)},
+        },
+        "42k": {
+            "completar": {"Corrida": (20, 35)},
+            "performar": {"Corrida": (35, 55)},
+        },
+    },
+    "bike": {
+        "default": {
+            "completar": {"Ciclismo": (80, 150)},
+            "performar": {"Ciclismo": (150, 220)},
+        }
+    },
+    "natação": {
+        "default": {
+            "completar": {"Natação": (2000, 3500)},
+            "performar": {"Natação": (3000, 5000)},
+        }
+    },
+}
+
 
 @dataclass
 class PhaseSlice:
@@ -180,9 +263,9 @@ def _normalize_modality(modality: str) -> str:
 
 def _volume_unit(modality: str) -> str:
     if modality == "natação":
-        return "sessões"
+        return "metros"
     if modality in ("triathlon", "bike"):
-        return "horas"
+        return "km"
     return "km"
 
 
@@ -204,6 +287,39 @@ def _volume_range(modality: str, distance: str, goal: str) -> tuple[float, float
     if modality == "natação":
         return SWIM_VOLUMES["default"][goal_norm]
     return (10, 20)
+
+
+def _discipline_distance_ranges(modality: str, distance: str, goal: str) -> dict[str, tuple[float, float]]:
+    mod = _normalize_modality(modality)
+    goal_norm = _normalize_goal(goal)
+    distance_key = distance if distance in DISTANCE_RANGES.get(mod, {}) else "default"
+    ranges = DISTANCE_RANGES.get(mod, {}).get(distance_key, {})
+    return ranges.get(goal_norm, {})
+
+
+def plan_week_targets_in_distance(
+    modality: str,
+    distance: str,
+    goal: str,
+    plan_volume_min: float,
+    plan_volume_max: float,
+    week_volume: float,
+) -> dict[str, float]:
+    ranges = _discipline_distance_ranges(modality, distance, goal)
+    if not ranges:
+        return {}
+
+    span = max(plan_volume_max - plan_volume_min, 1e-6)
+    progress = _clamp((week_volume - plan_volume_min) / span, 0.0, 1.0)
+
+    targets = {}
+    for discipline, (vmin, vmax) in ranges.items():
+        value = vmin + (vmax - vmin) * progress
+        if discipline == "Natação":
+            targets[discipline] = round(value / 50) * 50
+        else:
+            targets[discipline] = round(value, 1)
+    return targets
 
 
 def _phase_scheme(total_weeks: int) -> list[tuple[str, float]]:
@@ -395,6 +511,14 @@ def build_triplanner_plan(
         intensity = _intensity_for_week(method, is_recovery, phase.name)
         focus = _week_focus(modality_norm, method, is_recovery, idx + 1)
         volume_total = round(week_volumes[idx], 2)
+        volume_modalidades = plan_week_targets_in_distance(
+            modality_norm,
+            distance,
+            goal_norm,
+            vol_min,
+            vol_max,
+            volume_total,
+        ) or _volume_split(modality_norm, distance, volume_total)
         weeks_payload.append(
             {
                 "semana": idx + 1,
@@ -404,7 +528,7 @@ def build_triplanner_plan(
                 "status": "recuperação" if is_recovery else "carga",
                 "volume_total": volume_total,
                 "unidade": unit,
-                "volume_por_modalidade": _volume_split(modality_norm, distance, volume_total),
+                "volume_por_modalidade": volume_modalidades,
                 "intensidade": intensity,
                 "focos_da_semana": focus,
             }
@@ -459,6 +583,7 @@ def required_weeks_message() -> str:
 __all__ = [
     "TRAINING_TYPE_INFO",
     "build_triplanner_plan",
+    "plan_week_targets_in_distance",
     "plan_to_json",
     "compute_weeks_from_date",
     "required_weeks_message",
