@@ -982,7 +982,7 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
         else:
             day_df = day_df.sort_values("Data")
 
-        # Reordena para tentar respeitar a sequência de modalidade/tipo salva no padrão
+        # Reordena para respeitar E exigir a combinação modalidade + tipo salva no padrão
         def _norm_tipo(value):
             if value is None or (isinstance(value, float) and pd.isna(value)):
                 return None
@@ -992,22 +992,17 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
         def _slot_match_index(row_mod: str, row_tipo: str | None, available: list[dict] | list) -> int:
             row_tipo_norm = _norm_tipo(row_tipo)
 
-            # 1) Match exato modalidade + tipo (quando o padrão contém tipo)
+            # Match estrito: mesma modalidade E mesmo tipo (incluindo ambos vazios/None)
             for idx, slot in enumerate(available):
                 slot_tipo_norm = _norm_tipo(slot.get("tipo"))
-                if slot.get("mod") == row_mod and slot_tipo_norm and slot_tipo_norm == row_tipo_norm:
+                if slot.get("mod") == row_mod and slot_tipo_norm == row_tipo_norm:
                     return idx
 
-            # 2) Modalidade com slot sem tipo definido (tanto padrão quanto semana atual sem tipo)
-            for idx, slot in enumerate(available):
-                slot_tipo_norm = _norm_tipo(slot.get("tipo"))
-                if slot.get("mod") == row_mod and slot_tipo_norm is None and row_tipo_norm is None:
-                    return idx
-
-            # 3) Fallback leve: modalidade igual quando o padrão não especifica tipo
-            for idx, slot in enumerate(available):
-                if slot.get("mod") == row_mod and _norm_tipo(slot.get("tipo")) is None:
-                    return idx
+            # Se o treino atual não tem tipo definido, permitir casar por modalidade e herdar o tipo salvo
+            if row_tipo_norm is None:
+                for idx, slot in enumerate(available):
+                    if slot.get("mod") == row_mod:
+                        return idx
 
             # Não encontrou: coloca no fim
             return len(available)
@@ -1027,16 +1022,22 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
             if row.get("Modalidade") == "Descanso":
                 continue
 
+            slot_tipo = None
             if not slots_available:
                 base_time = time(6, 0)
                 duration = DEFAULT_TRAINING_DURATION_MIN
             else:
                 # Tenta casar o slot pelo par modalidade/tipo preservando ordem salva
-                match_idx = _slot_match_index(row.get("Modalidade"), row.get("Tipo de Treino"), slots_available)
+                match_idx = _slot_match_index(
+                    row.get("Modalidade"), row.get("Tipo de Treino"), slots_available
+                )
+
+                # Sem correspondência estrita de modalidade + tipo
                 if match_idx >= len(slots_available):
-                    match_idx = 0
+                    continue
 
                 slot = slots_available.pop(match_idx)
+                slot_tipo = _norm_tipo(slot.get("tipo"))
                 try:
                     hour, minute = map(int, str(slot.get("start", "06:00")).split(":"))
                 except Exception:
@@ -1055,6 +1056,9 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
             df.at[idx, "End"] = end_dt.isoformat()
             df.at[idx, "StartDT"] = start_dt
             df.at[idx, "EndDT"] = end_dt
+
+            if slot_tipo:
+                df.at[idx, "Tipo de Treino"] = slot.get("tipo")
 
     return df
 
