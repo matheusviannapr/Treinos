@@ -998,11 +998,16 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
                 if slot.get("mod") == row_mod and slot_tipo_norm == row_tipo_norm:
                     return idx
 
-            # Se o treino atual não tem tipo definido, permitir casar por modalidade e herdar o tipo salvo
-            if row_tipo_norm is None:
-                for idx, slot in enumerate(available):
-                    if slot.get("mod") == row_mod:
-                        return idx
+            # 2) Modalidade com slot sem tipo definido (tanto padrão quanto semana atual sem tipo)
+            for idx, slot in enumerate(available):
+                slot_tipo_norm = _norm_tipo(slot.get("tipo"))
+                if slot.get("mod") == row_mod and slot_tipo_norm is None and row_tipo_norm is None:
+                    return idx
+
+            # 3) Fallback leve: modalidade igual quando o padrão não especifica tipo
+            for idx, slot in enumerate(available):
+                if slot.get("mod") == row_mod:
+                    return idx
 
             # Não encontrou: coloca no fim
             return len(available)
