@@ -1068,6 +1068,104 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
     return df
 
 
+def realign_week_types_with_pattern(
+    week_df: pd.DataFrame, pattern: dict, week_start: date
+) -> pd.DataFrame:
+    """Realinha tipos/modalidades para os dias definidos no padrão.
+
+    Quando o padrão salvo define que uma modalidade/tipo ocorre em um dia
+    específico e o calendário atual está trocado (ex.: Corrida Força na
+    quarta em vez de segunda), os treinos são reposicionados para o dia
+    correto. Preserva volumes/detalhes e apenas ajusta Data/horários,
+    deixando a aplicação de horários para `apply_time_pattern_to_week`.
+    """
+
+    if week_df.empty or not pattern or week_start is None:
+        return week_df
+
+    df = week_df.copy()
+
+    if "Data" not in df.columns:
+        return df
+
+    if not np.issubdtype(df["Data"].dtype, np.datetime64):
+        df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
+
+    def _norm_tipo(value):
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return None
+        value_str = str(value).strip()
+        return value_str.lower() if value_str else None
+
+    df["Tipo de Treino"] = df.get("Tipo de Treino", pd.Series([None] * len(df)))
+
+    candidates = list(df.index)
+    used = set()
+
+    for wd, slots in (pattern or {}).items():
+        try:
+            wd_int = int(wd)
+        except Exception:
+            continue
+
+        if wd_int < 0 or wd_int > 6:
+            continue
+
+        day_slots = slots or []
+        if not day_slots:
+            continue
+
+        target_date = week_start + timedelta(days=wd_int)
+
+        for slot in day_slots:
+            mod = slot.get("mod")
+            tipo_norm = _norm_tipo(slot.get("tipo"))
+
+            if not mod or mod == "Descanso":
+                continue
+
+            best_idx = None
+            best_score = -1
+
+            for idx in candidates:
+                if idx in used:
+                    continue
+
+                row = df.loc[idx]
+                if row.get("Modalidade") != mod:
+                    continue
+
+                row_tipo_norm = _norm_tipo(row.get("Tipo de Treino"))
+                score = 0
+
+                if row_tipo_norm == tipo_norm:
+                    score += 2
+
+                row_date = row.get("Data")
+                if isinstance(row_date, date) and row_date.weekday() == wd_int:
+                    score += 1
+
+                if score > best_score:
+                    best_idx = idx
+                    best_score = score
+
+            if best_idx is None:
+                continue
+
+            used.add(best_idx)
+
+            df.at[best_idx, "Data"] = target_date
+            df.at[best_idx, "Start"] = pd.NaT
+            df.at[best_idx, "End"] = pd.NaT
+            df.at[best_idx, "StartDT"] = pd.NaT
+            df.at[best_idx, "EndDT"] = pd.NaT
+
+            if slot.get("tipo"):
+                df.at[best_idx, "Tipo de Treino"] = slot.get("tipo")
+
+    return df
+
+
 def apply_time_pattern_to_cycle(cycle_df: pd.DataFrame, pattern: dict) -> pd.DataFrame:
     if cycle_df.empty or not pattern:
         return cycle_df
@@ -2972,14 +3070,21 @@ def main():
                         & (week_start_series == week_start)
                     )
                     week_chunk = df_current[week_mask].copy()
-    
+
                     if week_chunk.empty:
                         st.warning("Nenhum treino encontrado nesta semana para aplicar o padrão.")
                     else:
+                        week_chunk = realign_week_types_with_pattern(
+                            week_chunk, pattern, week_start
+                        )
                         week_chunk = apply_time_pattern_to_week(week_chunk, pattern)
                         df_current.loc[week_mask, "Start"] = week_chunk["Start"].values
                         df_current.loc[week_mask, "End"] = week_chunk["End"].values
-    
+                        df_current.loc[week_mask, "Data"] = week_chunk["Data"].values
+                        df_current.loc[week_mask, "Tipo de Treino"] = week_chunk[
+                            "Tipo de Treino"
+                        ].values
+
                         save_user_df(user_id, df_current)
                         canonical_week_df.clear()
                         st.success("Padrão aplicado nesta semana.")
