@@ -889,6 +889,21 @@ def _ensure_py_datetime(value):
     return value
 
 
+def _normalize_training_type(value) -> str | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+
+    value_str = str(value).strip()
+    if not value_str:
+        return None
+
+    normalized = unicodedata.normalize("NFKD", value_str)
+    normalized = "".join(c for c in normalized if not unicodedata.combining(c))
+    normalized = "".join(c if c.isalnum() else " " for c in normalized)
+    normalized = " ".join(normalized.lower().split())
+    return normalized or None
+
+
 def extract_time_pattern_from_week(week_df: pd.DataFrame) -> dict:
     """Extrai slots de horários (start/dur) para cada dia da semana."""
 
