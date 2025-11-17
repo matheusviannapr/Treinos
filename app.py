@@ -2362,12 +2362,14 @@ def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
     return week_df
 
 
-def render_cycle_planning_tab(user_id: str):
+def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None):
     st.subheader("Planejamento semanal do ciclo")
     st.markdown(
         "Monte um esqueleto semanal do ciclo inteiro antes de preencher os treinos. "
         "Escolha modalidade, distância e duração e o motor gera a carga semanal com focos e intensidades."
     )
+
+    user_preferences = user_preferences or {}
 
     modality_labels = {
         "triathlon": "Triathlon",
@@ -3231,7 +3233,7 @@ def main():
             st.json(st.session_state["frozen_targets"][frozen_key])
     
         with tab_ciclo:
-            render_cycle_planning_tab(user_id)
+            render_cycle_planning_tab(user_id, user_preferences=user_preferences)
 
     # ---------------- RESUMO DO DIA ----------------
     elif menu == "🗓️ Resumo do Dia":
