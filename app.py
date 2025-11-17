@@ -911,6 +911,12 @@ def extract_time_pattern_from_week(week_df: pd.DataFrame) -> dict:
     if week_df.empty:
         return pattern
 
+    def _normalize_tipo(value):
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return None
+        value_str = str(value).strip()
+        return value_str or None
+
     for _, r in week_df.iterrows():
         if r.get("Modalidade") == "Descanso":
             continue
@@ -937,20 +943,13 @@ def extract_time_pattern_from_week(week_df: pd.DataFrame) -> dict:
         if duration_min <= 0:
             duration_min = DEFAULT_TRAINING_DURATION_MIN
 
-        tipo_original = None
-        if "Tipo de Treino" in r:
-            raw_tipo = r.get("Tipo de Treino")
-            if not (raw_tipo is None or (isinstance(raw_tipo, float) and pd.isna(raw_tipo))):
-                tipo_original = str(raw_tipo).strip() or None
-
-        tipo_norm = _normalize_training_type(tipo_original)
+        tipo_treino = _normalize_tipo(r.get("Tipo de Treino"))
         pattern[weekday].append(
             {
                 "start": start.time().strftime("%H:%M"),
                 "dur": duration_min,
                 "mod": r.get("Modalidade"),
-                "tipo": tipo_original,
-                "tipo_norm": tipo_norm,
+                "tipo": tipo_treino,
             }
         )
 
@@ -999,34 +998,30 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
             day_df = day_df.sort_values("Data")
 
         # Reordena para tentar respeitar a sequência de modalidade/tipo salva no padrão
-        def _norm_tipo(value, pre_norm: str | None = None):
-            if pre_norm:
-                return pre_norm
-            return _normalize_training_type(value)
+        def _norm_tipo(value):
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                return None
+            value_str = str(value).strip()
+            return value_str.lower() if value_str else None
 
         def _slot_match_index(row_mod: str, row_tipo: str | None, available: list[dict] | list) -> int:
             row_tipo_norm = _norm_tipo(row_tipo)
 
             # 1) Match exato modalidade + tipo (quando o padrão contém tipo)
             for idx, slot in enumerate(available):
-                slot_tipo_norm = _norm_tipo(slot.get("tipo"), slot.get("tipo_norm"))
-                if (
-                    slot.get("mod") == row_mod
-                    and slot_tipo_norm
-                    and row_tipo_norm
-                    and slot_tipo_norm == row_tipo_norm
-                ):
+                slot_tipo_norm = _norm_tipo(slot.get("tipo"))
+                if slot.get("mod") == row_mod and slot_tipo_norm and slot_tipo_norm == row_tipo_norm:
                     return idx
 
             # 2) Modalidade com slot sem tipo definido (tanto padrão quanto semana atual sem tipo)
             for idx, slot in enumerate(available):
-                slot_tipo_norm = _norm_tipo(slot.get("tipo"), slot.get("tipo_norm"))
+                slot_tipo_norm = _norm_tipo(slot.get("tipo"))
                 if slot.get("mod") == row_mod and slot_tipo_norm is None and row_tipo_norm is None:
                     return idx
 
             # 3) Fallback leve: modalidade igual quando o padrão não especifica tipo
             for idx, slot in enumerate(available):
-                if slot.get("mod") == row_mod and _norm_tipo(slot.get("tipo"), slot.get("tipo_norm")) is None:
+                if slot.get("mod") == row_mod and _norm_tipo(slot.get("tipo")) is None:
                     return idx
 
             # Não encontrou: coloca no fim
