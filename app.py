@@ -105,6 +105,15 @@ MODALITY_TEXT_COLORS = {
     "Ciclismo": (255, 255, 255),
 }
 
+MODALITY_EMOJIS = {
+    "Corrida": "🏃",
+    "Ciclismo": "🚴",
+    "Natação": "🏊",
+    "Força/Calistenia": "💪",
+    "Mobilidade": "🤸",
+    "Descanso": "😴",
+}
+
 PDF_REPLACE = str.maketrans({
     "—": "-",
     "–": "-",
@@ -119,6 +128,13 @@ def pdf_safe(s: str) -> str:
         return ""
     t = str(s).translate(PDF_REPLACE)
     return unicodedata.normalize("NFKD", t).encode("latin-1", "ignore").decode("latin-1")
+
+
+def modality_label(mod: str | None) -> str:
+    if not mod:
+        return ""
+    emoji = MODALITY_EMOJIS.get(mod, "")
+    return f"{emoji} {mod}" if emoji else mod
 
 UNITS_ALLOWED = {
     "Corrida": "km",
@@ -910,6 +926,8 @@ def extract_time_pattern_from_week(week_df: pd.DataFrame) -> dict:
             {
                 "start": start.time().strftime("%H:%M"),
                 "dur": duration_min,
+                "mod": r.get("Modalidade"),
+                "tipo": r.get("Tipo de Treino"),
             }
         )
 
@@ -945,16 +963,41 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
         else:
             day_df = day_df.sort_values("Data")
 
-        slot_idx = 0
+        # Reordena para tentar respeitar a sequência de modalidade/tipo salva no padrão
+        def _slot_match_index(row_mod: str, row_tipo: str | None, available: list[dict] | list) -> int:
+            for idx, slot in enumerate(available):
+                if slot.get("mod") == row_mod and (not slot.get("tipo") or slot.get("tipo") == row_tipo):
+                    return idx
+            for idx, slot in enumerate(available):
+                if slot.get("mod") == row_mod:
+                    return idx
+            return len(available)
+
+        day_df = day_df.sort_values(
+            by=["Data"],
+            key=lambda s: s.apply(lambda _: 0),
+        )
+        day_df = day_df.assign(
+            _slot_pref=day_df.apply(
+                lambda r: _slot_match_index(r.get("Modalidade"), r.get("Tipo de Treino"), slots), axis=1
+            )
+        ).sort_values(["_slot_pref", "StartDT", "Tipo de Treino"]).drop(columns=["_slot_pref"])
+
+        slots_available = list(slots)
         for idx, row in day_df.iterrows():
             if row.get("Modalidade") == "Descanso":
                 continue
 
-            if slot_idx >= len(slots):
+            if not slots_available:
                 base_time = time(6, 0)
                 duration = DEFAULT_TRAINING_DURATION_MIN
             else:
-                slot = slots[slot_idx]
+                # Tenta casar o slot pelo par modalidade/tipo preservando ordem salva
+                match_idx = _slot_match_index(row.get("Modalidade"), row.get("Tipo de Treino"), slots_available)
+                if match_idx >= len(slots_available):
+                    match_idx = 0
+
+                slot = slots_available.pop(match_idx)
                 try:
                     hour, minute = map(int, str(slot.get("start", "06:00")).split(":"))
                 except Exception:
@@ -973,8 +1016,6 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
             df.at[idx, "End"] = end_dt.isoformat()
             df.at[idx, "StartDT"] = start_dt
             df.at[idx, "EndDT"] = end_dt
-
-            slot_idx += 1
 
     return df
 
@@ -1678,7 +1719,8 @@ def generate_ics(df: pd.DataFrame) -> str:
     for _, row in df.iterrows():
         start = row["StartDT"]
         end = row["EndDT"]
-        summary = f"{row['Modalidade']} - {row['Tipo de Treino']}"
+        mod_display = modality_label(row.get("Modalidade"))
+        summary = f"{mod_display} - {row['Tipo de Treino']}"
         vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
         description = (
             f"Volume: {vol_val:g} {row['Unidade']}\n"
@@ -1749,7 +1791,8 @@ def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
 
     # Página 1: tabela com horários (AGORA EM PAISAGEM) + coluna de Notas do Atleta
     # Ajustei levemente as larguras para caber em A4 paisagem
-    col_widths = [24, 18, 18, 30, 36, 18, 14, 70, 50]
+    # Mais compacto para sempre caber em uma página A4 paisagem
+    col_widths = [22, 16, 16, 28, 32, 16, 12, 64, 42]
     headers = [
         "Data",
         "Início",
@@ -1762,16 +1805,17 @@ def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
         "Notas do Atleta",
     ]
 
-    pdf.set_font("Arial", "B", 9)
+    pdf.set_font("Arial", "B", 8)
     pdf.set_fill_color(220, 220, 220)
     for i, h in enumerate(headers):
         pdf.cell(col_widths[i], 7, pdf_safe(h), 1, 0, "C", 1)
     pdf.ln()
 
-    pdf.set_font("Arial", "", 8)
+    pdf.set_font("Arial", "", 7.5)
     for _, row in df.iterrows():
         vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
         mod = row["Modalidade"]
+        mod_display = modality_label(mod)
         if mod == "Descanso" and vol_val <= 0:
             continue
 
@@ -1792,7 +1836,7 @@ def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
         detail = str(row["Detalhamento"])
 
         text_color = MODALITY_TEXT_COLORS.get(mod, (0, 0, 0))
-        line_h = 5
+        line_h = 4.5
 
         # 7 primeiras colunas (dados “fixos”)
         pdf.set_fill_color(*color)
@@ -1800,7 +1844,7 @@ def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
         pdf.cell(col_widths[0], line_h, pdf_safe(data_str), 1, 0, "L", 1)
         pdf.cell(col_widths[1], line_h, pdf_safe(ini_str), 1, 0, "C", 1)
         pdf.cell(col_widths[2], line_h, pdf_safe(fim_str), 1, 0, "C", 1)
-        pdf.cell(col_widths[3], line_h, pdf_safe(mod), 1, 0, "L", 1)
+        pdf.cell(col_widths[3], line_h, pdf_safe(mod_display), 1, 0, "L", 1)
         pdf.cell(col_widths[4], line_h, pdf_safe(tipo), 1, 0, "L", 1)
         pdf.cell(col_widths[5], line_h, pdf_safe(vol), 1, 0, "R", 1)
         pdf.cell(col_widths[6], line_h, pdf_safe(unit), 1, 0, "C", 1)
@@ -2204,7 +2248,8 @@ def build_week_changelog(df: pd.DataFrame, week_start: date) -> list[dict]:
 
     events = []
     for _, row in chunk.iterrows():
-        training_desc = f"{row['Modalidade']} - {row['Tipo de Treino']} ({row['Data']})"
+        mod_display = modality_label(row.get("Modalidade"))
+        training_desc = f"{mod_display} - {row['Tipo de Treino']} ({row['Data']})"
         for entry in extract_training_changelog(row):
             events.append(
                 {
@@ -2496,7 +2541,7 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
 
     cycle_weeks: int
     if duration_mode == "Número de semanas":
-        cycle_weeks = int(st.number_input("Semanas de preparação", min_value=4, max_value=28, value=12, step=1))
+        cycle_weeks = int(st.number_input("Semanas de preparação", min_value=4, max_value=52, value=12, step=1))
     else:
         event_date = st.date_input("Data da prova", value=start_date + timedelta(weeks=12), key="cycle_event_date")
         cycle_weeks = triplanner_engine.compute_weeks_from_date(event_date, start_date)
@@ -2899,7 +2944,8 @@ def main():
                 uid = row["UID"]
                 vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
     
-                title = f"{row['Modalidade']} - {row['Tipo de Treino']}"
+                mod_display = modality_label(row.get("Modalidade"))
+                title = f"{mod_display} - {row['Tipo de Treino']}"
                 if vol_val > 0:
                     title += f" ({vol_val:g} {row['Unidade']})"
     
@@ -3562,7 +3608,7 @@ def main():
             st.markdown("### Definições do Ciclo")
             p_col1, p_col2, p_col3 = st.columns(3)
             cycle_start = p_col1.date_input("Início do ciclo", value=monday_of_week(today()))
-            num_weeks = p_col2.number_input("Duração (semanas)", min_value=4, max_value=24, value=12, step=1)
+            num_weeks = p_col2.number_input("Duração (semanas)", min_value=4, max_value=52, value=12, step=1)
             base_load = p_col3.number_input("Carga base (TSS/semana)", min_value=100, max_value=1000, value=300, step=10)
 
             st.markdown("### Proporção de Carga por Fase (% da carga base)")
