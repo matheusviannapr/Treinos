@@ -995,7 +995,7 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
             # Match estrito: mesma modalidade E mesmo tipo (incluindo ambos vazios/None)
             for idx, slot in enumerate(available):
                 slot_tipo_norm = _norm_tipo(slot.get("tipo"))
-                if slot.get("mod") == row_mod and slot_tipo_norm and slot_tipo_norm == row_tipo_norm:
+                if slot.get("mod") == row_mod and slot_tipo_norm == row_tipo_norm:
                     return idx
 
             # 2) Modalidade com slot sem tipo definido (tanto padrão quanto semana atual sem tipo)
