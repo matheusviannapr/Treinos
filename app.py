@@ -945,6 +945,18 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
 
     df = week_df.copy()
 
+    # Garante colunas necessárias para ordenação e aplicação de slots
+    if "StartDT" not in df.columns:
+        df["StartDT"] = pd.NaT
+    if "EndDT" not in df.columns:
+        df["EndDT"] = pd.NaT
+    if "Start" not in df.columns:
+        df["Start"] = pd.NaT
+    if "End" not in df.columns:
+        df["End"] = pd.NaT
+    if "Tipo de Treino" not in df.columns:
+        df["Tipo de Treino"] = None
+
     if not np.issubdtype(df["Data"].dtype, np.datetime64):
         df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
 
