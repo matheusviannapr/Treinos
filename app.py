@@ -103,16 +103,6 @@ MODALITY_COLORS = {
 }
 MODALITY_TEXT_COLORS = {
     "Ciclismo": (255, 255, 255),
-    "Natação": (255, 255, 255),
-}
-
-MODALITY_EMOJIS = {
-    "Corrida": "🏃",
-    "Ciclismo": "🚴",
-    "Natação": "🏊",
-    "Força/Calistenia": "💪",
-    "Mobilidade": "🤸",
-    "Descanso": "😴",
 }
 
 MODALITY_EMOJIS = {
@@ -2631,8 +2621,8 @@ def main():
 
     # LOGIN
     if "user_id" not in st.session_state:
-        st.title("Bem-vindo ao TriPlano 🏊🚴🏃")
-        st.markdown("Faça login ou crie sua conta para começar e organize seus treinos de triatlo. 🏃‍♂️🚴‍♀️🏊‍♂️")
+        st.title("Bem-vindo ao TriPlano 🌀")
+        st.markdown("Faça login ou crie sua conta para começar.")
 
         tab1, tab2 = st.tabs(["Entrar", "Criar Conta"])
         with tab1:
@@ -2709,7 +2699,7 @@ def main():
 
     menu = st.sidebar.radio(
         "Navegação",
-        ["📅 Planejamento Semanal", "🗓️ Resumo do Dia", "📈 Dashboard"],
+        ["📅 Planejamento Semanal", "🗓️ Resumo do Dia", "📈 Dashboard", "⚙️ Periodização"],
         index=0,
     )
     st.sidebar.markdown("---")
@@ -2817,8 +2807,8 @@ def main():
                 st.caption("Essas metas também alimentam a geração de ciclo direto no calendário.")
 
             st.markdown("---")
-
-            # Semana atual
+    
+            # 3. Semana atual
             col1, col2, col3 = st.columns([1, 2, 1])
             if col1.button("⬅️ Semana anterior"):
                 st.session_state["current_week_start"] -= timedelta(days=7)
@@ -2838,7 +2828,7 @@ def main():
             week_df_raw = week_slice(df, week_start)
             if week_df_raw.empty:
                 week_df_raw = default_week_df(week_start, user_id)
-
+    
             week_slots = get_week_availability(user_id, week_start)
     
             # 3.1 Modo de agendamento
@@ -2925,7 +2915,7 @@ def main():
             st.subheader("4. Calendário da Semana")
     
             week_df_can = canonical_week_df(user_id, week_start)
-
+    
             col_pat1, col_pat2 = st.columns(2)
             if col_pat1.button("📌 Capturar padrão de horários desta semana"):
                 pattern = extract_time_pattern_from_week(week_df_can)
@@ -3252,163 +3242,91 @@ def main():
                 if col_salvar.button("💾 Salvar", key=f"save_{uid}"):
                     apply_update(None)
 
-            # Ajustes drag/resize no calendário -> atualiza df base (logo afeta canonical e PDF/ICS)
-            def handle_move_or_resize(ev_dict, action_label):
-                ev = ev_dict.get("event", {}) if ev_dict else {}
-                ext = ev.get("extendedProps", {}) or {}
-                if ext.get("type") != "treino":
-                    return
+        # 5.2 Drag/resize treinos -> atualiza df base (logo afeta canonical e PDF/ICS)
+        def handle_move_or_resize(ev_dict, action_label):
+            ev = ev_dict.get("event", {}) if ev_dict else {}
+            ext = ev.get("extendedProps", {}) or {}
+            if ext.get("type") != "treino":
+                return
 
-                uid = ext.get("uid")
-                start = parse_iso(ev.get("start"))
-                end = parse_iso(ev.get("end"))
+            uid = ext.get("uid")
+            start = parse_iso(ev.get("start"))
+            end = parse_iso(ev.get("end"))
 
-                idx = _persist_calendar_update(uid, start, end)
-                if idx is not None:
-                    st.toast(f"Treino {uid} {action_label} e salvo.", icon="💾")
-                    render_training_detail(uid)
+            idx = _persist_calendar_update(uid, start, end)
+            if idx is not None:
+                st.toast(f"Treino {uid} {action_label} e salvo.", icon="💾")
+                render_training_detail(uid)
 
-            if cal_state and "eventDrop" in cal_state:
-                handle_move_or_resize(cal_state["eventDrop"], "movido")
 
-            if cal_state and "eventResize" in cal_state:
-                handle_move_or_resize(cal_state["eventResize"], "redimensionado")
+        if cal_state and "eventDrop" in cal_state:
+            handle_move_or_resize(cal_state["eventDrop"], "movido")
 
-            # Clique eventos
-            if cal_state and "eventClick" in cal_state:
-                ev = cal_state["eventClick"]["event"]
-                ext = ev.get("extendedProps", {}) or {}
-                etype = ext.get("type")
+        if cal_state and "eventResize" in cal_state:
+            handle_move_or_resize(cal_state["eventResize"], "redimensionado")
+    
+        # 5.3 Clique eventos
+        if cal_state and "eventClick" in cal_state:
+            ev = cal_state["eventClick"]["event"]
+            ext = ev.get("extendedProps", {}) or {}
+            etype = ext.get("type")
 
-                # Clique em Livre -> remove slot
-                if etype == "free":
-                    s = parse_iso(ev.get("start"))
-                    e = parse_iso(ev.get("end"))
-                    new_slots = [
-                        sl for sl in week_slots if not (to_naive(sl["start"]) == s and to_naive(sl["end"]) == e)
-                    ]
-                    set_week_availability(user_id, week_start, new_slots)
-                    canonical_week_df.clear()
-                    safe_rerun()
-
-                # Clique em treino -> SALVA horário do calendário no banco e abre o popup
-                if etype == "treino":
-                    uid = ext.get("uid") or ev.get("id")
-                    cal_start = parse_iso(ev.get("start"))
-                    cal_end = parse_iso(ev.get("end"))
-
-                    idx = _persist_calendar_update(uid, cal_start, cal_end)
-                    if idx is None:
-                        st.error("Evento inválido.")
-                    else:
-                        render_training_detail(uid)
-
-            # Como encaixar os treinos
-            st.subheader("Como encaixar os treinos?")
-            modo_agendamento = st.radio(
-                "Opção de agendamento",
-                ["Usar horários livres", "Ignorar horários livres"],
-                horizontal=True,
-            )
-            use_time_pattern = st.checkbox(
-                "Usar padrão de horários salvo (se existir)",
-                value=False,
-                key="use_time_pattern_week",
-            )
-
-            # Gerar semana automática
-            col_btn1, _, _ = st.columns(3)
-            if col_btn1.button("📆 Gerar Semana Automática"):
-                dias_map = dias_semana_options
-                off_days_set = set(user_preferences.get("off_days", []))
-                current_preferred_days = {}
-                for mod in MODALIDADES:
-                    selected_labels = st.session_state.get(f"pref_days_{mod}", [])
-                    selected = [dias_map[d] for d in selected_labels if d in dias_map]
-                    filtered = [d for d in selected if d not in off_days_set]
-                    if not filtered:
-                        filtered = [idx for idx in dias_map.values() if idx not in off_days_set]
-                    current_preferred_days[mod] = filtered
-                key_sessions = {mod: st.session_state.get(f"key_sess_{mod}", "") for mod in MODALIDADES}
-
-                weekly_targets = _ensure_support_work(weekly_targets, sessions_per_mod)
-
-                new_week_df = distribute_week_by_targets(
-                    week_start,
-                    weekly_targets,
-                    sessions_per_mod,
-                    key_sessions,
-                    paces,
-                    current_preferred_days,
-                    user_id,
-                    off_days=user_preferences.get("off_days"),
-                )
-
-                pattern = load_timepattern_for_user(user_id) if use_time_pattern else None
-                if use_time_pattern and not pattern:
-                    st.warning("Nenhum padrão de horários salvo ainda. Usando lógica padrão.")
-
-                if pattern:
-                    new_week_df = apply_time_pattern_to_week(new_week_df, pattern)
-                    updated_slots = week_slots
-                    warnings = []
-                else:
-                    use_avail = (modo_agendamento == "Usar horários livres")
-                    new_week_df, updated_slots, warnings = assign_times_to_week(
-                        new_week_df,
-                        week_slots,
-                        use_avail,
-                        preferences=user_preferences,
-                    )
-
-                    if use_avail:
-                        updated_slots = subtract_trainings_from_slots(new_week_df, updated_slots)
-                        set_week_availability(user_id, week_start, updated_slots)
-
-                for warn in warnings:
-                    st.warning(warn)
-
-                user_df = st.session_state["df"]
-                others = user_df[user_df["WeekStart"] != week_start]
-                user_df_new = pd.concat([others, new_week_df], ignore_index=True)
-                save_user_df(user_id, user_df_new)
-                st.success("Semana gerada e salva!")
+            # Clique em Livre -> remove slot
+            if etype == "free":
+                s = parse_iso(ev.get("start"))
+                e = parse_iso(ev.get("end"))
+                new_slots = [sl for sl in week_slots if not (to_naive(sl["start"]) == s and to_naive(sl["end"]) == e)]
+                set_week_availability(user_id, week_start, new_slots)
                 canonical_week_df.clear()
                 safe_rerun()
 
-            # Botão salvar semana (reforça persistência; canonical já lê direto de df)
-            if st.button("💾 Salvar Semana Atual"):
-                st.session_state["calendar_forcar_snapshot"] = True
-                if "calendar_snapshot" not in st.session_state:
-                    st.session_state["calendar_snapshot"] = []
-                safe_rerun()
+            # Clique em treino -> SALVA horário do calendário no banco e abre o popup
+            if etype == "treino":
+                uid = ext.get("uid") or ev.get("id")
+                cal_start = parse_iso(ev.get("start"))
+                cal_end = parse_iso(ev.get("end"))
 
-            # Exportações — usam SEMPRE o df canônico (mesmo do calendário)
-            st.subheader("Exportar Semana Atual")
+                idx = _persist_calendar_update(uid, cal_start, cal_end)
+                if idx is None:
+                    st.error("Evento inválido.")
+                else:
+                    render_training_detail(uid)
+    
+        # 5.4 Botão salvar semana (reforça persistência; canonical já lê direto de df)
+        st.markdown("---")
+        if st.button("💾 Salvar Semana Atual"):
+            st.session_state["calendar_forcar_snapshot"] = True
+            if "calendar_snapshot" not in st.session_state:
+                st.session_state["calendar_snapshot"] = []
+            safe_rerun()
 
-            # Força o recarregamento do canonical_week_df para garantir dados frescos para exportação
-            week_df_export = canonical_week_df(user_id, week_start)
-            col_exp1, col_exp2 = st.columns(2)
 
-            if not week_df_export.empty:
-                if col_exp1.download_button(
-                    "📤 Exportar .ICS",
-                    data=generate_ics(week_df_export),
-                    file_name=f"treino_{week_start.strftime('%Y%m%d')}.ics",
-                    mime="text/calendar",
-                ):
-                    st.info("ICS gerado a partir do calendário atual.")
+        # 6. Exportações — usam SEMPRE o df canônico (mesmo do calendário)
+        st.subheader("5. Exportar Semana Atual")
 
-                pdf_bytes = generate_pdf(week_df_export, week_start)
-                if col_exp2.download_button(
-                    "📕 Exportar PDF",
-                    data=pdf_bytes,
-                    file_name=f"treino_{week_start.strftime('%Y%m%d')}.pdf",
-                    mime="application/pdf",
-                ):
-                    st.info("PDF gerado a partir do calendário atual.")
-            else:
-                st.info("Nenhum treino (além de descanso) nesta semana.")
+        # Força o recarregamento do canonical_week_df para garantir dados frescos para exportação
+        week_df_export = canonical_week_df(user_id, week_start)
+        col_exp1, col_exp2 = st.columns(2)
+
+        if not week_df_export.empty:
+            if col_exp1.download_button(
+                "📤 Exportar .ICS",
+                data=generate_ics(week_df_export),
+                file_name=f"treino_{week_start.strftime('%Y%m%d')}.ics",
+                mime="text/calendar",
+            ):
+                st.info("ICS gerado a partir do calendário atual.")
+
+            pdf_bytes = generate_pdf(week_df_export, week_start)
+            if col_exp2.download_button(
+                "📕 Exportar PDF",
+                data=pdf_bytes,
+                file_name=f"treino_{week_start.strftime('%Y%m%d')}.pdf",
+                mime="application/pdf",
+            ):
+                st.info("PDF gerado a partir do calendário atual.")
+        else:
+            st.info("Nenhum treino (além de descanso) nesta semana.")
 
         # Metas congeladas (placeholder)
         st.markdown("---")
