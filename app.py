@@ -1006,7 +1006,7 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
 
             # 3) Fallback leve: modalidade igual quando o padrão não especifica tipo
             for idx, slot in enumerate(available):
-                if slot.get("mod") == row_mod and _norm_tipo(slot.get("tipo")) is None:
+                if slot.get("mod") == row_mod:
                     return idx
 
             # Não encontrou: coloca no fim
@@ -1027,6 +1027,7 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
             if row.get("Modalidade") == "Descanso":
                 continue
 
+            slot_tipo = None
             if not slots_available:
                 base_time = time(6, 0)
                 duration = DEFAULT_TRAINING_DURATION_MIN
@@ -1037,6 +1038,7 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
                     match_idx = 0
 
                 slot = slots_available.pop(match_idx)
+                slot_tipo = _norm_tipo(slot.get("tipo"))
                 try:
                     hour, minute = map(int, str(slot.get("start", "06:00")).split(":"))
                 except Exception:
@@ -1055,6 +1057,9 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
             df.at[idx, "End"] = end_dt.isoformat()
             df.at[idx, "StartDT"] = start_dt
             df.at[idx, "EndDT"] = end_dt
+
+            if slot_tipo:
+                df.at[idx, "Tipo de Treino"] = slot.get("tipo")
 
     return df
 
