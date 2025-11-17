@@ -309,8 +309,12 @@ def plan_week_targets_in_distance(
     if not ranges:
         return {}
 
-    span = max(plan_volume_max - plan_volume_min, 1e-6)
-    progress = _clamp((week_volume - plan_volume_min) / span, 0.0, 1.0)
+    # Permite que semanas de recuperação (–30%) ainda avancem na escala de
+    # distância, em vez de ficarem sempre no mínimo quando o volume semanal
+    # cai abaixo do volume mínimo planejado.
+    recovery_floor = plan_volume_min * 0.7
+    span = max(plan_volume_max - recovery_floor, 1e-6)
+    progress = _clamp((week_volume - recovery_floor) / span, 0.0, 1.0)
 
     targets = {}
     for discipline, (vmin, vmax) in ranges.items():
@@ -336,9 +340,9 @@ def _phase_scheme(total_weeks: int) -> list[tuple[str, float]]:
         ]
     else:
         scheme = [
-            ("Base 1", 0.25 / 3),
-            ("Base 2", 0.25 / 3),
-            ("Base 3", 0.25 / 3),
+            ("Base 1", 0.15),
+            ("Base 2", 0.10),
+            ("Base 3", 0.10),
             ("Build", 0.35),
             ("Peak", 0.15),
             ("Taper", 0.10),

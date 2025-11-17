@@ -103,6 +103,7 @@ MODALITY_COLORS = {
 }
 MODALITY_TEXT_COLORS = {
     "Ciclismo": (255, 255, 255),
+    "Natação": (255, 255, 255),
 }
 
 MODALITY_EMOJIS = {
