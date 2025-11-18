@@ -833,6 +833,78 @@ def _running_zone_distribution(distance: str, goal: str, is_recovery: bool) -> d
     return dist
 
 
+def _running_long_run_plan(
+    distance: str,
+    nivel: str | None,
+    week_volumes: list[float],
+    phases: list[PhaseSlice],
+) -> list[float]:
+    dist_key = str(distance).lower()
+    nivel_norm = _normalize_level(nivel)
+    if not week_volumes:
+        return []
+
+    base_share_ranges = {
+        "21k": (0.25, 0.35),
+        "42k": (0.30, 0.40),
+    }
+    base_min, base_max = base_share_ranges.get(dist_key, (0.22, 0.32))
+    if nivel_norm == "iniciante":
+        base_min += 0.01
+    elif nivel_norm == "avancado":
+        base_max -= 0.03
+        base_min = max(base_min - 0.01, 0.2)
+
+    phase_by_week: list[str] = []
+    for idx in range(len(week_volumes)):
+        phase = next((p for p in phases if p.start_week <= idx + 1 <= p.end_week), phases[-1])
+        phase_by_week.append(phase.name)
+
+    long_runs: list[float] = []
+    for idx, volume in enumerate(week_volumes):
+        phase_name = phase_by_week[idx]
+        is_recovery = (idx + 1) % 4 == 0
+        is_taper = "Taper" in phase_name
+        share_low, share_high = base_min, base_max
+        if is_recovery:
+            share_high = max(share_low, share_high - 0.06)
+        if is_taper:
+            share_low *= 0.7
+            share_high *= 0.8
+        share = _clamp(share_high if not is_recovery else share_high - 0.01, share_low, share_high)
+        long_km = volume * share
+        cap = 32.0 if dist_key == "42k" else 16.0 if dist_key == "21k" else volume * 0.45
+        long_km = min(long_km, cap, volume * 0.55)
+        long_runs.append(round(long_km, 1))
+
+    if dist_key in {"21k", "42k"}:
+        goal_km = 21.097 if dist_key == "21k" else 42.195
+        threshold = min(goal_km * 0.7, 16.0 if dist_key == "21k" else 32.0)
+        target_share_cap = 0.37 if dist_key == "42k" else 0.34
+        non_taper_weeks = [i for i, name in enumerate(phase_by_week) if "Taper" not in name]
+        def _eligible(idx: int) -> bool:
+            volume = week_volumes[idx]
+            return volume * (target_share_cap + 0.02) >= threshold
+
+        candidates = [i for i in non_taper_weeks if _eligible(i)]
+        candidates = sorted(candidates, key=lambda i: (week_volumes[i], i), reverse=True)
+        hits = sum(1 for km in long_runs if km >= threshold)
+        for idx in candidates:
+            if hits >= 3:
+                break
+            volume = week_volumes[idx]
+            boosted = min(
+                max(long_runs[idx], threshold),
+                cap if (cap := (32.0 if dist_key == "42k" else 16.0)) else volume,
+                volume * (target_share_cap + 0.02),
+            )
+            if boosted > long_runs[idx]:
+                long_runs[idx] = round(boosted, 1)
+                hits = sum(1 for km in long_runs if km >= threshold)
+
+    return long_runs
+
+
 def _intensity_slots_from_days(dias_treino: int | None, is_recovery: bool) -> int:
     days = int(dias_treino or 4)
     if days <= 3:
@@ -888,6 +960,7 @@ def _training_zone(tag: str) -> str:
 
 def _running_week_sessions(
     week_volume: float,
+    longao_volume: float | None,
     phase: str,
     distance: str,
     goal: str,
@@ -908,21 +981,16 @@ def _running_week_sessions(
     z3_km = week_volume * zone_dist.get("Z3", 0) / 100
     z45_km = week_volume * zone_dist.get("Z4_Z5", 0) / 100
 
-    longao_share = 0.28
-    if dist_key == "21k":
-        longao_share = 0.3
-    elif dist_key == "42k":
-        longao_share = 0.32
-    longao_volume = _clamp(week_volume * longao_share, week_volume * 0.22, week_volume * 0.38)
+    longao_volume = longao_volume or _clamp(week_volume * 0.3, week_volume * 0.22, week_volume * 0.36)
     if z1z2_km:
-        longao_volume = min(longao_volume, z1z2_km * 0.75)
+        longao_volume = min(longao_volume, z1z2_km * 0.8)
     if dist_key == "42k":
-        floor = max(20.0, week_volume * 0.36)
-        ceiling = min(week_volume * 0.6, z1z2_km * 0.8 if z1z2_km else week_volume * 0.6)
+        ceiling = min(32.0, z1z2_km * 0.82 if z1z2_km else week_volume * 0.58)
+        floor = max(longao_volume * 0.85, week_volume * 0.3)
         longao_volume = _clamp(longao_volume, floor, ceiling)
     elif dist_key == "21k":
-        floor = max(14.0, week_volume * 0.32)
-        ceiling = min(week_volume * 0.55, z1z2_km * 0.8 if z1z2_km else week_volume * 0.55)
+        ceiling = min(16.0, z1z2_km * 0.8 if z1z2_km else week_volume * 0.55)
+        floor = max(longao_volume * 0.85, week_volume * 0.26)
         longao_volume = _clamp(longao_volume, floor, ceiling)
 
     sessions: list[dict] = [
@@ -1012,6 +1080,12 @@ def build_triplanner_plan(
     )
     week_volumes = _apply_three_one(week_volumes)
 
+    long_runs = (
+        _running_long_run_plan(distance, nivel, week_volumes, phases)
+        if modality_norm == "corrida"
+        else []
+    )
+
     weeks_payload = []
     for idx in range(cycle_weeks):
         phase = next((p for p in phases if p.start_week <= idx + 1 <= p.end_week), phases[-1])
@@ -1022,6 +1096,7 @@ def build_triplanner_plan(
             focus = _week_focus(modality_norm, method, is_recovery, idx + 1)
             sessions = _running_week_sessions(
                 week_volumes[idx],
+                long_runs[idx] if idx < len(long_runs) else None,
                 phase.name,
                 distance,
                 goal_norm,
