@@ -1599,7 +1599,16 @@ def distribute_week_by_targets(
 
         if len(day_idx) < n:
             extras = [i for i in range(7) if i not in day_idx]
-            day_idx.extend(extras[: n - len(day_idx)])
+            day_idx.extend(extras)
+
+        if len(day_idx) < n:
+            # Reuse the user-preferred order (or full week) cyclically when
+            # more than seven sessions are requested for the modality.
+            cycle = base_order if base_order else list(range(7))
+            if not cycle:
+                cycle = list(range(7))
+            while len(day_idx) < n:
+                day_idx.append(cycle[len(day_idx) % len(cycle)])
 
         day_idx = day_idx[:n]
 
