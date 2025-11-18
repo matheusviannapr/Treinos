@@ -1513,6 +1513,7 @@ def distribute_week_by_targets(
     user_preferred_days: dict | None,
     user_id: str,
     off_days: list[int] | None = None,
+    planned_sessions: dict | None = None,
 ) -> pd.DataFrame:
     days = week_range(week_start)
     rows = []
@@ -1534,36 +1535,49 @@ def distribute_week_by_targets(
         "Mobilidade": [0, 6],
     }
 
-    mod_volumes = {}
+    mod_sessions: dict[str, tuple[list[float], list[str], bool]] = {}
+    planned_sessions = planned_sessions or {}
+
     for mod, weekly_vol in weekly_targets.items():
         weekly_vol = float(weekly_vol or 0.0)
-        n = int(sessions_per_mod.get(mod, 0))
+        planned_mod_sessions = planned_sessions.get(mod)
+        n = len(planned_mod_sessions) if planned_mod_sessions else int(sessions_per_mod.get(mod, 0))
         if weekly_vol <= 0 or n <= 0:
             continue
 
         unit = UNITS_ALLOWED[mod]
         target_total = _round_to_step_sum(weekly_vol, unit)
 
-        w_template = weights.get(mod)
-        if w_template is None:
-            w = [1.0 / n] * n
+        if planned_mod_sessions:
+            volumes = [
+                _round_to_step_sum(float(sess.get("volume", 0.0) or 0.0), unit)
+                for sess in planned_mod_sessions
+            ]
+            tipos = [sess.get("tipo", "Treino") for sess in planned_mod_sessions]
         else:
-            w = _expand_to_n(w_template, n)
-            s = sum(w)
-            w = [1.0 / n] * n if s == 0 else [x / s for x in w]
+            w_template = weights.get(mod)
+            if w_template is None:
+                w = [1.0 / n] * n
+            else:
+                w = _expand_to_n(w_template, n)
+                s = sum(w)
+                w = [1.0 / n] * n if s == 0 else [x / s for x in w]
 
-        volumes = [_round_to_step_sum(target_total * wi, unit) for wi in w]
-        diff = target_total - sum(volumes)
-        if abs(diff) > 1e-9:
-            max_idx = max(range(len(volumes)), key=lambda i: volumes[i])
-            volumes[max_idx] = _round_to_step_sum(volumes[max_idx] + diff, unit)
+            volumes = [_round_to_step_sum(target_total * wi, unit) for wi in w]
+            diff = target_total - sum(volumes)
+            if abs(diff) > 1e-9:
+                max_idx = max(range(len(volumes)), key=lambda i: volumes[i])
+                volumes[max_idx] = _round_to_step_sum(volumes[max_idx] + diff, unit)
 
-        mod_volumes[mod] = volumes
+            tipos_base = TIPOS_MODALIDADE.get(mod, ["Treino"])
+            tipos = _expand_to_n(tipos_base, n)
+
+        mod_sessions[mod] = (volumes, tipos, bool(planned_mod_sessions))
 
     session_assignments = {i: [] for i in range(7)}
     off_days_set = set(off_days or [])
 
-    for mod, volumes in mod_volumes.items():
+    for mod, (volumes, tipos, has_planned) in mod_sessions.items():
         n = len(volumes)
         prefs = (user_preferred_days or {}).get(mod, default_days.get(mod, list(range(7))))
         prefs = [d for d in prefs if d in range(7)]
@@ -1585,17 +1599,24 @@ def distribute_week_by_targets(
 
         if len(day_idx) < n:
             extras = [i for i in range(7) if i not in day_idx]
-            day_idx.extend(extras[: n - len(day_idx)])
+            day_idx.extend(extras)
+
+        if len(day_idx) < n:
+            # Reuse the user-preferred order (or full week) cyclically when
+            # more than seven sessions are requested for the modality.
+            cycle = base_order if base_order else list(range(7))
+            if not cycle:
+                cycle = list(range(7))
+            while len(day_idx) < n:
+                day_idx.append(cycle[len(day_idx) % len(cycle)])
 
         day_idx = day_idx[:n]
 
-        tipos_base = TIPOS_MODALIDADE.get(mod, ["Treino"])
-        tipos = _expand_to_n(tipos_base, n)
-
         key_tipo = (key_sessions or {}).get(mod, "")
-        if key_tipo and key_tipo in tipos:
-            max_i = max(range(n), key=lambda i: volumes[i])
-            tipos[max_i] = key_tipo
+        if not has_planned:
+            if key_tipo and key_tipo in tipos:
+                max_i = max(range(n), key=lambda i: volumes[i])
+                tipos[max_i] = key_tipo
 
         for i in range(n):
             session_assignments[day_idx[i]].append((mod, volumes[i], tipos[i]))
@@ -2553,6 +2574,27 @@ def cycle_plan_to_trainings(
 
         weekly_targets = _ensure_support_work(weekly_targets, sessions_per_mod)
 
+        planned_sessions_by_mod = {}
+        treinos = week_data.get("treinos") if isinstance(week_data, dict) else None
+        if treinos and isinstance(treinos, list):
+            planned = []
+            for sess in treinos:
+                if not isinstance(sess, dict):
+                    continue
+                volume = sess.get("volume_km")
+                if volume is None:
+                    volume = sess.get("volume")
+                try:
+                    volume = float(volume)
+                except (TypeError, ValueError):
+                    volume = None
+                if volume is None or volume <= 0:
+                    continue
+                tipo = sess.get("tipo") or sess.get("nome") or "Treino"
+                planned.append({"volume": volume, "tipo": tipo})
+            if planned:
+                planned_sessions_by_mod["Corrida"] = planned
+
         week_df = distribute_week_by_targets(
             ws,
             weekly_targets,
@@ -2562,6 +2604,7 @@ def cycle_plan_to_trainings(
             preferred_days,
             user_id,
             off_days=off_days,
+            planned_sessions=planned_sessions_by_mod,
         )
         week_df, _, _ = assign_times_to_week(
             week_df,
