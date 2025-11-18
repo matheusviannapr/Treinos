@@ -861,12 +861,6 @@ def _running_long_run_plan(
         phase_by_week.append(phase.name)
 
     long_runs: list[float] = []
-    share_ceiling = 0.55
-    if dist_key == "42k":
-        share_ceiling = 0.65
-    elif dist_key == "21k":
-        share_ceiling = 0.6
-
     for idx, volume in enumerate(week_volumes):
         phase_name = phase_by_week[idx]
         is_recovery = (idx + 1) % 4 == 0
@@ -880,7 +874,7 @@ def _running_long_run_plan(
         share = _clamp(share_high if not is_recovery else share_high - 0.01, share_low, share_high)
         long_km = volume * share
         cap = 32.0 if dist_key == "42k" else 16.0 if dist_key == "21k" else volume * 0.45
-        long_km = min(long_km, cap, volume * share_ceiling)
+        long_km = min(long_km, cap, volume * 0.55)
         long_runs.append(round(long_km, 1))
 
     if dist_key in {"21k", "42k"}:
@@ -902,23 +896,11 @@ def _running_long_run_plan(
             boosted = min(
                 max(long_runs[idx], threshold),
                 cap if (cap := (32.0 if dist_key == "42k" else 16.0)) else volume,
-                volume * max(target_share_cap + 0.02, share_ceiling),
+                volume * (target_share_cap + 0.02),
             )
             if boosted > long_runs[idx]:
                 long_runs[idx] = round(boosted, 1)
                 hits = sum(1 for km in long_runs if km >= threshold)
-
-        cap_km = 32.0 if dist_key == "42k" else 16.0
-        if cap_km and max(long_runs or [0]) < cap_km:
-            eligible = [
-                i
-                for i, (vol, name) in enumerate(zip(week_volumes, phase_by_week))
-                if "Taper" not in name and vol * share_ceiling >= cap_km * 0.92
-            ]
-            if eligible:
-                best = max(eligible, key=lambda i: (week_volumes[i], i))
-                long_runs[best] = min(cap_km, week_volumes[best] * share_ceiling)
-                long_runs[best] = round(long_runs[best], 1)
 
     return long_runs
 
@@ -1004,11 +986,11 @@ def _running_week_sessions(
         longao_volume = min(longao_volume, z1z2_km * 0.8)
     if dist_key == "42k":
         ceiling = min(32.0, z1z2_km * 0.82 if z1z2_km else week_volume * 0.58)
-        floor = min(ceiling, max(longao_volume * 0.85, week_volume * 0.3))
+        floor = max(longao_volume * 0.85, week_volume * 0.3)
         longao_volume = _clamp(longao_volume, floor, ceiling)
     elif dist_key == "21k":
         ceiling = min(16.0, z1z2_km * 0.8 if z1z2_km else week_volume * 0.55)
-        floor = min(ceiling, max(longao_volume * 0.85, week_volume * 0.26))
+        floor = max(longao_volume * 0.85, week_volume * 0.26)
         longao_volume = _clamp(longao_volume, floor, ceiling)
 
     sessions: list[dict] = [
