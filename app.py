@@ -1535,7 +1535,7 @@ def distribute_week_by_targets(
         "Mobilidade": [0, 6],
     }
 
-    mod_volumes = {}
+    mod_sessions: dict[str, tuple[list[float], list[str], bool]] = {}
     planned_sessions = planned_sessions or {}
 
     for mod, weekly_vol in weekly_targets.items():
@@ -1572,12 +1572,12 @@ def distribute_week_by_targets(
             tipos_base = TIPOS_MODALIDADE.get(mod, ["Treino"])
             tipos = _expand_to_n(tipos_base, n)
 
-        mod_volumes[mod] = volumes
+        mod_sessions[mod] = (volumes, tipos, bool(planned_mod_sessions))
 
     session_assignments = {i: [] for i in range(7)}
     off_days_set = set(off_days or [])
 
-    for mod, volumes in mod_volumes.items():
+    for mod, (volumes, tipos, has_planned) in mod_sessions.items():
         n = len(volumes)
         prefs = (user_preferred_days or {}).get(mod, default_days.get(mod, list(range(7))))
         prefs = [d for d in prefs if d in range(7)]
@@ -1613,7 +1613,7 @@ def distribute_week_by_targets(
         day_idx = day_idx[:n]
 
         key_tipo = (key_sessions or {}).get(mod, "")
-        if not planned_mod_sessions:
+        if not has_planned:
             if key_tipo and key_tipo in tipos:
                 max_i = max(range(n), key=lambda i: volumes[i])
                 tipos[max_i] = key_tipo
