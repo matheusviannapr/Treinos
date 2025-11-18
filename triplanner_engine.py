@@ -184,6 +184,25 @@ RUN_ZONE_DISTRIBUTION = {
     },
 }
 
+RUN_ZONE_DISTRIBUTION = {
+    "5k": {
+        "completar": {"Z1_Z2": 80, "Z3": 15, "Z4_Z5": 5},
+        "performar": {"Z1_Z2": 60, "Z3": 25, "Z4_Z5": 15},
+    },
+    "10k": {
+        "completar": {"Z1_Z2": 75, "Z3": 20, "Z4_Z5": 5},
+        "performar": {"Z1_Z2": 65, "Z3": 25, "Z4_Z5": 10},
+    },
+    "21k": {
+        "completar": {"Z1_Z2": 75, "Z3": 25, "Z4_Z5": 0},
+        "performar": {"Z1_Z2": 65, "Z3": 30, "Z4_Z5": 5},
+    },
+    "42k": {
+        "completar": {"Z1_Z2": 85, "Z3": 15, "Z4_Z5": 0},
+        "performar": {"Z1_Z2": 75, "Z3": 20, "Z4_Z5": 5},
+    },
+}
+
 TRI_VOLUMES = {
     "Sprint": {"completar": (37, 74), "performar": (64, 113)},
     "Olímpico": {"completar": (56.5, 103.5), "performar": (93.5, 160)},
@@ -751,10 +770,7 @@ def _running_week_sessions(
     is_recovery: bool,
     paces: dict[str, str],
 ) -> list[dict]:
-    dist_key = str(distance).lower()
     total_sessions = min(7, max(3, int(dias_treino or 4)))
-    if dist_key == "42k":
-        total_sessions = max(total_sessions, 4)
     intensity_slots = _intensity_slots_from_days(total_sessions, is_recovery)
     intensity_types = _select_running_intensity_types(
         phase, distance, goal, intensity_slots, is_recovery
@@ -764,6 +780,7 @@ def _running_week_sessions(
     z3_km = week_volume * zone_dist.get("Z3", 0) / 100
     z45_km = week_volume * zone_dist.get("Z4_Z5", 0) / 100
 
+    dist_key = str(distance).lower()
     longao_share = 0.28
     if dist_key == "21k":
         longao_share = 0.3
