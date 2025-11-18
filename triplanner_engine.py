@@ -162,7 +162,26 @@ RUN_VOLUMES = {
     "5k": {"completar": (8, 15), "performar": (15, 25)},
     "10k": {"completar": (12, 22), "performar": (22, 32)},
     "21k": {"completar": (16, 30), "performar": (30, 45)},
-    "42k": {"completar": (25, 40), "performar": (40, 55)},
+    "42k": {"completar": (45, 70), "performar": (65, 95)},
+}
+
+RUN_ZONE_DISTRIBUTION = {
+    "5k": {
+        "completar": {"Z1_Z2": 80, "Z3": 15, "Z4_Z5": 5},
+        "performar": {"Z1_Z2": 60, "Z3": 25, "Z4_Z5": 15},
+    },
+    "10k": {
+        "completar": {"Z1_Z2": 75, "Z3": 20, "Z4_Z5": 5},
+        "performar": {"Z1_Z2": 65, "Z3": 25, "Z4_Z5": 10},
+    },
+    "21k": {
+        "completar": {"Z1_Z2": 75, "Z3": 25, "Z4_Z5": 0},
+        "performar": {"Z1_Z2": 65, "Z3": 30, "Z4_Z5": 5},
+    },
+    "42k": {
+        "completar": {"Z1_Z2": 85, "Z3": 15, "Z4_Z5": 0},
+        "performar": {"Z1_Z2": 75, "Z3": 20, "Z4_Z5": 5},
+    },
 }
 
 RUN_ZONE_DISTRIBUTION = {
