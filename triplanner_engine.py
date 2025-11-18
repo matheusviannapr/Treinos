@@ -161,8 +161,27 @@ MODALITY_METHOD = {
 RUN_VOLUMES = {
     "5k": {"completar": (8, 15), "performar": (15, 25)},
     "10k": {"completar": (12, 22), "performar": (22, 32)},
-    "21k": {"completar": (16, 30), "performar": (30, 45)},
-    "42k": {"completar": (25, 40), "performar": (40, 55)},
+    "21k": {"completar": (30, 55), "performar": (45, 75)},
+    "42k": {"completar": (45, 70), "performar": (65, 95)},
+}
+
+RUN_ZONE_DISTRIBUTION = {
+    "5k": {
+        "completar": {"Z1_Z2": 80, "Z3": 15, "Z4_Z5": 5},
+        "performar": {"Z1_Z2": 60, "Z3": 25, "Z4_Z5": 15},
+    },
+    "10k": {
+        "completar": {"Z1_Z2": 75, "Z3": 20, "Z4_Z5": 5},
+        "performar": {"Z1_Z2": 65, "Z3": 25, "Z4_Z5": 10},
+    },
+    "21k": {
+        "completar": {"Z1_Z2": 75, "Z3": 25, "Z4_Z5": 0},
+        "performar": {"Z1_Z2": 65, "Z3": 30, "Z4_Z5": 5},
+    },
+    "42k": {
+        "completar": {"Z1_Z2": 85, "Z3": 15, "Z4_Z5": 0},
+        "performar": {"Z1_Z2": 75, "Z3": 20, "Z4_Z5": 5},
+    },
 }
 
 RUN_ZONE_DISTRIBUTION = {
@@ -770,6 +789,14 @@ def _running_week_sessions(
     longao_volume = _clamp(week_volume * longao_share, week_volume * 0.22, week_volume * 0.38)
     if z1z2_km:
         longao_volume = min(longao_volume, z1z2_km * 0.75)
+    if dist_key == "42k":
+        floor = max(20.0, week_volume * 0.36)
+        ceiling = min(week_volume * 0.6, z1z2_km * 0.8 if z1z2_km else week_volume * 0.6)
+        longao_volume = _clamp(longao_volume, floor, ceiling)
+    elif dist_key == "21k":
+        floor = max(14.0, week_volume * 0.32)
+        ceiling = min(week_volume * 0.55, z1z2_km * 0.8 if z1z2_km else week_volume * 0.55)
+        longao_volume = _clamp(longao_volume, floor, ceiling)
 
     sessions: list[dict] = [
         {
