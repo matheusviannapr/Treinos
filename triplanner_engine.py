@@ -850,6 +850,27 @@ def _long_run_share_bounds(distance: str, nivel: str | None) -> tuple[float, flo
     return (round(base_min, 3), round(base_max, 3))
 
 
+def _canonical_long_run_sequence(distance: str) -> list[float]:
+    dist_key = str(distance).lower()
+    if dist_key == "42k":
+        # Conservador para iniciantes, com cutbacks frequentes e pico em 32 km
+        return [14, 16, 18, 12, 20, 22, 16, 24, 26, 20, 28, 30, 32, 20]
+    if dist_key == "21k":
+        # Progressão clássica com topo em 16 km (75% da prova) e quedas planejadas
+        return [8, 10, 12, 10, 14, 16, 12, 16, 14, 10]
+    # fallback genérico
+    return [max(5, round((RUN_VOLUMES.get(dist_key, {"completar": (10, 20)})["completar"][0]) * 0.35))]
+
+
+def _long_run_progression(distance: str, weeks: int) -> list[float]:
+    base = _canonical_long_run_sequence(distance)
+    if weeks <= 1:
+        return [round(min(base[0], 32.0 if distance == "42k" else 16.0), 1)]
+    cap = 32.0 if distance == "42k" else 16.0 if distance == "21k" else base[-1]
+    idxs = [round(i * (len(base) - 1) / (weeks - 1)) for i in range(weeks)]
+    return [round(min(cap, base[i]), 1) for i in idxs]
+
+
 def _running_long_run_plan(
     distance: str,
     nivel: str | None,
@@ -868,6 +889,7 @@ def _running_long_run_plan(
         phase_by_week.append(phase.name)
 
     long_runs: list[float] = []
+    progression_targets = _long_run_progression(dist_key, len(week_volumes))
     for idx, volume in enumerate(week_volumes):
         phase_name = phase_by_week[idx]
         is_recovery = (idx + 1) % 4 == 0
@@ -882,7 +904,7 @@ def _running_long_run_plan(
         long_km = volume * share
         cap = 32.0 if dist_key == "42k" else 16.0 if dist_key == "21k" else volume * 0.45
         long_km = min(long_km, cap, volume * share_high)
-        long_km = max(long_km, volume * share_low)
+        long_km = max(long_km, volume * share_low, progression_targets[idx])
         long_runs.append(round(long_km, 1))
 
     if dist_key in {"21k", "42k"}:
