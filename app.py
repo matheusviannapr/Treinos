@@ -2879,7 +2879,7 @@ def main():
 
     menu = st.sidebar.radio(
         "Navegação",
-        ["📅 Planejamento Semanal", "🗓️ Resumo do Dia", "📈 Dashboard", "⚙️ Periodização"],
+        ["📅 Planejamento Semanal", "🗓️ Resumo do Dia", "📈 Dashboard"],
         index=0,
     )
     st.sidebar.markdown("---")
@@ -2888,7 +2888,7 @@ def main():
     # ---------------- PLANEJAMENTO SEMANAL ----------------
     if menu == "📅 Planejamento Semanal":
         st.header("📅 Planejamento Semanal")
-        tab_semana, tab_ciclo = st.tabs(["Planeje sua semana", "Plano semanal do ciclo"])
+        tab_ciclo, tab_semana = st.tabs(["Plano semanal do ciclo", "Planeje sua semana"])
         with tab_semana:
 
             off_days_set = set(user_preferences.get("off_days", []))
@@ -3799,84 +3799,6 @@ def main():
                                         st.markdown(f"- {change}")
                                 else:
                                     st.caption("Alteração sem detalhes adicionais.")
-
-    # ---------------- PERIODIZAÇÃO ----------------
-    elif menu == "⚙️ Periodização":
-        st.header("⚙️ Gerador de Periodização")
-        with st.form("periodization_form"):
-            st.markdown("### Definições do Ciclo")
-            p_col1, p_col2, p_col3 = st.columns(3)
-            cycle_start = p_col1.date_input("Início do ciclo", value=monday_of_week(today()))
-            num_weeks = p_col2.number_input("Duração (semanas)", min_value=4, max_value=52, value=12, step=1)
-            base_load = p_col3.number_input("Carga base (TSS/semana)", min_value=100, max_value=1000, value=300, step=10)
-
-            st.markdown("### Proporção de Carga por Fase (% da carga base)")
-            phase_props = {}
-            cols_phase = st.columns(len(PHASES))
-            for i, phase in enumerate(PHASES):
-                phase_props[phase] = {}
-                cols_phase[i].markdown(f"**{phase}**")
-                for mod in MODALIDADES:
-                    default_prop = {"Base": 0.8, "Build": 1.0, "Peak": 1.2, "Recovery": 0.6}.get(phase, 0.8)
-                    phase_props[phase][mod] = cols_phase[i].number_input(
-                        f"% {mod}",
-                        min_value=0.0, max_value=2.0, value=default_prop, step=0.1, format="%.1f",
-                        key=f"prop_{phase}_{mod}"
-                    )
-
-            use_time_pattern_cycle = st.checkbox(
-                "Aplicar padrão de horários salvo em todas as semanas do ciclo",
-                value=True,
-                key="use_time_pattern_cycle",
-            )
-
-            submitted = st.form_submit_button("Gerar Ciclo de Treinamento")
-            if submitted:
-                dias_map = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4, "Sáb": 5, "Dom": 6}
-                off_days_cycle = set(user_preferences.get("off_days", []))
-                pref_days = {}
-                for mod in MODALIDADES:
-                    raw_selection = [
-                        dias_map[d] for d in st.session_state.get(f"pref_days_{mod}", []) if d in dias_map
-                    ]
-                    filtered_sel = [d for d in raw_selection if d not in off_days_cycle]
-                    if not filtered_sel:
-                        filtered_sel = [idx for idx in dias_map.values() if idx not in off_days_cycle]
-                    pref_days[mod] = filtered_sel
-                key_sess = {mod: st.session_state.get(f"key_sess_{mod}", "") for mod in MODALIDADES}
-                sess_per_mod = {mod: st.session_state.get(f"sess_{mod}", 2) for mod in MODALIDADES}
-
-                new_cycle_df = generate_cycle(
-                    cycle_start,
-                    num_weeks,
-                    base_load,
-                    phase_props,
-                    sess_per_mod,
-                    paces,
-                    pref_days,
-                    key_sess,
-                    user_id,
-                    user_preferences=user_preferences,
-                )
-
-                pattern = load_timepattern_for_user(user_id) if use_time_pattern_cycle else None
-                if use_time_pattern_cycle and not pattern:
-                    st.warning("Nenhum padrão de horários salvo ainda. Ciclo gerado com horários padrão.")
-                if pattern:
-                    new_cycle_df = apply_time_pattern_to_cycle(new_cycle_df, pattern)
-
-                # Remove semanas existentes que serão substituídas
-                existing_df = st.session_state["df"]
-                cycle_end = cycle_start + timedelta(weeks=num_weeks)
-                df_outside_cycle = existing_df[
-                    (existing_df["WeekStart"] < cycle_start) | (existing_df["WeekStart"] >= cycle_end)
-                ]
-                
-                final_df = pd.concat([df_outside_cycle, new_cycle_df], ignore_index=True)
-                save_user_df(user_id, final_df)
-                st.success(f"{num_weeks} semanas de treino geradas e salvas!")
-                canonical_week_df.clear()
-                safe_rerun()
 
 if __name__ == "__main__":
     main()
