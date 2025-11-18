@@ -1929,21 +1929,18 @@ class PDF(FPDF):
             "C",
         )
 
-def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
+def _render_week_into_pdf(pdf: PDF, df: pd.DataFrame, week_start: date):
     if df.empty:
-        pdf = PDF(orientation="L")  # já em paisagem
-        pdf.alias_nb_pages()
-        pdf.add_page()
+        pdf.add_page(orientation="L")
+        pdf.set_auto_page_break(auto=True, margin=15)
         pdf.set_font("Arial", "", 10)
         pdf.cell(0, 10, pdf_safe("Sem treinos para esta semana."), 0, 1, "L")
-        return pdf.output(dest="S").encode("latin-1")
+        return
 
     df = df.copy()
     df = df.sort_values(["Data", "StartDT"]).reset_index(drop=True)
 
-    pdf = PDF(orientation="L")  # PRIMEIRA PÁGINA EM PAISAGEM
-    pdf.alias_nb_pages()
-    pdf.add_page()
+    pdf.add_page(orientation="L")
     pdf.set_auto_page_break(auto=True, margin=15)
 
     pdf.set_font("Arial", "", 10)
@@ -2046,105 +2043,127 @@ def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
         pdf.set_xy(10, y_detail + used_height)
 
     # Página 2: calendário visual alinhado ao timeGridWeek (já era paisagem)
-    if not df.empty:
-        pdf.add_page(orientation="L")
-        pdf.set_auto_page_break(auto=False)
-        pdf.set_font("Arial", "B", 12)
-        pdf.cell(0, 8, pdf_safe("Calendário Semanal (visual)"), 0, 1, "C")
-        pdf.ln(2)
+    pdf.add_page(orientation="L")
+    pdf.set_auto_page_break(auto=False)
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 8, pdf_safe("Calendário Semanal (visual)"), 0, 1, "C")
+    pdf.ln(2)
 
-        left_margin = 10
-        top_margin = 18
-        right_margin = 10
-        bottom_margin = 10
+    left_margin = 10
+    top_margin = 18
+    right_margin = 10
+    bottom_margin = 10
 
-        page_w = pdf.w
-        page_h = pdf.h
+    page_w = pdf.w
+    page_h = pdf.h
 
-        grid_left = left_margin
-        grid_top = top_margin + 6
-        grid_right = page_w - right_margin
-        grid_bottom = page_h - bottom_margin
+    grid_left = left_margin
+    grid_top = top_margin + 6
+    grid_right = page_w - right_margin
+    grid_bottom = page_h - bottom_margin
 
-        grid_w = grid_right - grid_left
-        grid_h = grid_bottom - grid_top
+    grid_w = grid_right - grid_left
+    grid_h = grid_bottom - grid_top
 
-        days = week_range(week_start)
-        n_days = 7
-        col_w = grid_w / n_days
+    days = week_range(week_start)
+    n_days = 7
+    col_w = grid_w / n_days
 
-        start_hour = 5
-        end_hour = 21
-        hours_range = end_hour - start_hour
-        if hours_range <= 0:
-            hours_range = 1
+    start_hour = 5
+    end_hour = 21
+    hours_range = end_hour - start_hour
+    if hours_range <= 0:
+        hours_range = 1
 
-        pdf.set_font("Arial", "B", 8)
-        for i, d in enumerate(days):
-            x = grid_left + i * col_w
-            pdf.set_xy(x, top_margin)
-            label = d.strftime("%a %d/%m")
-            pdf.cell(col_w, 6, pdf_safe(label), 0, 0, "C")
+    pdf.set_font("Arial", "B", 8)
+    for i, d in enumerate(days):
+        x = grid_left + i * col_w
+        pdf.set_xy(x, top_margin)
+        label = d.strftime("%a %d/%m")
+        pdf.cell(col_w, 6, pdf_safe(label), 0, 0, "C")
 
-        pdf.set_draw_color(230, 230, 230)
+    pdf.set_draw_color(230, 230, 230)
 
-        for h in range(start_hour, end_hour + 1):
-            y = grid_top + (h - start_hour) / hours_range * grid_h
-            pdf.line(grid_left, y, grid_right, y)
-            pdf.set_font("Arial", "", 6)
-            pdf.set_xy(grid_left - 8, y - 2)
-            pdf.cell(7, 4, f"{h:02d}h", 0, 0, "R")
-
-        for i in range(n_days + 1):
-            x = grid_left + i * col_w
-            pdf.line(x, grid_top, x, grid_bottom)
-
+    for h in range(start_hour, end_hour + 1):
+        y = grid_top + (h - start_hour) / hours_range * grid_h
+        pdf.line(grid_left, y, grid_right, y)
         pdf.set_font("Arial", "", 6)
-        for _, row in df.iterrows():
-            vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
-            mod = row["Modalidade"]
-            if mod == "Descanso" and vol_val <= 0:
-                continue
+        pdf.set_xy(grid_left - 8, y - 2)
+        pdf.cell(7, 4, f"{h:02d}h", 0, 0, "R")
 
-            start = row["StartDT"]
-            end = row["EndDT"]
-            day_idx = (start.date() - week_start).days
-            if day_idx < 0 or day_idx >= 7:
-                continue
+    for i in range(n_days + 1):
+        x = grid_left + i * col_w
+        pdf.line(x, grid_top, x, grid_bottom)
 
-            s_hour = start.hour + start.minute / 60
-            e_hour = end.hour + end.minute / 60
-            if e_hour <= start_hour or s_hour >= end_hour:
-                continue
-            s_hour = max(s_hour, start_hour)
-            e_hour = min(e_hour, end_hour)
-            if e_hour <= s_hour:
-                e_hour = s_hour + 0.25
+    pdf.set_font("Arial", "", 6)
+    for _, row in df.iterrows():
+        vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
+        mod = row["Modalidade"]
+        if mod == "Descanso" and vol_val <= 0:
+            continue
 
-            y1 = grid_top + (s_hour - start_hour) / hours_range * grid_h
-            y2 = grid_top + (e_hour - start_hour) / hours_range * grid_h
-            x1 = grid_left + day_idx * col_w + 0.7
-            w = col_w - 1.4
-            h = max(y2 - y1, 2)
+        start = row["StartDT"]
+        end = row["EndDT"]
+        day_idx = (start.date() - week_start).days
+        if day_idx < 0 or day_idx >= 7:
+            continue
 
-            tipo = str(row["Tipo de Treino"])
-            unit = row["Unidade"]
-            txt_vol = f"{vol_val:g}{unit}" if vol_val > 0 else ""
-            title = f"{mod} {tipo} {txt_vol}".strip()
+        s_hour = start.hour + start.minute / 60
+        e_hour = end.hour + end.minute / 60
+        if e_hour <= start_hour or s_hour >= end_hour:
+            continue
+        s_hour = max(s_hour, start_hour)
+        e_hour = min(e_hour, end_hour)
+        if e_hour <= s_hour:
+            e_hour = s_hour + 0.25
 
-            color = MODALITY_COLORS.get(mod, (200, 200, 200))
-            pdf.set_fill_color(*color)
-            pdf.set_draw_color(255, 255, 255)
-            pdf.rect(x1, y1, w, h, "F")
+        y1 = grid_top + (s_hour - start_hour) / hours_range * grid_h
+        y2 = grid_top + (e_hour - start_hour) / hours_range * grid_h
+        x1 = grid_left + day_idx * col_w + 0.7
+        w = col_w - 1.4
+        h = max(y2 - y1, 2)
 
-            txt_color = MODALITY_TEXT_COLORS.get(mod, (255, 255, 255))
-            pdf.set_text_color(*txt_color)
-            pdf.set_xy(x1 + 0.8, y1 + 0.6)
-            max_chars = int(w / 1.7)
-            pdf.multi_cell(w - 1, 3, pdf_safe(title[:max_chars]), 0, "L")
+        tipo = str(row["Tipo de Treino"])
+        unit = row["Unidade"]
+        txt_vol = f"{vol_val:g}{unit}" if vol_val > 0 else ""
+        title = f"{mod} {tipo} {txt_vol}".strip()
 
-        pdf.set_text_color(0, 0, 0)
-        pdf.set_draw_color(0, 0, 0)
+        color = MODALITY_COLORS.get(mod, (200, 200, 200))
+        pdf.set_fill_color(*color)
+        pdf.set_draw_color(255, 255, 255)
+        pdf.rect(x1, y1, w, h, "F")
+
+        txt_color = MODALITY_TEXT_COLORS.get(mod, (255, 255, 255))
+        pdf.set_text_color(*txt_color)
+        pdf.set_xy(x1 + 0.8, y1 + 0.6)
+        max_chars = int(w / 1.7)
+        pdf.multi_cell(w - 1, 3, pdf_safe(title[:max_chars]), 0, "L")
+
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_draw_color(0, 0, 0)
+
+
+def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
+    pdf = PDF(orientation="L")  # já em paisagem
+    pdf.alias_nb_pages()
+    _render_week_into_pdf(pdf, df, week_start)
+    return pdf.output(dest="S").encode("latin-1")
+
+
+def generate_cycle_pdf(user_id: str, week_starts: list[date]) -> bytes:
+    pdf = PDF(orientation="L")
+    pdf.alias_nb_pages()
+
+    if not week_starts:
+        pdf.add_page(orientation="L")
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.set_font("Arial", "", 10)
+        pdf.cell(0, 10, pdf_safe("Nenhuma semana definida para este ciclo."), 0, 1, "L")
+        return pdf.output(dest="S").encode("latin-1")
+
+    for week_start in week_starts:
+        week_df = canonical_week_df(user_id, week_start)
+        _render_week_into_pdf(pdf, week_df, week_start)
 
     return pdf.output(dest="S").encode("latin-1")
 
@@ -2795,6 +2814,23 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
             f"{cycle_weeks} semanas de ciclo geradas e enviadas para o calendário!"
         )
 
+    st.markdown("---")
+    st.subheader("Exportar ciclo em PDF")
+    st.caption(
+        "O PDF reúne cada semana do ciclo usando os mesmos treinos exibidos no calendário."
+    )
+
+    week_starts = [start_date + timedelta(weeks=i) for i in range(cycle_weeks)]
+    cycle_pdf = generate_cycle_pdf(user_id, week_starts)
+
+    st.download_button(
+        "📕 Exportar PDF do ciclo",
+        data=cycle_pdf,
+        file_name=f"ciclo_{start_date.strftime('%Y%m%d')}.pdf",
+        mime="application/pdf",
+        key="cycle_export_pdf",
+    )
+
 
 def main():
     st.set_page_config(page_title="TriPlano", layout="wide")
@@ -2858,6 +2894,8 @@ def main():
         st.session_state["calendar_snapshot"] = []
     if "calendar_forcar_snapshot" not in st.session_state:
         st.session_state["calendar_forcar_snapshot"] = False
+    if "pending_clear_week" not in st.session_state:
+        st.session_state["pending_clear_week"] = None
 
     df = st.session_state["df"]
 
@@ -2879,7 +2917,7 @@ def main():
 
     menu = st.sidebar.radio(
         "Navegação",
-        ["📅 Planejamento Semanal", "🗓️ Resumo do Dia", "📈 Dashboard", "⚙️ Periodização"],
+        ["📅 Planejamento Semanal", "🗓️ Resumo do Dia", "📈 Dashboard"],
         index=0,
     )
     st.sidebar.markdown("---")
@@ -2989,7 +3027,7 @@ def main():
             st.markdown("---")
     
             # 3. Semana atual
-            col1, col2, col3 = st.columns([1, 2, 1])
+            col1, col2, col3, col4 = st.columns([1, 2, 1, 1])
             if col1.button("⬅️ Semana anterior"):
                 st.session_state["current_week_start"] -= timedelta(days=7)
                 st.session_state["calendar_snapshot"] = []
@@ -3004,7 +3042,47 @@ def main():
                 st.session_state["calendar_forcar_snapshot"] = False
                 canonical_week_df.clear()
                 safe_rerun()
-    
+
+            if st.session_state.get("pending_clear_week") not in (None, week_start):
+                st.session_state["pending_clear_week"] = None
+
+            if col4.button("🧹 Limpar semana", key=f"clear_week_{week_start}"):
+                st.session_state["pending_clear_week"] = week_start
+
+            if st.session_state.get("pending_clear_week") == week_start:
+                with st.container(border=True):
+                    st.warning(
+                        "Tem certeza de que deseja remover todos os treinos desta semana?"
+                    )
+                    col_confirma, col_cancela = st.columns(2)
+
+                    if col_confirma.button(
+                        "Sim, limpar semana", key=f"confirm_clear_{week_start}"
+                    ):
+                        df_current = st.session_state.get("df", pd.DataFrame()).copy()
+                        if not df_current.empty and not np.issubdtype(
+                            df_current["WeekStart"].dtype, np.datetime64
+                        ):
+                            df_current["WeekStart"] = pd.to_datetime(
+                                df_current["WeekStart"], errors="coerce"
+                            ).dt.date
+
+                        mask = (df_current["UserID"] == user_id) & (
+                            df_current["WeekStart"] == week_start
+                        )
+                        df_current = df_current[~mask].copy()
+                        save_user_df(user_id, df_current)
+                        set_week_availability(user_id, week_start, [])
+                        canonical_week_df.clear()
+                        st.session_state["pending_clear_week"] = None
+                        st.success("Semana limpa com sucesso.")
+                        safe_rerun()
+
+                    if col_cancela.button(
+                        "Cancelar", key=f"cancel_clear_{week_start}"
+                    ):
+                        st.session_state["pending_clear_week"] = None
+
             week_df_raw = week_slice(df, week_start)
             if week_df_raw.empty:
                 week_df_raw = default_week_df(week_start, user_id)
@@ -3800,83 +3878,6 @@ def main():
                                 else:
                                     st.caption("Alteração sem detalhes adicionais.")
 
-    # ---------------- PERIODIZAÇÃO ----------------
-    elif menu == "⚙️ Periodização":
-        st.header("⚙️ Gerador de Periodização")
-        with st.form("periodization_form"):
-            st.markdown("### Definições do Ciclo")
-            p_col1, p_col2, p_col3 = st.columns(3)
-            cycle_start = p_col1.date_input("Início do ciclo", value=monday_of_week(today()))
-            num_weeks = p_col2.number_input("Duração (semanas)", min_value=4, max_value=52, value=12, step=1)
-            base_load = p_col3.number_input("Carga base (TSS/semana)", min_value=100, max_value=1000, value=300, step=10)
-
-            st.markdown("### Proporção de Carga por Fase (% da carga base)")
-            phase_props = {}
-            cols_phase = st.columns(len(PHASES))
-            for i, phase in enumerate(PHASES):
-                phase_props[phase] = {}
-                cols_phase[i].markdown(f"**{phase}**")
-                for mod in MODALIDADES:
-                    default_prop = {"Base": 0.8, "Build": 1.0, "Peak": 1.2, "Recovery": 0.6}.get(phase, 0.8)
-                    phase_props[phase][mod] = cols_phase[i].number_input(
-                        f"% {mod}",
-                        min_value=0.0, max_value=2.0, value=default_prop, step=0.1, format="%.1f",
-                        key=f"prop_{phase}_{mod}"
-                    )
-
-            use_time_pattern_cycle = st.checkbox(
-                "Aplicar padrão de horários salvo em todas as semanas do ciclo",
-                value=True,
-                key="use_time_pattern_cycle",
-            )
-
-            submitted = st.form_submit_button("Gerar Ciclo de Treinamento")
-            if submitted:
-                dias_map = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4, "Sáb": 5, "Dom": 6}
-                off_days_cycle = set(user_preferences.get("off_days", []))
-                pref_days = {}
-                for mod in MODALIDADES:
-                    raw_selection = [
-                        dias_map[d] for d in st.session_state.get(f"pref_days_{mod}", []) if d in dias_map
-                    ]
-                    filtered_sel = [d for d in raw_selection if d not in off_days_cycle]
-                    if not filtered_sel:
-                        filtered_sel = [idx for idx in dias_map.values() if idx not in off_days_cycle]
-                    pref_days[mod] = filtered_sel
-                key_sess = {mod: st.session_state.get(f"key_sess_{mod}", "") for mod in MODALIDADES}
-                sess_per_mod = {mod: st.session_state.get(f"sess_{mod}", 2) for mod in MODALIDADES}
-
-                new_cycle_df = generate_cycle(
-                    cycle_start,
-                    num_weeks,
-                    base_load,
-                    phase_props,
-                    sess_per_mod,
-                    paces,
-                    pref_days,
-                    key_sess,
-                    user_id,
-                    user_preferences=user_preferences,
-                )
-
-                pattern = load_timepattern_for_user(user_id) if use_time_pattern_cycle else None
-                if use_time_pattern_cycle and not pattern:
-                    st.warning("Nenhum padrão de horários salvo ainda. Ciclo gerado com horários padrão.")
-                if pattern:
-                    new_cycle_df = apply_time_pattern_to_cycle(new_cycle_df, pattern)
-
-                # Remove semanas existentes que serão substituídas
-                existing_df = st.session_state["df"]
-                cycle_end = cycle_start + timedelta(weeks=num_weeks)
-                df_outside_cycle = existing_df[
-                    (existing_df["WeekStart"] < cycle_start) | (existing_df["WeekStart"] >= cycle_end)
-                ]
-                
-                final_df = pd.concat([df_outside_cycle, new_cycle_df], ignore_index=True)
-                save_user_df(user_id, final_df)
-                st.success(f"{num_weeks} semanas de treino geradas e salvas!")
-                canonical_week_df.clear()
-                safe_rerun()
-
+    
 if __name__ == "__main__":
     main()
