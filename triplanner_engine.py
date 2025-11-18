@@ -228,10 +228,10 @@ RUN_PHASE_VOLUME_TABLE = {
     },
     "42k": {
         "iniciante": {
-            "Base": (28, 35),
-            "Construção": (35, 45),
-            "Específica": (40, 50),
-            "Taper": (28, 35),
+            "Base": (32, 45),
+            "Construção": (45, 60),
+            "Específica": (55, 70),
+            "Taper": (38, 48),
         },
         "intermediario": {
             "Base": (40, 50),
@@ -838,12 +838,12 @@ def _long_run_share_bounds(distance: str, nivel: str | None) -> tuple[float, flo
     nivel_norm = _normalize_level(nivel)
     base_ranges = {
         "21k": (0.25, 0.35),
-        "42k": (0.30, 0.40),
+        "42k": (0.32, 0.46),
     }
     base_min, base_max = base_ranges.get(dist_key, (0.22, 0.32))
     if nivel_norm == "iniciante":
         base_min += 0.01
-        base_max = min(base_max + 0.02, 0.42 if dist_key == "42k" else 0.37)
+        base_max = min(base_max + 0.02, 0.48 if dist_key == "42k" else 0.37)
     elif nivel_norm == "avancado":
         base_max = max(base_min + 0.02, base_max - 0.07)
         base_min = max(base_min - 0.02, base_max - 0.08)
@@ -887,7 +887,9 @@ def _running_long_run_plan(
 
     if dist_key in {"21k", "42k"}:
         goal_km = 21.097 if dist_key == "21k" else 42.195
-        threshold = min(goal_km * 0.7, 16.0 if dist_key == "21k" else 32.0)
+        threshold = round(
+            min(goal_km * 0.7, 16.0 if dist_key == "21k" else 32.0), 1
+        )
         non_taper_weeks = [i for i, name in enumerate(phase_by_week) if "Taper" not in name]
         candidates = sorted(non_taper_weeks, key=lambda i: (week_volumes[i], i), reverse=True)
         hits = sum(1 for km in long_runs if km >= threshold)
@@ -896,11 +898,12 @@ def _running_long_run_plan(
                 break
             volume = week_volumes[idx]
             cap = 32.0 if dist_key == "42k" else 16.0
-            allowed_max = min(cap, volume * base_max)
+            flex_share = 0.6 if dist_key == "42k" else 0.5 if dist_key == "21k" else base_max
+            allowed_max = min(cap, volume * max(base_max, flex_share))
             if allowed_max <= long_runs[idx]:
                 continue
             target = threshold if allowed_max >= threshold else allowed_max
-            long_runs[idx] = round(target, 1)
+            long_runs[idx] = round(max(long_runs[idx], target), 1)
             hits = sum(1 for km in long_runs if km >= threshold)
 
         if hits < 3:
@@ -910,11 +913,12 @@ def _running_long_run_plan(
                     break
                 volume = week_volumes[idx]
                 cap = 32.0 if dist_key == "42k" else 16.0
-                allowed_max = min(cap, volume * base_max)
+                flex_share = 0.6 if dist_key == "42k" else 0.5 if dist_key == "21k" else base_max
+                allowed_max = min(cap, volume * max(base_max, flex_share))
                 if allowed_max <= long_runs[idx]:
                     continue
                 target = threshold if allowed_max >= threshold else allowed_max
-                long_runs[idx] = round(target, 1)
+                long_runs[idx] = round(max(long_runs[idx], target), 1)
                 hits = sum(1 for km in long_runs if km >= threshold)
 
     return long_runs
