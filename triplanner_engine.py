@@ -139,6 +139,11 @@ RUN_TRAINING_TYPE_INFO = {
         "zona": "Neutra",
         "descricao": "Drills e educativos focados em economia e postura.",
     },
+    "prova": {
+        "nome": "Prova",
+        "zona": "Z3–Z4",
+        "descricao": "Evento alvo da semana. Aquecer leve e execute no ritmo planejado.",
+    },
 }
 
 TRAINING_TYPE_INFO = {**BASE_TRAINING_TYPE_INFO, **RUN_TRAINING_TYPE_INFO}
@@ -655,6 +660,76 @@ def _phase_scheme(total_weeks: int) -> list[tuple[str, float]]:
     return [(name, prop / total_prop) for name, prop in scheme]
 
 
+def _required_taper_weeks(distance: str, total_weeks: int) -> int:
+    dist = str(distance).lower()
+    if total_weeks < 1:
+        return 0
+    if total_weeks < 8:
+        return 1
+    base = 1
+    if dist == "42k":
+        base = 3 if total_weeks >= 16 else 2
+    elif dist == "21k":
+        base = 2
+    elif dist == "10k":
+        base = 2 if total_weeks >= 10 else 1
+    elif dist == "5k":
+        base = 1
+    else:
+        base = 1
+    return max(1, min(total_weeks, base))
+
+
+def _taper_reduction_sequence(taper_weeks: int) -> list[float]:
+    if taper_weeks <= 0:
+        return []
+    presets = {
+        1: [0.65],
+        2: [0.78, 0.65],
+        3: [0.9, 0.78, 0.62],
+    }
+    if taper_weeks in presets:
+        return presets[taper_weeks]
+    seq = [0.9] * max(taper_weeks - 2, 0)
+    seq.extend([0.78, 0.65])
+    return seq[-taper_weeks:]
+
+
+def _apply_taper_to_phases(
+    phases: list[PhaseSlice], taper_weeks: int, total_weeks: int
+) -> list[PhaseSlice]:
+    if taper_weeks <= 0 or not phases:
+        return phases
+    week_labels: list[str] = []
+    for phase in phases:
+        week_labels.extend([phase.name] * phase.weeks)
+    if not week_labels:
+        return phases
+    taper_weeks = min(taper_weeks, len(week_labels), total_weeks)
+    for i in range(1, taper_weeks + 1):
+        week_labels[-i] = "Taper"
+
+    new_phases: list[PhaseSlice] = []
+    cursor = 1
+    current = week_labels[0]
+    length = 1
+    for label in week_labels[1:]:
+        if label == current:
+            length += 1
+            continue
+        new_phases.append(
+            PhaseSlice(name=current, weeks=length, start_week=cursor, end_week=cursor + length - 1)
+        )
+        cursor += length
+        current = label
+        length = 1
+    new_phases.append(
+        PhaseSlice(name=current, weeks=length, start_week=cursor, end_week=cursor + length - 1)
+    )
+    new_phases[-1].end_week = total_weeks
+    return new_phases
+
+
 def _allocate_phases(total_weeks: int) -> list[PhaseSlice]:
     scheme = _phase_scheme(total_weeks)
     raw = []
@@ -691,6 +766,27 @@ def _allocate_phases(total_weeks: int) -> list[PhaseSlice]:
     if phases:
         phases[-1].end_week = total_weeks
     return phases
+
+
+def _apply_taper_volume_curve(
+    week_volumes: list[float], taper_weeks: int
+) -> list[float]:
+    if not week_volumes or taper_weeks <= 0:
+        return week_volumes
+    tapered = list(week_volumes)
+    taper_weeks = min(taper_weeks, len(tapered))
+    baseline_idx = len(tapered) - taper_weeks - 1
+    baseline = tapered[baseline_idx] if baseline_idx >= 0 else tapered[0]
+    seq = _taper_reduction_sequence(taper_weeks)
+    for offset, factor in enumerate(seq):
+        idx = len(tapered) - taper_weeks + offset
+        desired = baseline * factor
+        desired = min(desired, week_volumes[idx])
+        if idx > 0:
+            desired = min(desired, tapered[idx - 1] * 0.98)
+        floor = baseline * 0.4 if factor <= 0.7 else baseline * 0.5
+        tapered[idx] = round(max(desired, floor, 0.0), 2)
+    return tapered
 
 
 def _canonical_phase_name(phase_name: str) -> str:
@@ -876,6 +972,7 @@ def _running_long_run_plan(
     nivel: str | None,
     week_volumes: list[float],
     phases: list[PhaseSlice],
+    taper_weeks: int,
 ) -> list[float]:
     dist_key = str(distance).lower()
     if not week_volumes:
@@ -943,7 +1040,25 @@ def _running_long_run_plan(
                 long_runs[idx] = round(max(long_runs[idx], target), 1)
                 hits = sum(1 for km in long_runs if km >= threshold)
 
+    cutoff = _last_long_run_offsets(distance, taper_weeks)
+    if cutoff and len(long_runs) > cutoff:
+        last_idx = len(long_runs) - 1
+        last_long_idx = max(0, last_idx - cutoff)
+        for idx in range(last_long_idx + 1, len(long_runs)):
+            long_runs[idx] = 0.0
+
     return long_runs
+
+
+def _last_long_run_offsets(distance: str, taper_weeks: int) -> int:
+    dist_key = str(distance).lower()
+    if dist_key == "42k":
+        return 2
+    if dist_key in {"21k", "10k"}:
+        return 1
+    if taper_weeks > 0:
+        return 1
+    return 0
 
 
 def _intensity_slots_from_days(dias_treino: int | None, is_recovery: bool) -> int:
@@ -1009,15 +1124,21 @@ def _running_week_sessions(
     dias_treino: int | None,
     is_recovery: bool,
     paces: dict[str, str],
+    is_final_week: bool,
 ) -> list[dict]:
     dist_key = str(distance).lower()
     total_sessions = min(7, max(3, int(dias_treino or 4)))
     if dist_key == "42k":
         total_sessions = max(total_sessions, 4)
+    is_taper_phase = "taper" in phase.lower()
     intensity_slots = _intensity_slots_from_days(total_sessions, is_recovery)
     intensity_types = _select_running_intensity_types(
         phase, distance, goal, intensity_slots, is_recovery
     )
+    if is_taper_phase:
+        intensity_types = [t for t in intensity_types if t == "race_pace"]
+        if is_final_week:
+            intensity_types = intensity_types[:1]
     zone_dist = _running_zone_distribution(distance, goal, is_recovery)
     z1z2_km = week_volume * zone_dist.get("Z1_Z2", 0) / 100
     z3_km = week_volume * zone_dist.get("Z3", 0) / 100
@@ -1037,17 +1158,28 @@ def _running_week_sessions(
         floor = max(longao_volume * 0.85, week_volume * share_low)
         longao_volume = _clamp(longao_volume, floor, ceiling)
 
-    sessions: list[dict] = [
-        {
-            "tipo": "longao",
-            "zona": _training_zone("longao"),
-            "volume_km": round(longao_volume, 1),
-            "ritmo": paces.get("longao"),
-            "descricao": RUN_TRAINING_TYPE_INFO.get("longao", {}).get("descricao", ""),
-        }
-    ]
+    include_long_run = not is_final_week and longao_volume > 0
+    if not include_long_run:
+        longao_volume = 0.0
 
-    remaining_volume = max(week_volume - longao_volume, 0)
+    sessions: list[dict] = []
+    if include_long_run:
+        sessions.append(
+            {
+                "tipo": "longao",
+                "zona": _training_zone("longao"),
+                "volume_km": round(longao_volume, 1),
+                "ritmo": paces.get("longao"),
+                "descricao": RUN_TRAINING_TYPE_INFO.get("longao", {}).get("descricao", ""),
+            }
+        )
+
+    race_distance = _distance_to_km(distance) if is_final_week else 0.0
+    remaining_volume = max(week_volume - longao_volume - race_distance, 0)
+    mandatory_slots = (1 if include_long_run else 0) + (1 if race_distance > 0 else 0)
+    if len(intensity_types) + mandatory_slots > total_sessions:
+        allowed = max(0, total_sessions - mandatory_slots)
+        intensity_types = intensity_types[:allowed]
     z3_types = [t for t in intensity_types if "Z3" in _training_zone(t)]
     z4_types = [t for t in intensity_types if "Z4" in _training_zone(t)]
     z3_per = z3_km / max(len(z3_types), 1) if z3_types else 0
@@ -1061,6 +1193,8 @@ def _running_week_sessions(
             vol = max(z3_per, remaining_volume * 0.12)
         else:
             vol = max(z1z2_km * 0.1, week_volume * 0.08)
+        if is_taper_phase:
+            vol = min(vol, week_volume * (0.2 if not is_final_week else 0.15))
         sessions.append(
             {
                 "tipo": t,
@@ -1072,9 +1206,15 @@ def _running_week_sessions(
         )
         remaining_volume = max(0, remaining_volume - vol)
 
-    easy_sessions = total_sessions - len(intensity_types) - 1
-    easy_volume = max(week_volume - sum(sess["volume_km"] for sess in sessions), 0)
+    race_slot = 1 if race_distance > 0 else 0
+    easy_sessions = total_sessions - len(sessions) - race_slot
+    if is_taper_phase and easy_sessions <= 0 and total_sessions > len(sessions) + race_slot:
+        easy_sessions = 1
+    easy_sessions = max(easy_sessions, 0)
+    easy_volume = max(week_volume - race_distance - sum(sess["volume_km"] for sess in sessions), 0)
     per_easy = easy_volume / max(easy_sessions, 1)
+    if is_taper_phase:
+        per_easy = min(per_easy, max(week_volume * 0.25, 3.0))
     easy_tag = "recuperacao" if is_recovery else "easy"
     for _ in range(max(easy_sessions, 0)):
         sessions.append(
@@ -1084,6 +1224,17 @@ def _running_week_sessions(
                 "volume_km": round(per_easy, 1),
                 "ritmo": paces.get(easy_tag, paces.get("easy")),
                 "descricao": RUN_TRAINING_TYPE_INFO.get(easy_tag, {}).get("descricao", ""),
+            }
+        )
+
+    if race_distance > 0:
+        sessions.append(
+            {
+                "tipo": "prova",
+                "zona": _training_zone("race_pace"),
+                "volume_km": round(race_distance, 1),
+                "ritmo": paces.get("race_pace") or paces.get("tempo_run"),
+                "descricao": RUN_TRAINING_TYPE_INFO.get("prova", {}).get("descricao", ""),
             }
         )
 
@@ -1113,7 +1264,9 @@ def build_triplanner_plan(
         else {}
     )
     vol_min, vol_max = _volume_range(modality_norm, distance, goal_norm, nivel)
+    taper_weeks = _required_taper_weeks(distance, cycle_weeks)
     phases = _allocate_phases(cycle_weeks)
+    phases = _apply_taper_to_phases(phases, taper_weeks, cycle_weeks)
     phase_volume_ranges = (
         _phase_volume_ranges_for_running(distance, nivel, phases)
         if modality_norm == "corrida"
@@ -1123,9 +1276,10 @@ def build_triplanner_plan(
         cycle_weeks, vol_min, vol_max, phases, phase_volume_ranges
     )
     week_volumes = _apply_three_one(week_volumes)
+    week_volumes = _apply_taper_volume_curve(week_volumes, taper_weeks)
 
     long_runs = (
-        _running_long_run_plan(distance, nivel, week_volumes, phases)
+        _running_long_run_plan(distance, nivel, week_volumes, phases, taper_weeks)
         if modality_norm == "corrida"
         else []
     )
@@ -1135,8 +1289,18 @@ def build_triplanner_plan(
         phase = next((p for p in phases if p.start_week <= idx + 1 <= p.end_week), phases[-1])
         week_start = start_date + timedelta(days=7 * idx)
         is_recovery = (idx + 1) % 4 == 0
+        is_final_week = idx == cycle_weeks - 1
+        is_taper_week = "Taper" in phase.name
+        race_distance = _distance_to_km(distance) if (modality_norm == "corrida" and is_final_week) else 0.0
         if modality_norm == "corrida":
             intensity = _running_zone_distribution(distance, goal_norm, is_recovery)
+            if is_taper_week:
+                intensity = intensity.copy()
+                z4z5 = intensity.get("Z4_Z5", 0)
+                z3 = intensity.get("Z3", 0)
+                intensity["Z4_Z5"] = min(z4z5, 5)
+                intensity["Z3"] = min(z3, 20)
+                intensity["Z1_Z2"] = max(0, 100 - intensity.get("Z3", 0) - intensity.get("Z4_Z5", 0))
             focus = _week_focus(modality_norm, method, is_recovery, idx + 1)
             sessions = _running_week_sessions(
                 week_volumes[idx],
@@ -1148,14 +1312,20 @@ def build_triplanner_plan(
                 dias_treino,
                 is_recovery,
                 running_paces,
+                is_final_week,
             )
             if sessions:
                 focus = [s["tipo"] for s in sessions if s.get("tipo") != "longao"][:4]
+            if is_taper_week and "race_pace" not in focus:
+                focus = ["race_pace", "recuperacao"] + [f for f in focus if f not in {"race_pace", "recuperacao"}]
+            if is_final_week:
+                focus = ["prova"] + [f for f in focus if f != "prova"]
         else:
             intensity = _intensity_for_week(method, is_recovery, phase.name)
             focus = _week_focus(modality_norm, method, is_recovery, idx + 1)
             sessions = []
-        volume_total = round(week_volumes[idx], 2)
+        focus = focus[:4]
+        volume_total = round(week_volumes[idx] + race_distance, 2)
         volume_modalidades = plan_week_targets_in_distance(
             modality_norm,
             distance,
@@ -1170,7 +1340,7 @@ def build_triplanner_plan(
                 "inicio": week_start.isoformat(),
                 "fase": phase.name,
                 "fase_objetivo": PHASE_DESCRIPTIONS.get(phase.name, ""),
-                "status": "recuperação" if is_recovery else "carga",
+                "status": "taper" if is_taper_week else ("recuperação" if is_recovery else "carga"),
                 "volume_total": volume_total,
                 "unidade": unit,
                 "volume_por_modalidade": volume_modalidades,

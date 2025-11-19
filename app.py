@@ -161,7 +161,7 @@ LOAD_COEFF = {
 }
 
 TIPOS_MODALIDADE = {
-    "Corrida": ["Regenerativo", "Força", "Longão", "Tempo Run"],
+    "Corrida": ["Regenerativo", "Força", "Longão", "Tempo Run", "Prova"],
     "Ciclismo": ["Endurance", "Intervalado", "Cadência", "Força/Subida"],
     "Natação": ["Técnica", "Ritmo", "Intervalado", "Contínuo"],
     "Força/Calistenia": ["Força máxima", "Resistência muscular", "Core/Estabilidade", "Mobilidade/Recuperação"],
@@ -1357,6 +1357,12 @@ def prescribe_detail(mod, tipo, volume, unit, paces):
     bk = paces.get("bike_kmh", 0)
 
     if mod == "Corrida":
+        if tipo == "Prova":
+            dur = math.ceil(vol * rp) if unit == "km" and rp > 0 else ""
+            return (
+                f"Prova alvo {vol:g} km (~{dur} min)."  # volume
+                " Faça aquecimento leve, respeite o plano de ritmo e hidrate."  # instrução
+            )
         if tipo == "Regenerativo":
             dur = math.ceil(vol * rp) if unit == "km" and rp > 0 else ""
             return (
@@ -1688,16 +1694,51 @@ def distribute_week_by_targets(
 # Horários x disponibilidade
 # ----------------------------------------------------------------------------
 
-def estimate_session_duration_minutes(row: pd.Series) -> int:
+def _run_session_multiplier(tipo: str) -> float:
+    tipo_low = str(tipo or "").lower()
+    if "recup" in tipo_low:
+        return 1.15
+    if "long" in tipo_low:
+        return 1.05
+    if "prova" in tipo_low or "race" in tipo_low:
+        return 0.92
+    if "tempo" in tipo_low or "limiar" in tipo_low or "steady" in tipo_low:
+        return 0.95
+    if "tiro" in tipo_low or "interval" in tipo_low:
+        return 0.85
+    return 1.0
+
+
+def estimate_session_duration_minutes(
+    row: pd.Series, pace_context: dict | None = None
+) -> int:
     unit = row.get("Unidade")
     vol = row.get("Volume", 0)
     try:
         vol = float(vol)
     except (TypeError, ValueError):
         vol = 0.0
+    pace_ctx = pace_context or {}
+    mod = row.get("Modalidade", "")
+    tipo = row.get("Tipo de Treino", "")
 
     if unit == "min" and vol > 0:
         return max(int(round(vol)), 10)
+    if mod == "Corrida" and unit == "km" and vol > 0:
+        pace = pace_ctx.get("run_pace_min_per_km")
+        if pace:
+            duration = vol * float(pace) * _run_session_multiplier(tipo)
+            return max(int(round(duration)), 15)
+    if mod == "Ciclismo" and unit == "km" and vol > 0:
+        speed = pace_ctx.get("bike_kmh")
+        if speed:
+            hours = vol / max(float(speed), 1e-3)
+            return max(int(round(hours * 60)), 20)
+    if mod == "Natação" and vol > 0:
+        pace_swim = pace_ctx.get("swim_sec_per_100m")
+        if pace_swim:
+            minutes = (vol / 100.0) * (float(pace_swim) / 60.0)
+            return max(int(round(minutes)), 10)
     return DEFAULT_TRAINING_DURATION_MIN
 
 
@@ -1744,6 +1785,7 @@ def assign_times_to_week(
     slots,
     use_availability: bool,
     preferences: dict | None = None,
+    pace_context: dict | None = None,
 ):
     df = week_df.copy()
     if "Start" not in df.columns:
@@ -1771,7 +1813,9 @@ def assign_times_to_week(
                 df.at[idx, "End"] = ""
                 continue
 
-            duration = timedelta(minutes=estimate_session_duration_minutes(row))
+            duration = timedelta(
+                minutes=estimate_session_duration_minutes(row, pace_context)
+            )
             assigned = False
             for si, slot in enumerate(free):
                 if slot["start"].date() != row["Data"]:
@@ -1822,7 +1866,7 @@ def assign_times_to_week(
                 start_dt = datetime.combine(day, pref_time)
                 if current_dt and start_dt < current_dt:
                     start_dt = current_dt
-                duration_min = estimate_session_duration_minutes(row)
+                duration_min = estimate_session_duration_minutes(row, pace_context)
                 end_dt = start_dt + timedelta(minutes=duration_min)
                 df.at[idx, "Start"] = start_dt.isoformat()
                 df.at[idx, "End"] = end_dt.isoformat()
@@ -2532,6 +2576,7 @@ def generate_cycle(
             [],
             use_availability=False,
             preferences=user_preferences,
+            pace_context=paces,
         )
         all_weeks.append(week_df)
 
@@ -2643,6 +2688,7 @@ def cycle_plan_to_trainings(
             [],
             use_availability=False,
             preferences=user_preferences,
+            pace_context=paces,
         )
         all_weeks.append(week_df)
 
@@ -3126,8 +3172,9 @@ def main():
                     new_week_df, _updated_slots, warnings = assign_times_to_week(
                         new_week_df,
                         week_slots,
-                        use_avail=False,
+                        use_availability=False,
                         preferences=user_preferences,
+                        pace_context=paces,
                     )
 
                 for warn in warnings:
