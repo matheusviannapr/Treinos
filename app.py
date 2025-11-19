@@ -504,8 +504,7 @@ def create_user(user_id: str, nome: str) -> bool:
 def logout():
     for key in list(st.session_state.keys()):
         if key.startswith("login_") or key.startswith("cal_") or key in [
-            "user_id", "user_name", "df", "all_df",
-            "current_week_start", "frozen_targets"
+            "user_id", "user_name", "df", "all_df", "current_week_start"
         ]:
             del st.session_state[key]
     safe_rerun()
@@ -2902,8 +2901,6 @@ def main():
 
     if "current_week_start" not in st.session_state:
         st.session_state["current_week_start"] = monday_of_week(today())
-    if "frozen_targets" not in st.session_state:
-        st.session_state["frozen_targets"] = {}
     if "calendar_snapshot" not in st.session_state:
         st.session_state["calendar_snapshot"] = []
     if "calendar_forcar_snapshot" not in st.session_state:
@@ -2944,7 +2941,10 @@ def main():
         with tab_semana:
 
             off_days_set = set(user_preferences.get("off_days", []))
-            with st.popover("⚙️ Parâmetros de prescrição e metas semanais", use_container_width=True):
+            generate_week_clicked = False
+            with st.popover(
+                "⚙️ Parâmetros de prescrição e metas semanais", use_container_width=True
+            ):
                 st.markdown(
                     "Defina ritmos de referência, sessões e dias preferidos para gerar a semana e o ciclo já corrigidos."
                 )
@@ -3038,6 +3038,12 @@ def main():
 
                 st.caption("Essas metas também alimentam a geração de ciclo direto no calendário.")
 
+                generate_week_clicked = st.button(
+                    "📆 Gerar Semana Automática",
+                    use_container_width=True,
+                    key="btn_generate_week",
+                )
+
             st.markdown("---")
     
             # 3. Semana atual
@@ -3116,22 +3122,20 @@ def main():
     
             # 3.1 Modo de agendamento
             st.subheader("3. Como encaixar os treinos?")
+            opcoes_agendamento = [
+                "Padrão do app (ignorar horários livres)",
+                "Usar padrão de horários salvo",
+            ]
             modo_agendamento = st.radio(
                 "Opção de agendamento",
-                ["Usar horários livres", "Ignorar horários livres"],
+                opcoes_agendamento,
                 horizontal=True,
             )
-            use_time_pattern = st.checkbox(
-                "Usar padrão de horários salvo (se existir)",
-                value=False,
-                key="use_time_pattern_week",
-            )
-    
+
             st.markdown("---")
-    
+
             # 4. Gerar semana automática
-            col_btn1, _, _ = st.columns(3)
-            if col_btn1.button("📆 Gerar Semana Automática"):
+            if generate_week_clicked:
                 dias_map = dias_semana_options
                 off_days_set = set(user_preferences.get("off_days", []))
                 current_preferred_days = {}
@@ -3157,27 +3161,25 @@ def main():
                     off_days=user_preferences.get("off_days"),
                 )
     
-                pattern = load_timepattern_for_user(user_id) if use_time_pattern else None
-                if use_time_pattern and not pattern:
-                    st.warning("Nenhum padrão de horários salvo ainda. Usando lógica padrão.")
-    
+                use_saved_pattern = modo_agendamento == opcoes_agendamento[1]
+                pattern = load_timepattern_for_user(user_id) if use_saved_pattern else None
+                warnings = []
+
+                if use_saved_pattern and not pattern:
+                    st.warning(
+                        "Nenhum padrão de horários salvo ainda. Usando lógica padrão do app."
+                    )
+
                 if pattern:
                     new_week_df = apply_time_pattern_to_week(new_week_df, pattern)
-                    updated_slots = week_slots
-                    warnings = []
                 else:
-                    use_avail = (modo_agendamento == "Usar horários livres")
-                    new_week_df, updated_slots, warnings = assign_times_to_week(
+                    new_week_df, _updated_slots, warnings = assign_times_to_week(
                         new_week_df,
                         week_slots,
-                        use_avail,
+                        use_avail=False,
                         preferences=user_preferences,
                     )
-    
-                    if use_avail:
-                        updated_slots = subtract_trainings_from_slots(new_week_df, updated_slots)
-                        set_week_availability(user_id, week_start, updated_slots)
-    
+
                 for warn in warnings:
                     st.warning(warn)
     
@@ -3199,46 +3201,7 @@ def main():
     
             week_df_can = canonical_week_df(user_id, week_start)
     
-            col_pat1, col_pat2 = st.columns(2)
-            if col_pat1.button("📌 Capturar padrão de horários desta semana"):
-                pattern = extract_time_pattern_from_week(week_df_can)
-                save_timepattern_for_user(user_id, pattern)
-                st.success("Padrão de horários salvo para este usuário.")
-    
-            if col_pat2.button("↩️ Aplicar padrão salvo nesta semana"):
-                pattern = load_timepattern_for_user(user_id)
-                if not pattern:
-                    st.warning("Nenhum padrão de horários salvo ainda.")
-                else:
-                    df_current = st.session_state["df"].copy()
-                    week_start_series = pd.to_datetime(
-                        df_current.get("WeekStart"), errors="coerce"
-                    ).dt.date
-                    week_mask = (
-                        (df_current["UserID"] == user_id)
-                        & (week_start_series == week_start)
-                    )
-                    week_chunk = df_current[week_mask].copy()
 
-                    if week_chunk.empty:
-                        st.warning("Nenhum treino encontrado nesta semana para aplicar o padrão.")
-                    else:
-                        week_chunk = realign_week_types_with_pattern(
-                            week_chunk, pattern, week_start
-                        )
-                        week_chunk = apply_time_pattern_to_week(week_chunk, pattern)
-                        df_current.loc[week_mask, "Start"] = week_chunk["Start"].values
-                        df_current.loc[week_mask, "End"] = week_chunk["End"].values
-                        df_current.loc[week_mask, "Data"] = week_chunk["Data"].values
-                        df_current.loc[week_mask, "Tipo de Treino"] = week_chunk[
-                            "Tipo de Treino"
-                        ].values
-
-                        save_user_df(user_id, df_current)
-                        canonical_week_df.clear()
-                        st.success("Padrão aplicado nesta semana.")
-                        safe_rerun()
-    
             events = []
     
             # Treinos
@@ -3584,11 +3547,74 @@ def main():
     
         # 5.4 Botão salvar semana (reforça persistência; canonical já lê direto de df)
         st.markdown("---")
-        if st.button("💾 Salvar Semana Atual"):
+        col_save_week, col_clear_all = st.columns([1, 1])
+        if col_save_week.button("💾 Salvar Semana Atual"):
             st.session_state["calendar_forcar_snapshot"] = True
             if "calendar_snapshot" not in st.session_state:
                 st.session_state["calendar_snapshot"] = []
             safe_rerun()
+
+        if col_clear_all.button("🔥 Limpar TODAS as semanas", key=f"clear_all_{week_start}"):
+            st.session_state["pending_clear_all"] = True
+
+        if st.session_state.get("pending_clear_all"):
+            with st.container(border=True):
+                st.warning(
+                    "Esta ação irá remover TODAS as semanas e horários livres do atleta."
+                )
+                col_confirm_all, col_cancel_all = st.columns(2)
+
+                if col_confirm_all.button("Confirmar limpeza total", key="confirm_clear_all"):
+                    empty_df = pd.DataFrame(columns=SCHEMA_COLS)
+                    save_user_df(user_id, empty_df)
+                    clear_all_availability_for_user(user_id)
+                    canonical_week_df.clear()
+                    st.session_state["pending_clear_all"] = False
+                    st.success("Todas as semanas foram removidas para este atleta.")
+                    safe_rerun()
+
+                if col_cancel_all.button("Cancelar", key="cancel_clear_all"):
+                    st.session_state["pending_clear_all"] = False
+
+        col_pat1, col_pat2 = st.columns(2)
+        if col_pat1.button("📌 Capturar padrão de horários desta semana"):
+            pattern = extract_time_pattern_from_week(week_df_can)
+            save_timepattern_for_user(user_id, pattern)
+            st.success("Padrão de horários salvo para este usuário.")
+
+        if col_pat2.button("↩️ Aplicar padrão salvo nesta semana"):
+            pattern = load_timepattern_for_user(user_id)
+            if not pattern:
+                st.warning("Nenhum padrão de horários salvo ainda.")
+            else:
+                df_current = st.session_state["df"].copy()
+                week_start_series = pd.to_datetime(
+                    df_current.get("WeekStart"), errors="coerce"
+                ).dt.date
+                week_mask = (
+                    (df_current["UserID"] == user_id)
+                    & (week_start_series == week_start)
+                )
+                week_chunk = df_current[week_mask].copy()
+
+                if week_chunk.empty:
+                    st.warning("Nenhum treino encontrado nesta semana para aplicar o padrão.")
+                else:
+                    week_chunk = realign_week_types_with_pattern(
+                        week_chunk, pattern, week_start
+                    )
+                    week_chunk = apply_time_pattern_to_week(week_chunk, pattern)
+                    df_current.loc[week_mask, "Start"] = week_chunk["Start"].values
+                    df_current.loc[week_mask, "End"] = week_chunk["End"].values
+                    df_current.loc[week_mask, "Data"] = week_chunk["Data"].values
+                    df_current.loc[week_mask, "Tipo de Treino"] = week_chunk[
+                        "Tipo de Treino"
+                    ].values
+
+                    save_user_df(user_id, df_current)
+                    canonical_week_df.clear()
+                    st.success("Padrão aplicado nesta semana.")
+                    safe_rerun()
 
 
         # 6. Exportações — usam SEMPRE o df canônico (mesmo do calendário)
@@ -3618,20 +3644,6 @@ def main():
         else:
             st.info("Nenhum treino (além de descanso) nesta semana.")
 
-        # Metas congeladas (placeholder)
-        st.markdown("---")
-        st.subheader("Metas da Semana (Congeladas)")
-        if st.button("Congelar Metas da Semana"):
-            targets_key = get_week_key(week_start)
-            current_targets = {mod: st.session_state.get(f"target_{mod}", 0.0) for mod in MODALIDADES}
-            st.session_state["frozen_targets"][targets_key] = current_targets
-            st.info(f"Metas para a semana de {week_start.strftime('%d/%m')} congeladas.")
-
-        frozen_key = get_week_key(week_start)
-        if frozen_key in st.session_state["frozen_targets"]:
-            st.write("Metas congeladas para esta semana:")
-            st.json(st.session_state["frozen_targets"][frozen_key])
-    
         with tab_ciclo:
             render_cycle_planning_tab(user_id, user_preferences=user_preferences)
 
