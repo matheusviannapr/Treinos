@@ -93,6 +93,11 @@ RUN_TRAINING_TYPE_INFO = {
         "zona": "Z3–Z4",
         "descricao": "Segmento contínuo de 20–30 min em ritmo de limiar funcional.",
     },
+    "intervalado": {
+        "nome": "Intervalado",
+        "zona": "Z4–Z5",
+        "descricao": "Repetições curtas e intensas (Z4-Z5) com pausas completas para VO₂ máx.",
+    },
     "fartlek": {
         "nome": "Fartlek",
         "zona": "Z3–Z4",
