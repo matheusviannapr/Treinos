@@ -32,6 +32,7 @@
 import os
 import json
 import math
+import re
 import calendar as py_calendar
 from datetime import datetime, date, timedelta, time, timezone
 from typing import Optional
@@ -84,6 +85,7 @@ SCHEMA_COLS = [
     "Unidade",
     "RPE",
     "Detalhamento",
+    "TempoEstimadoMin",
     "Observações",
     "Status",
     "adj",
@@ -161,7 +163,17 @@ LOAD_COEFF = {
 }
 
 TIPOS_MODALIDADE = {
-    "Corrida": ["Regenerativo", "Força", "Longão", "Tempo Run", "Prova"],
+    "Corrida": [
+        "Rodagem regenerativa",
+        "Corrida contínua leve",
+        "Corrida contínua moderada",
+        "Tempo Run (limiar)",
+        "Fartlek",
+        "Intervalado (VO₂máx)",
+        "Longão",
+        "Educativos técnicos",
+        "Prova",
+    ],
     "Ciclismo": ["Endurance", "Intervalado", "Cadência", "Força/Subida"],
     "Natação": ["Técnica", "Ritmo", "Intervalado", "Contínuo"],
     "Força/Calistenia": ["Força máxima", "Resistência muscular", "Core/Estabilidade", "Mobilidade/Recuperação"],
@@ -522,8 +534,8 @@ def load_all() -> pd.DataFrame:
     df = db.fetch_dataframe(
         "SELECT "
         "    \"UserID\", \"UID\", \"Data\"::text AS \"Data\", \"Start\"::text AS \"Start\", \"End\"::text AS \"End\", \"Modalidade\","
-        "    \"Tipo de Treino\", \"Volume\", \"Unidade\", \"RPE\", \"Detalhamento\"," 
-        "    \"Observações\", \"Status\", \"adj\", \"AdjAppliedAt\", \"ChangeLog\"," 
+        "    \"Tipo de Treino\", \"Volume\", \"Unidade\", \"RPE\", \"Detalhamento\", \"TempoEstimadoMin\","
+        "    \"Observações\", \"Status\", \"adj\", \"AdjAppliedAt\", \"ChangeLog\","
         "    \"LastEditedAt\", \"WeekStart\"::text AS \"WeekStart\""
         " FROM treinos"
     )
@@ -541,7 +553,7 @@ def load_all() -> pd.DataFrame:
         df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
         df["WeekStart"] = pd.to_datetime(df["WeekStart"], errors="coerce").dt.date
 
-        for c in ["Volume", "RPE", "adj"]:
+        for c in ["Volume", "RPE", "adj", "TempoEstimadoMin"]:
             df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
 
         for c in ["ChangeLog", "Detalhamento", "Observações"]:
@@ -573,12 +585,12 @@ def save_all(df: pd.DataFrame):
             """
             INSERT INTO treinos (
                 "UserID", "UID", "Data", "Start", "End", "Modalidade",
-                "Tipo de Treino", "Volume", "Unidade", "RPE", "Detalhamento",
+                "Tipo de Treino", "Volume", "Unidade", "RPE", "Detalhamento", "TempoEstimadoMin",
                 "Observações", "Status", "adj", "AdjAppliedAt", "ChangeLog",
                 "LastEditedAt", "WeekStart"
             ) VALUES (
                 :user_id, :uid, :data, :start, :end, :modalidade,
-                :tipo_treino, :volume, :unidade, :rpe, :detalhamento,
+                :tipo_treino, :volume, :unidade, :rpe, :detalhamento, :tempo_estimado_min,
                 :observacoes, :status, :adj, :adj_applied_at, :changelog,
                 :last_edited_at, :week_start
             )
@@ -596,6 +608,7 @@ def save_all(df: pd.DataFrame):
                     "unidade": rec.get("Unidade", ""),
                     "rpe": float(rec.get("RPE", 0.0) or 0.0),
                     "detalhamento": rec.get("Detalhamento", ""),
+                    "tempo_estimado_min": float(rec.get("TempoEstimadoMin", 0.0) or 0.0),
                     "observacoes": rec.get("Observações", ""),
                     "status": rec.get("Status", ""),
                     "adj": float(rec.get("adj", 0.0) or 0.0),
@@ -958,6 +971,27 @@ def extract_time_pattern_from_week(week_df: pd.DataFrame) -> dict:
     return pattern
 
 
+def _tipo_is_blank(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and pd.isna(value):
+        return True
+    value_str = str(value).strip()
+    return value_str == ""
+
+
+def _maybe_apply_slot_tipo(df: pd.DataFrame, idx: int, slot_tipo):
+    if _tipo_is_blank(slot_tipo):
+        return
+    if "Tipo de Treino" not in df.columns:
+        return
+    if idx not in df.index:
+        return
+    current = df.at[idx, "Tipo de Treino"]
+    if _tipo_is_blank(current):
+        df.at[idx, "Tipo de Treino"] = slot_tipo
+
+
 def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataFrame:
     """Aplica slots de horário por dia em um DataFrame de semana."""
 
@@ -977,6 +1011,8 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
         df["End"] = pd.NaT
     if "Tipo de Treino" not in df.columns:
         df["Tipo de Treino"] = None
+    if "TempoEstimadoMin" not in df.columns:
+        df["TempoEstimadoMin"] = 0.0
 
     if not np.issubdtype(df["Data"].dtype, np.datetime64):
         df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
@@ -1042,9 +1078,14 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
                 continue
 
             slot_tipo = None
+            slot_tipo_raw = None
+            duration_minutes = planned_duration_minutes(row)
+            if duration_minutes <= 0:
+                duration_minutes = DEFAULT_TRAINING_DURATION_MIN
+            df.at[idx, "TempoEstimadoMin"] = duration_minutes
             if not slots_available:
                 base_time = time(6, 0)
-                duration = DEFAULT_TRAINING_DURATION_MIN
+                duration = duration_minutes
             else:
                 # Tenta casar o slot pelo par modalidade/tipo preservando ordem salva
                 match_idx = _slot_match_index(
@@ -1056,13 +1097,14 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
                     continue
 
                 slot = slots_available.pop(match_idx)
-                slot_tipo = _norm_tipo(slot.get("tipo"))
+                slot_tipo_raw = slot.get("tipo")
+                slot_tipo = _norm_tipo(slot_tipo_raw)
                 try:
                     hour, minute = map(int, str(slot.get("start", "06:00")).split(":"))
                 except Exception:
                     hour, minute = 6, 0
                 base_time = time(hour, minute)
-                duration = int(slot.get("dur", DEFAULT_TRAINING_DURATION_MIN) or DEFAULT_TRAINING_DURATION_MIN)
+                duration = duration_minutes
 
             current_date = row["Data"]
             if pd.isna(current_date):
@@ -1076,8 +1118,7 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
             df.at[idx, "StartDT"] = start_dt
             df.at[idx, "EndDT"] = end_dt
 
-            if slot_tipo:
-                df.at[idx, "Tipo de Treino"] = slot.get("tipo")
+            _maybe_apply_slot_tipo(df, idx, slot_tipo_raw)
 
     return df
 
@@ -1174,8 +1215,7 @@ def realign_week_types_with_pattern(
             df.at[best_idx, "StartDT"] = pd.NaT
             df.at[best_idx, "EndDT"] = pd.NaT
 
-            if slot.get("tipo"):
-                df.at[best_idx, "Tipo de Treino"] = slot.get("tipo")
+            _maybe_apply_slot_tipo(df, best_idx, slot.get("tipo"))
 
     return df
 
@@ -1350,46 +1390,110 @@ def _ensure_support_work(weekly_targets: dict, sessions_per_mod: dict) -> dict:
             targets[mod] = default_volume
     return targets
 
-def prescribe_detail(mod, tipo, volume, unit, paces):
+def _detail_from_planned_session(mod: str, session_spec: dict, unit: str) -> str | None:
+    if not isinstance(session_spec, dict):
+        return None
+    meta = session_spec.get("meta") or {}
+    if not isinstance(meta, dict):
+        return None
+    label = session_spec.get("label") or meta.get("tipo_nome") or meta.get("tipo")
+    volume = float(session_spec.get("volume", 0) or 0)
+    zone = meta.get("zona")
+    duration = meta.get("duracao_estimada_min") or meta.get("tempo_estimado_min")
+    descricao = meta.get("descricao")
+    ritmo = meta.get("ritmo")
+    tempo_txt = f" (~{int(round(duration))} min)" if duration else ""
+    parts = [f"{label or 'Treino'} de {volume:g} {unit}{tempo_txt}."]
+    if zone:
+        parts.append(f"Zona-alvo: {zone}.")
+    if ritmo:
+        parts.append(f"Ritmo sugerido: {ritmo}.")
+    if descricao:
+        parts.append(str(descricao))
+    return " ".join(parts)
+
+
+def prescribe_detail(mod, tipo, volume, unit, paces, duration_override=None):
     vol = float(volume or 0)
     rp = paces.get("run_pace_min_per_km", 0)
     sp = paces.get("swim_sec_per_100m", 0)
     bk = paces.get("bike_kmh", 0)
+    override_minutes = _coerce_duration_minutes(duration_override)
 
     if mod == "Corrida":
-        if tipo == "Prova":
-            dur = math.ceil(vol * rp) if unit == "km" and rp > 0 else ""
+        tipo_norm = str(tipo or "").strip().lower()
+
+        def _dur_txt(base_pace: float | None = None):
+            if override_minutes:
+                return f" (~{override_minutes} min)"
+            pace_ref = base_pace if base_pace and base_pace > 0 else rp
+            if unit == "km" and pace_ref > 0:
+                return f" (~{math.ceil(vol * pace_ref)} min)"
+            return ""
+
+        if "prova" in tipo_norm:
             return (
-                f"Prova alvo {vol:g} km (~{dur} min)."  # volume
-                " Faça aquecimento leve, respeite o plano de ritmo e hidrate."  # instrução
+                f"Prova alvo {vol:g} km{_dur_txt()}."
+                " Faça aquecimento leve, mantenha o ritmo planejado e execute a estratégia de hidratação."
+            )
+        if "rodagem" in tipo_norm and "regener" in tipo_norm:
+            return (
+                f"Rodagem regenerativa Z1–Z2 {vol:g} km{_dur_txt()} para soltar as pernas."
+                " Cadência leve, respiração fácil e foco em recuperar."
+            )
+        if "contínua" in tipo_norm and "leve" in tipo_norm:
+            return (
+                f"Corrida contínua leve Z2 {vol:g} km{_dur_txt()}."
+                " Ritmo confortável, postura alta e respiração nasal sempre que possível."
+            )
+        if "contínua" in tipo_norm and "moderada" in tipo_norm:
+            return (
+                f"Corrida contínua moderada Z3 {vol:g} km{_dur_txt()}."
+                " Segure perto do limiar inferior, mantendo ritmo firme mas controlado."
+            )
+        if "tempo" in tipo_norm:
+            pace = paces.get("tempo_run", rp)
+            return (
+                f"Tempo Run em limiar {vol:g} km{_dur_txt(pace)}."
+                " Faça blocos contínuos de 20–30 min sentindo esforço 7/10."
+            )
+        if "fartlek" in tipo_norm:
+            return (
+                f"Fartlek {vol:g} km{_dur_txt()} em Z3–Z4."
+                " Alterne blocos forte/leve (ex.: 1' forte/1' leve) mantendo técnica sólida."
+            )
+        if "vo" in tipo_norm or "interval" in tipo_norm:
+            reps = max(4, min(8, int(max(vol, 1))))
+            return (
+                f"Intervalado VO₂máx {vol:g} km."
+                f" Execute ~{reps} repetições curtas em Z4–Z5 com recuperação igual ao esforço."
+            )
+        if "long" in tipo_norm:
+            return (
+                f"Longão contínuo {vol:g} km{_dur_txt()} em Z2 controlado."
+                " Trabalhe hidratação/nutrição e conclua forte porém confortável."
+            )
+        if "educativo" in tipo_norm:
+            return (
+                f"Educativos técnicos por {vol:g} km (ou ~{max(10, int(vol * 5))} min)."
+                " Inclua skipping, dribling, elevação de joelhos e saltitos para coordenação."
             )
         if tipo == "Regenerativo":
-            dur = math.ceil(vol * rp) if unit == "km" and rp > 0 else ""
             return (
-                f"Regenerativo Z1/Z2 {vol:g} km (~{dur} min)."  # distancia/tempo
-                " Objetivo: soltar as pernas e facilitar recuperação."  # objetivo
-                " Mantenha respiração confortável e cadência leve."  # instrução
-            )
-        if tipo == "Força":
-            reps = max(6, min(12, int(vol)))
-            return (
-                f"Força em subida: {reps}×(60s Z4) rec 2min."
-                " Objetivo: recrutar potência e melhorar economia."
-                " Mantenha postura alta e passadas curtas."
+                f"Rodagem regenerativa Z1/Z2 {vol:g} km{_dur_txt()} para acelerar recuperação."
+                " Respiração confortável e cadência solta."
             )
         if tipo == "Longão":
-            dur = math.ceil(vol * rp) if unit == "km" and rp > 0 else ""
             return (
-                f"Longão {vol:g} km (Z2/Z3) ~{dur} min."  # volume
-                " Objetivo: construir resistência aeróbia."  # objetivo
-                " Hidrate-se a cada 15–20min e mantenha Z2 na maior parte."  # instruções
+                f"Longão {vol:g} km (Z2/Z3){_dur_txt()}"
+                " Objetivo: construir resistência aeróbia. Hidrate-se a cada 15–20min."
             )
         if tipo == "Tempo Run":
             bloco = max(20, min(40, int(vol * 6)))
             return (
-                f"Tempo Run {bloco}min em Z3/Z4."  # bloco tempo
-                " Objetivo: elevar limiar e tolerância ao ritmo de prova."  # objetivo
-                " Divida em 2× metade se precisar, com transições curtas."  # dica
+                f"Tempo Run {bloco}min em Z3/Z4."
+                " Objetivo: elevar limiar e tolerância ao ritmo de prova."
+                " Divida em 2× metade se precisar, com transições curtas."
             )
 
     if mod == "Ciclismo":
@@ -1511,10 +1615,11 @@ def default_week_df(week_start: date, user_id: str) -> pd.DataFrame:
             "Tipo de Treino": "Ativo/Passivo",
             "Volume": 0.0,
             "Unidade": "min",
-            "RPE": 0,
-            "Detalhamento": "Dia de descanso. Foco em recuperação.",
-            "Observações": "",
-            "Status": "Planejado",
+                "RPE": 0,
+                "Detalhamento": "Dia de descanso. Foco em recuperação.",
+                "TempoEstimadoMin": 0.0,
+                "Observações": "",
+                "Status": "Planejado",
             "adj": 0.0,
             "AdjAppliedAt": "",
             "ChangeLog": "[]",
@@ -1554,7 +1659,7 @@ def distribute_week_by_targets(
         "Mobilidade": [0, 6],
     }
 
-    mod_sessions: dict[str, tuple[list[float], list[str], bool]] = {}
+    mod_sessions: dict[str, dict] = {}
     planned_sessions = planned_sessions or {}
 
     for mod, weekly_vol in weekly_targets.items():
@@ -1567,12 +1672,24 @@ def distribute_week_by_targets(
         unit = UNITS_ALLOWED[mod]
         target_total = _round_to_step_sum(weekly_vol, unit)
 
+        session_specs: list[dict] = []
+        has_planned = bool(planned_mod_sessions)
+
         if planned_mod_sessions:
-            volumes = [
-                _round_to_step_sum(float(sess.get("volume", 0.0) or 0.0), unit)
-                for sess in planned_mod_sessions
-            ]
-            tipos = [sess.get("tipo", "Treino") for sess in planned_mod_sessions]
+            for sess in planned_mod_sessions:
+                if not isinstance(sess, dict):
+                    continue
+                sess_volume = _round_to_step_sum(float(sess.get("volume", 0.0) or 0.0), unit)
+                label = sess.get("tipo_nome") or sess.get("tipo") or sess.get("tipo_slug") or "Treino"
+                slug = sess.get("tipo_slug") or sess.get("tipo") or label
+                session_specs.append(
+                    {
+                        "volume": sess_volume,
+                        "label": label,
+                        "slug": slug,
+                        "meta": sess,
+                    }
+                )
         else:
             w_template = weights.get(mod)
             if w_template is None:
@@ -1590,14 +1707,25 @@ def distribute_week_by_targets(
 
             tipos_base = TIPOS_MODALIDADE.get(mod, ["Treino"])
             tipos = _expand_to_n(tipos_base, n)
+            session_specs = [
+                {
+                    "volume": volumes[i],
+                    "label": tipos[i],
+                    "slug": tipos[i],
+                    "meta": None,
+                }
+                for i in range(len(volumes))
+            ]
 
-        mod_sessions[mod] = (volumes, tipos, bool(planned_mod_sessions))
+        mod_sessions[mod] = {"sessions": session_specs, "has_planned": has_planned}
 
     session_assignments = {i: [] for i in range(7)}
     off_days_set = set(off_days or [])
 
-    for mod, (volumes, tipos, has_planned) in mod_sessions.items():
-        n = len(volumes)
+    for mod, payload in mod_sessions.items():
+        session_specs = payload.get("sessions", [])
+        has_planned = payload.get("has_planned", False)
+        n = len(session_specs)
         prefs = (user_preferred_days or {}).get(mod, default_days.get(mod, list(range(7))))
         prefs = [d for d in prefs if d in range(7)]
 
@@ -1632,13 +1760,15 @@ def distribute_week_by_targets(
         day_idx = day_idx[:n]
 
         key_tipo = (key_sessions or {}).get(mod, "")
-        if not has_planned:
-            if key_tipo and key_tipo in tipos:
-                max_i = max(range(n), key=lambda i: volumes[i])
-                tipos[max_i] = key_tipo
+        if not has_planned and key_tipo:
+            volumes_only = [spec.get("volume", 0.0) for spec in session_specs]
+            if volumes_only:
+                max_i = max(range(n), key=lambda i: volumes_only[i])
+                session_specs[max_i]["label"] = key_tipo
+                session_specs[max_i]["slug"] = key_tipo
 
         for i in range(n):
-            session_assignments[day_idx[i]].append((mod, volumes[i], tipos[i]))
+            session_assignments[day_idx[i]].append((mod, session_specs[i]))
 
     for i, d in enumerate(days):
         sessions = session_assignments.get(i, [])
@@ -1655,6 +1785,7 @@ def distribute_week_by_targets(
                 "Unidade": "min",
                 "RPE": 0,
                 "Detalhamento": "Dia de descanso.",
+                "TempoEstimadoMin": 0.0,
                 "Observações": "",
                 "Status": "Planejado",
                 "adj": 0.0,
@@ -1664,9 +1795,23 @@ def distribute_week_by_targets(
                 "WeekStart": week_start,
             })
         else:
-            for mod, vol, tipo in sessions:
+            for mod, spec in sessions:
                 unit = UNITS_ALLOWED[mod]
-                detail = prescribe_detail(mod, tipo, vol, unit, paces)
+                vol = float(spec.get("volume", 0.0))
+                tipo_label = spec.get("label") or spec.get("slug") or "Treino"
+                tempo_estimado = _duration_from_session_spec(
+                    mod, spec, unit, tipo_label, paces
+                )
+                detail = _detail_from_planned_session(mod, spec, unit)
+                if not detail:
+                    detail = prescribe_detail(
+                        mod,
+                        tipo_label,
+                        vol,
+                        unit,
+                        paces,
+                        duration_override=tempo_estimado,
+                    )
                 rows.append({
                     "UserID": user_id,
                     "UID": generate_uid(user_id),
@@ -1674,11 +1819,12 @@ def distribute_week_by_targets(
                     "Start": "",
                     "End": "",
                     "Modalidade": mod,
-                    "Tipo de Treino": tipo,
+                    "Tipo de Treino": tipo_label,
                     "Volume": vol,
                     "Unidade": unit,
                     "RPE": 0,
                     "Detalhamento": detail,
+                    "TempoEstimadoMin": tempo_estimado or 0.0,
                     "Observações": "",
                     "Status": "Planejado",
                     "adj": 0.0,
@@ -1709,6 +1855,62 @@ def _run_session_multiplier(tipo: str) -> float:
     return 1.0
 
 
+def _normalize_training_label(text: str | None) -> str:
+    raw = unicodedata.normalize("NFKD", str(text or "")).encode("ASCII", "ignore").decode("ASCII")
+    raw = raw.lower()
+    return re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+
+
+def _infer_running_tipo_slug(tipo: str | None) -> str | None:
+    normalized = _normalize_training_label(tipo)
+    if not normalized:
+        return None
+    info = getattr(triplanner_engine, "RUN_TRAINING_TYPE_INFO", {})
+    for slug, meta in info.items():
+        names = {slug, slug.replace("_", ""), _normalize_training_label(meta.get("nome"))}
+        names = {n for n in names if n}
+        if normalized in names:
+            return slug
+        for name in names:
+            if name and (name in normalized or normalized in name):
+                return slug
+    if "long" in normalized:
+        return "longao"
+    if "tempo" in normalized:
+        return "tempo_run"
+    if "interval" in normalized or "vo2" in normalized:
+        return "intervalado_vo2max"
+    if "fartlek" in normalized:
+        return "fartlek"
+    if "regen" in normalized:
+        return "rodagem_regenerativa"
+    if "moderada" in normalized:
+        return "corrida_continua_moderada"
+    if "leve" in normalized:
+        return "corrida_continua_leve"
+    return None
+
+
+def _run_zone_minutes_from_pace(base_minutes: float | None) -> dict[str, float]:
+    try:
+        pace_val = float(base_minutes)
+    except (TypeError, ValueError):
+        return {}
+    if pace_val <= 0:
+        return {}
+    info = getattr(triplanner_engine, "RUN_TRAINING_TYPE_INFO", {})
+    zone_map: dict[str, float] = {}
+    for slug, meta in info.items():
+        factor = meta.get("pace_factor")
+        if not factor:
+            continue
+        try:
+            zone_map[slug] = float(pace_val) * float(factor)
+        except (TypeError, ValueError):
+            continue
+    return zone_map
+
+
 def estimate_session_duration_minutes(
     row: pd.Series, pace_context: dict | None = None
 ) -> int:
@@ -1724,10 +1926,24 @@ def estimate_session_duration_minutes(
 
     if unit == "min" and vol > 0:
         return max(int(round(vol)), 10)
-    if mod == "Corrida" and unit == "km" and vol > 0:
-        pace = pace_ctx.get("run_pace_min_per_km")
-        if pace:
-            duration = vol * float(pace) * _run_session_multiplier(tipo)
+    if str(mod).lower().startswith("cor") and unit == "km" and vol > 0:
+        zone_minutes = pace_ctx.get("run_zone_minutes")
+        if not zone_minutes:
+            zone_minutes = _run_zone_minutes_from_pace(pace_ctx.get("run_pace_min_per_km"))
+            if zone_minutes:
+                pace_ctx["run_zone_minutes"] = zone_minutes
+        pace_minutes = None
+        slug = _infer_running_tipo_slug(tipo)
+        if zone_minutes and slug and slug in zone_minutes:
+            pace_minutes = zone_minutes.get(slug)
+        if pace_minutes is None:
+            pace_base = zone_minutes.get("corrida_continua_leve") if zone_minutes else None
+            if not pace_base:
+                pace_base = pace_ctx.get("run_pace_min_per_km")
+            if pace_base:
+                pace_minutes = float(pace_base) * _run_session_multiplier(tipo)
+        if pace_minutes:
+            duration = vol * float(pace_minutes)
             return max(int(round(duration)), 15)
     if mod == "Ciclismo" and unit == "km" and vol > 0:
         speed = pace_ctx.get("bike_kmh")
@@ -1740,6 +1956,63 @@ def estimate_session_duration_minutes(
             minutes = (vol / 100.0) * (float(pace_swim) / 60.0)
             return max(int(round(minutes)), 10)
     return DEFAULT_TRAINING_DURATION_MIN
+
+
+def _coerce_duration_minutes(value) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if not value.strip():
+            return None
+        try:
+            value = float(value.replace(",", "."))
+        except (TypeError, ValueError):
+            return None
+    try:
+        minutes = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(minutes) or minutes <= 0:
+        return None
+    return int(round(minutes))
+
+
+def planned_duration_minutes(
+    row: pd.Series | dict, pace_context: dict | None = None
+) -> int:
+    stored = None
+    if isinstance(row, pd.Series):
+        stored = row.get("TempoEstimadoMin")
+    elif isinstance(row, dict):
+        stored = row.get("TempoEstimadoMin")
+    stored_minutes = _coerce_duration_minutes(stored)
+    if stored_minutes:
+        return stored_minutes
+    return estimate_session_duration_minutes(row, pace_context)
+
+
+def _duration_from_session_spec(
+    mod: str,
+    spec: dict,
+    unit: str,
+    tipo_label: str,
+    paces: dict | None,
+) -> int:
+    meta = spec.get("meta") if isinstance(spec.get("meta"), dict) else None
+    if meta:
+        duration = _coerce_duration_minutes(
+            meta.get("duracao_estimada_min") or meta.get("tempo_estimado_min")
+        )
+        if duration:
+            return duration
+    payload = {
+        "Modalidade": mod,
+        "Tipo de Treino": tipo_label,
+        "Volume": spec.get("volume", 0.0),
+        "Unidade": unit,
+        "TempoEstimadoMin": spec.get("duracao_estimada_min"),
+    }
+    return estimate_session_duration_minutes(payload, paces)
 
 
 def _preferred_time_for_modality(modality: str, preferences: dict | None) -> time:
@@ -1792,6 +2065,8 @@ def assign_times_to_week(
         df["Start"] = ""
     if "End" not in df.columns:
         df["End"] = ""
+    if "TempoEstimadoMin" not in df.columns:
+        df["TempoEstimadoMin"] = 0.0
 
     raw_limit = (preferences or {}).get("daily_limit_minutes") if preferences else None
     daily_limit = None
@@ -1813,9 +2088,9 @@ def assign_times_to_week(
                 df.at[idx, "End"] = ""
                 continue
 
-            duration = timedelta(
-                minutes=estimate_session_duration_minutes(row, pace_context)
-            )
+            planned_minutes = planned_duration_minutes(row, pace_context)
+            df.at[idx, "TempoEstimadoMin"] = planned_minutes
+            duration = timedelta(minutes=planned_minutes)
             assigned = False
             for si, slot in enumerate(free):
                 if slot["start"].date() != row["Data"]:
@@ -1866,7 +2141,8 @@ def assign_times_to_week(
                 start_dt = datetime.combine(day, pref_time)
                 if current_dt and start_dt < current_dt:
                     start_dt = current_dt
-                duration_min = estimate_session_duration_minutes(row, pace_context)
+                duration_min = planned_duration_minutes(row, pace_context)
+                df.at[idx, "TempoEstimadoMin"] = duration_min
                 end_dt = start_dt + timedelta(minutes=duration_min)
                 df.at[idx, "Start"] = start_dt.isoformat()
                 df.at[idx, "End"] = end_dt.isoformat()
@@ -2586,11 +2862,31 @@ def generate_cycle(
 
 
 def _pace_defaults_from_state() -> dict:
-    return {
-        "run_pace_min_per_km": float(st.session_state.get("run_pace_min_per_km", 5.0)),
+    run_pace = float(st.session_state.get("run_pace_min_per_km", 5.0))
+    paces = {
+        "run_pace_min_per_km": run_pace,
         "swim_sec_per_100m": float(st.session_state.get("swim_sec_per_100m", 110)),
         "bike_kmh": float(st.session_state.get("bike_kmh", 32.0)),
     }
+    zone_minutes = _run_zone_minutes_from_pace(run_pace)
+    if zone_minutes:
+        paces["run_zone_minutes"] = zone_minutes
+        for slug, minutes in zone_minutes.items():
+            paces[slug] = minutes
+    return paces
+
+
+def _pace_minutes_to_str(minutes: float | None) -> str | None:
+    try:
+        pace_val = float(minutes)
+    except (TypeError, ValueError):
+        return None
+    if pace_val <= 0:
+        return None
+    total_seconds = int(round(pace_val * 60))
+    total_seconds = max(total_seconds, 1)
+    mins, secs = divmod(total_seconds, 60)
+    return f"{int(mins):02d}:{int(secs):02d}/km"
 
 
 def _preferred_days_from_state(off_days: set[int]) -> dict:
@@ -2667,8 +2963,19 @@ def cycle_plan_to_trainings(
                     volume = None
                 if volume is None or volume <= 0:
                     continue
-                tipo = sess.get("tipo") or sess.get("nome") or "Treino"
-                planned.append({"volume": volume, "tipo": tipo})
+                tipo_slug = sess.get("tipo") or sess.get("slug")
+                tipo_nome = sess.get("tipo_nome") or sess.get("nome") or tipo_slug or "Treino"
+                planned.append(
+                    {
+                        "volume": round(volume, 1),
+                        "tipo_nome": tipo_nome,
+                        "tipo_slug": tipo_slug or tipo_nome,
+                        "zona": sess.get("zona"),
+                        "descricao": sess.get("descricao"),
+                        "duracao_estimada_min": sess.get("duracao_estimada_min"),
+                        "ritmo": sess.get("ritmo"),
+                    }
+                )
             if planned:
                 planned_sessions_by_mod["Corrida"] = planned
 
@@ -2741,6 +3048,9 @@ def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
         save_user_df(user_id, base_df)
 
     # StartDT / EndDT canônicos
+    if "TempoEstimadoMin" not in week_df.columns:
+        week_df["TempoEstimadoMin"] = 0.0
+
     week_df["StartDT"] = week_df["Start"].apply(parse_iso)
     week_df["StartDT"] = week_df.apply(
         lambda r: r["StartDT"] or datetime.combine(r["Data"], time(6, 0)),
@@ -2749,7 +3059,11 @@ def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
 
     week_df["EndDT"] = week_df["End"].apply(parse_iso)
     week_df["EndDT"] = week_df.apply(
-        lambda r: r["EndDT"] or (r["StartDT"] + timedelta(minutes=DEFAULT_TRAINING_DURATION_MIN)),
+        lambda r: r["EndDT"]
+        or (
+            r["StartDT"]
+            + timedelta(minutes=planned_duration_minutes(r))
+        ),
         axis=1,
     )
 
@@ -2799,6 +3113,20 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
 
     goal = st.radio("Objetivo", ["Completar", "Performar"], horizontal=True)
 
+    level_options = {
+        "iniciante": "Iniciante",
+        "intermediario": "Intermediário",
+        "avancado": "Avançado",
+    }
+    level_keys = list(level_options.keys())
+    nivel = st.selectbox(
+        "Nível do atleta",
+        level_keys,
+        format_func=lambda key: level_options.get(key, key.title()),
+        index=0,
+        key="cycle_level_select",
+    )
+
     start_date_default = monday_of_week(today())
     start_date = st.date_input("Início do ciclo", value=start_date_default, key="cycle_start_date")
 
@@ -2824,12 +3152,16 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
     )
 
     if st.button("Gerar plano semanal do ciclo", key="cycle_generate_btn"):
+        paces = _pace_defaults_from_state()
+        pace_hint = _pace_minutes_to_str(paces.get("run_pace_min_per_km"))
         plan = triplanner_engine.build_triplanner_plan(
             modality=modality,
             distance=distance,
             goal=goal,
             cycle_weeks=cycle_weeks,
             start_date=start_date,
+            pace_medio=pace_hint,
+            nivel=nivel,
             notes=notes,
         )
 
@@ -2837,7 +3169,6 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
         pref_days = _preferred_days_from_state(off_days_cycle)
         sess_per_mod = _sessions_per_mod_from_state()
         key_sess = _key_sessions_from_state()
-        paces = _pace_defaults_from_state()
 
         new_cycle_df = cycle_plan_to_trainings(
             plan,
@@ -2999,13 +3330,14 @@ def main():
                 col_p1, col_p2, col_p3 = st.columns(3)
                 paces = {
                     "run_pace_min_per_km": col_p1.number_input(
-                        "Corrida (min/km)",
+                        "Corrida Z2 (min/km)",
                         value=float(st.session_state.get("run_pace_min_per_km", 5.0)),
                         min_value=3.0,
                         max_value=10.0,
                         step=0.1,
                         format="%.1f",
                         key="run_pace_min_per_km",
+                        help="Informe o pace confortável/Z2 (ex.: 6.0 = 6:00/km)",
                     ),
                     "swim_sec_per_100m": col_p2.number_input(
                         "Natação (seg/100m)",
@@ -3354,6 +3686,8 @@ def main():
 
             df_current.loc[idx, "Start"] = start.isoformat()
             df_current.loc[idx, "End"] = end.isoformat()
+            duration_min = max(int((end - start).total_seconds() // 60), 1)
+            df_current.loc[idx, "TempoEstimadoMin"] = duration_min
             df_current.loc[idx, "Data"] = start.date()
             df_current.loc[idx, "WeekStart"] = monday_of_week(start.date())
             df_current.loc[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
@@ -3392,6 +3726,9 @@ def main():
                 start_dt = parse_iso(r.get("Start", "")) or datetime.combine(r["Data"], time(6, 0))
                 end_dt = parse_iso(r.get("End", "")) or (start_dt + timedelta(minutes=DEFAULT_TRAINING_DURATION_MIN))
                 dur_min = int((end_dt - start_dt).total_seconds() / 60)
+                stored_duration = _coerce_duration_minutes(r.get("TempoEstimadoMin"))
+                if stored_duration:
+                    dur_min = stored_duration
 
                 current_mod = r.get("Modalidade", "Corrida")
                 mod_options = MODALIDADES + ["Descanso"]
@@ -3461,6 +3798,7 @@ def main():
 
                     df_upd.loc[i2, "Start"] = new_start.isoformat()
                     df_upd.loc[i2, "End"] = new_end.isoformat()
+                    df_upd.loc[i2, "TempoEstimadoMin"] = int(new_dur)
                     df_upd.loc[i2, "Data"] = new_start.date()
                     df_upd.loc[i2, "WeekStart"] = monday_of_week(new_start.date())
 
@@ -3773,7 +4111,7 @@ def main():
                             if isinstance(start_dt, datetime) and isinstance(end_dt, datetime) and end_dt > start_dt:
                                 duration_guess = int((end_dt - start_dt).total_seconds() // 60)
                             else:
-                                duration_guess = estimate_session_duration_minutes(row)
+                                duration_guess = planned_duration_minutes(row)
                             if duration_guess < 15:
                                 duration_guess = 15
 
@@ -3796,6 +4134,7 @@ def main():
                                     "Observações": obs_input,
                                     "Start": start_combined.isoformat(),
                                     "End": end_combined.isoformat(),
+                                    "TempoEstimadoMin": int(duration_input),
                                 }
                                 if apply_training_updates(user_id, uid, updates):
                                     st.session_state["editing_uid"] = None
