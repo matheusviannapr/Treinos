@@ -730,6 +730,20 @@ def set_week_availability(user_id: str, week_start: date, slots):
 
     save_all_availability(all_df)
 
+
+def clear_all_availability_for_user(user_id: str):
+    """Remove qualquer disponibilidade salva para todas as semanas do usuário."""
+
+    all_df = load_all_availability()
+    if all_df.empty:
+        return
+
+    filtered = all_df[all_df["UserID"] != user_id]
+    if len(filtered) == len(all_df):
+        return
+
+    save_all_availability(filtered)
+
 # ----------------------------------------------------------------------------
 # Padrões de horário por usuário
 # ----------------------------------------------------------------------------
@@ -3054,7 +3068,7 @@ def main():
                     st.warning(
                         "Tem certeza de que deseja remover todos os treinos desta semana?"
                     )
-                    col_confirma, col_cancela = st.columns(2)
+                    col_confirma, col_clear_all, col_cancela = st.columns(3)
 
                     if col_confirma.button(
                         "Sim, limpar semana", key=f"confirm_clear_{week_start}"
@@ -3076,6 +3090,17 @@ def main():
                         canonical_week_df.clear()
                         st.session_state["pending_clear_week"] = None
                         st.success("Semana limpa com sucesso.")
+                        safe_rerun()
+
+                    if col_clear_all.button(
+                        "🔥 Limpar TODAS as semanas", key=f"confirm_clear_all_{week_start}"
+                    ):
+                        empty_df = pd.DataFrame(columns=SCHEMA_COLS)
+                        save_user_df(user_id, empty_df)
+                        clear_all_availability_for_user(user_id)
+                        canonical_week_df.clear()
+                        st.session_state["pending_clear_week"] = None
+                        st.success("Todas as semanas foram removidas para este atleta.")
                         safe_rerun()
 
                     if col_cancela.button(
