@@ -105,6 +105,7 @@ def init_db() -> None:
                     "Unidade" TEXT,
                     "RPE" NUMERIC,
                     "Detalhamento" TEXT,
+                    "TempoEstimadoMin" NUMERIC,
                     "Observações" TEXT,
                     "Status" TEXT,
                     "adj" NUMERIC,
@@ -114,6 +115,11 @@ def init_db() -> None:
                     "WeekStart" DATE
                 )
                 """
+            )
+        )
+        conn.execute(
+            text(
+                'ALTER TABLE treinos ADD COLUMN IF NOT EXISTS "TempoEstimadoMin" NUMERIC'
             )
         )
         conn.execute(

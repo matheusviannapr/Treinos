@@ -84,6 +84,7 @@ SCHEMA_COLS = [
     "Unidade",
     "RPE",
     "Detalhamento",
+    "TempoEstimadoMin",
     "Observações",
     "Status",
     "adj",
@@ -532,8 +533,8 @@ def load_all() -> pd.DataFrame:
     df = db.fetch_dataframe(
         "SELECT "
         "    \"UserID\", \"UID\", \"Data\"::text AS \"Data\", \"Start\"::text AS \"Start\", \"End\"::text AS \"End\", \"Modalidade\","
-        "    \"Tipo de Treino\", \"Volume\", \"Unidade\", \"RPE\", \"Detalhamento\"," 
-        "    \"Observações\", \"Status\", \"adj\", \"AdjAppliedAt\", \"ChangeLog\"," 
+        "    \"Tipo de Treino\", \"Volume\", \"Unidade\", \"RPE\", \"Detalhamento\", \"TempoEstimadoMin\","
+        "    \"Observações\", \"Status\", \"adj\", \"AdjAppliedAt\", \"ChangeLog\","
         "    \"LastEditedAt\", \"WeekStart\"::text AS \"WeekStart\""
         " FROM treinos"
     )
@@ -551,7 +552,7 @@ def load_all() -> pd.DataFrame:
         df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
         df["WeekStart"] = pd.to_datetime(df["WeekStart"], errors="coerce").dt.date
 
-        for c in ["Volume", "RPE", "adj"]:
+        for c in ["Volume", "RPE", "adj", "TempoEstimadoMin"]:
             df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
 
         for c in ["ChangeLog", "Detalhamento", "Observações"]:
@@ -583,12 +584,12 @@ def save_all(df: pd.DataFrame):
             """
             INSERT INTO treinos (
                 "UserID", "UID", "Data", "Start", "End", "Modalidade",
-                "Tipo de Treino", "Volume", "Unidade", "RPE", "Detalhamento",
+                "Tipo de Treino", "Volume", "Unidade", "RPE", "Detalhamento", "TempoEstimadoMin",
                 "Observações", "Status", "adj", "AdjAppliedAt", "ChangeLog",
                 "LastEditedAt", "WeekStart"
             ) VALUES (
                 :user_id, :uid, :data, :start, :end, :modalidade,
-                :tipo_treino, :volume, :unidade, :rpe, :detalhamento,
+                :tipo_treino, :volume, :unidade, :rpe, :detalhamento, :tempo_estimado_min,
                 :observacoes, :status, :adj, :adj_applied_at, :changelog,
                 :last_edited_at, :week_start
             )
@@ -606,6 +607,7 @@ def save_all(df: pd.DataFrame):
                     "unidade": rec.get("Unidade", ""),
                     "rpe": float(rec.get("RPE", 0.0) or 0.0),
                     "detalhamento": rec.get("Detalhamento", ""),
+                    "tempo_estimado_min": float(rec.get("TempoEstimadoMin", 0.0) or 0.0),
                     "observacoes": rec.get("Observações", ""),
                     "status": rec.get("Status", ""),
                     "adj": float(rec.get("adj", 0.0) or 0.0),
@@ -1008,6 +1010,8 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
         df["End"] = pd.NaT
     if "Tipo de Treino" not in df.columns:
         df["Tipo de Treino"] = None
+    if "TempoEstimadoMin" not in df.columns:
+        df["TempoEstimadoMin"] = 0.0
 
     if not np.issubdtype(df["Data"].dtype, np.datetime64):
         df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
@@ -1073,9 +1077,14 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
                 continue
 
             slot_tipo = None
+            slot_tipo_raw = None
+            duration_minutes = planned_duration_minutes(row)
+            if duration_minutes <= 0:
+                duration_minutes = DEFAULT_TRAINING_DURATION_MIN
+            df.at[idx, "TempoEstimadoMin"] = duration_minutes
             if not slots_available:
                 base_time = time(6, 0)
-                duration = DEFAULT_TRAINING_DURATION_MIN
+                duration = duration_minutes
             else:
                 # Tenta casar o slot pelo par modalidade/tipo preservando ordem salva
                 match_idx = _slot_match_index(
@@ -1087,13 +1096,14 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
                     continue
 
                 slot = slots_available.pop(match_idx)
-                slot_tipo = _norm_tipo(slot.get("tipo"))
+                slot_tipo_raw = slot.get("tipo")
+                slot_tipo = _norm_tipo(slot_tipo_raw)
                 try:
                     hour, minute = map(int, str(slot.get("start", "06:00")).split(":"))
                 except Exception:
                     hour, minute = 6, 0
                 base_time = time(hour, minute)
-                duration = int(slot.get("dur", DEFAULT_TRAINING_DURATION_MIN) or DEFAULT_TRAINING_DURATION_MIN)
+                duration = duration_minutes
 
             current_date = row["Data"]
             if pd.isna(current_date):
@@ -1107,7 +1117,7 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
             df.at[idx, "StartDT"] = start_dt
             df.at[idx, "EndDT"] = end_dt
 
-            _maybe_apply_slot_tipo(df, idx, slot.get("tipo"))
+            _maybe_apply_slot_tipo(df, idx, slot_tipo_raw)
 
     return df
 
@@ -1402,16 +1412,19 @@ def _detail_from_planned_session(mod: str, session_spec: dict, unit: str) -> str
     return " ".join(parts)
 
 
-def prescribe_detail(mod, tipo, volume, unit, paces):
+def prescribe_detail(mod, tipo, volume, unit, paces, duration_override=None):
     vol = float(volume or 0)
     rp = paces.get("run_pace_min_per_km", 0)
     sp = paces.get("swim_sec_per_100m", 0)
     bk = paces.get("bike_kmh", 0)
+    override_minutes = _coerce_duration_minutes(duration_override)
 
     if mod == "Corrida":
         tipo_norm = str(tipo or "").strip().lower()
 
         def _dur_txt(base_pace: float | None = None):
+            if override_minutes:
+                return f" (~{override_minutes} min)"
             pace_ref = base_pace if base_pace and base_pace > 0 else rp
             if unit == "km" and pace_ref > 0:
                 return f" (~{math.ceil(vol * pace_ref)} min)"
@@ -1601,10 +1614,11 @@ def default_week_df(week_start: date, user_id: str) -> pd.DataFrame:
             "Tipo de Treino": "Ativo/Passivo",
             "Volume": 0.0,
             "Unidade": "min",
-            "RPE": 0,
-            "Detalhamento": "Dia de descanso. Foco em recuperação.",
-            "Observações": "",
-            "Status": "Planejado",
+                "RPE": 0,
+                "Detalhamento": "Dia de descanso. Foco em recuperação.",
+                "TempoEstimadoMin": 0.0,
+                "Observações": "",
+                "Status": "Planejado",
             "adj": 0.0,
             "AdjAppliedAt": "",
             "ChangeLog": "[]",
@@ -1770,6 +1784,7 @@ def distribute_week_by_targets(
                 "Unidade": "min",
                 "RPE": 0,
                 "Detalhamento": "Dia de descanso.",
+                "TempoEstimadoMin": 0.0,
                 "Observações": "",
                 "Status": "Planejado",
                 "adj": 0.0,
@@ -1783,9 +1798,19 @@ def distribute_week_by_targets(
                 unit = UNITS_ALLOWED[mod]
                 vol = float(spec.get("volume", 0.0))
                 tipo_label = spec.get("label") or spec.get("slug") or "Treino"
+                tempo_estimado = _duration_from_session_spec(
+                    mod, spec, unit, tipo_label, paces
+                )
                 detail = _detail_from_planned_session(mod, spec, unit)
                 if not detail:
-                    detail = prescribe_detail(mod, tipo_label, vol, unit, paces)
+                    detail = prescribe_detail(
+                        mod,
+                        tipo_label,
+                        vol,
+                        unit,
+                        paces,
+                        duration_override=tempo_estimado,
+                    )
                 rows.append({
                     "UserID": user_id,
                     "UID": generate_uid(user_id),
@@ -1798,6 +1823,7 @@ def distribute_week_by_targets(
                     "Unidade": unit,
                     "RPE": 0,
                     "Detalhamento": detail,
+                    "TempoEstimadoMin": tempo_estimado or 0.0,
                     "Observações": "",
                     "Status": "Planejado",
                     "adj": 0.0,
@@ -1861,6 +1887,63 @@ def estimate_session_duration_minutes(
     return DEFAULT_TRAINING_DURATION_MIN
 
 
+def _coerce_duration_minutes(value) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if not value.strip():
+            return None
+        try:
+            value = float(value.replace(",", "."))
+        except (TypeError, ValueError):
+            return None
+    try:
+        minutes = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(minutes) or minutes <= 0:
+        return None
+    return int(round(minutes))
+
+
+def planned_duration_minutes(
+    row: pd.Series | dict, pace_context: dict | None = None
+) -> int:
+    stored = None
+    if isinstance(row, pd.Series):
+        stored = row.get("TempoEstimadoMin")
+    elif isinstance(row, dict):
+        stored = row.get("TempoEstimadoMin")
+    stored_minutes = _coerce_duration_minutes(stored)
+    if stored_minutes:
+        return stored_minutes
+    return estimate_session_duration_minutes(row, pace_context)
+
+
+def _duration_from_session_spec(
+    mod: str,
+    spec: dict,
+    unit: str,
+    tipo_label: str,
+    paces: dict | None,
+) -> int:
+    meta = spec.get("meta") if isinstance(spec.get("meta"), dict) else None
+    if meta:
+        duration = _coerce_duration_minutes(
+            meta.get("duracao_estimada_min") or meta.get("tempo_estimado_min")
+        )
+        if duration:
+            return duration
+    payload = {
+        "Modalidade": mod,
+        "Tipo de Treino": tipo_label,
+        "Volume": spec.get("volume", 0.0),
+        "Unidade": unit,
+        "TempoEstimadoMin": spec.get("duracao_estimada_min"),
+    }
+    return estimate_session_duration_minutes(payload, paces)
+
+
 def _preferred_time_for_modality(modality: str, preferences: dict | None) -> time:
     pref_map = (preferences or {}).get("time_preferences", {}) or {}
     label = pref_map.get(modality)
@@ -1911,6 +1994,8 @@ def assign_times_to_week(
         df["Start"] = ""
     if "End" not in df.columns:
         df["End"] = ""
+    if "TempoEstimadoMin" not in df.columns:
+        df["TempoEstimadoMin"] = 0.0
 
     raw_limit = (preferences or {}).get("daily_limit_minutes") if preferences else None
     daily_limit = None
@@ -1932,9 +2017,9 @@ def assign_times_to_week(
                 df.at[idx, "End"] = ""
                 continue
 
-            duration = timedelta(
-                minutes=estimate_session_duration_minutes(row, pace_context)
-            )
+            planned_minutes = planned_duration_minutes(row, pace_context)
+            df.at[idx, "TempoEstimadoMin"] = planned_minutes
+            duration = timedelta(minutes=planned_minutes)
             assigned = False
             for si, slot in enumerate(free):
                 if slot["start"].date() != row["Data"]:
@@ -1985,7 +2070,8 @@ def assign_times_to_week(
                 start_dt = datetime.combine(day, pref_time)
                 if current_dt and start_dt < current_dt:
                     start_dt = current_dt
-                duration_min = estimate_session_duration_minutes(row, pace_context)
+                duration_min = planned_duration_minutes(row, pace_context)
+                df.at[idx, "TempoEstimadoMin"] = duration_min
                 end_dt = start_dt + timedelta(minutes=duration_min)
                 df.at[idx, "Start"] = start_dt.isoformat()
                 df.at[idx, "End"] = end_dt.isoformat()
@@ -2871,6 +2957,9 @@ def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
         save_user_df(user_id, base_df)
 
     # StartDT / EndDT canônicos
+    if "TempoEstimadoMin" not in week_df.columns:
+        week_df["TempoEstimadoMin"] = 0.0
+
     week_df["StartDT"] = week_df["Start"].apply(parse_iso)
     week_df["StartDT"] = week_df.apply(
         lambda r: r["StartDT"] or datetime.combine(r["Data"], time(6, 0)),
@@ -2879,7 +2968,11 @@ def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
 
     week_df["EndDT"] = week_df["End"].apply(parse_iso)
     week_df["EndDT"] = week_df.apply(
-        lambda r: r["EndDT"] or (r["StartDT"] + timedelta(minutes=DEFAULT_TRAINING_DURATION_MIN)),
+        lambda r: r["EndDT"]
+        or (
+            r["StartDT"]
+            + timedelta(minutes=planned_duration_minutes(r))
+        ),
         axis=1,
     )
 
@@ -3499,6 +3592,8 @@ def main():
 
             df_current.loc[idx, "Start"] = start.isoformat()
             df_current.loc[idx, "End"] = end.isoformat()
+            duration_min = max(int((end - start).total_seconds() // 60), 1)
+            df_current.loc[idx, "TempoEstimadoMin"] = duration_min
             df_current.loc[idx, "Data"] = start.date()
             df_current.loc[idx, "WeekStart"] = monday_of_week(start.date())
             df_current.loc[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
@@ -3537,6 +3632,9 @@ def main():
                 start_dt = parse_iso(r.get("Start", "")) or datetime.combine(r["Data"], time(6, 0))
                 end_dt = parse_iso(r.get("End", "")) or (start_dt + timedelta(minutes=DEFAULT_TRAINING_DURATION_MIN))
                 dur_min = int((end_dt - start_dt).total_seconds() / 60)
+                stored_duration = _coerce_duration_minutes(r.get("TempoEstimadoMin"))
+                if stored_duration:
+                    dur_min = stored_duration
 
                 current_mod = r.get("Modalidade", "Corrida")
                 mod_options = MODALIDADES + ["Descanso"]
@@ -3606,6 +3704,7 @@ def main():
 
                     df_upd.loc[i2, "Start"] = new_start.isoformat()
                     df_upd.loc[i2, "End"] = new_end.isoformat()
+                    df_upd.loc[i2, "TempoEstimadoMin"] = int(new_dur)
                     df_upd.loc[i2, "Data"] = new_start.date()
                     df_upd.loc[i2, "WeekStart"] = monday_of_week(new_start.date())
 
@@ -3918,7 +4017,7 @@ def main():
                             if isinstance(start_dt, datetime) and isinstance(end_dt, datetime) and end_dt > start_dt:
                                 duration_guess = int((end_dt - start_dt).total_seconds() // 60)
                             else:
-                                duration_guess = estimate_session_duration_minutes(row)
+                                duration_guess = planned_duration_minutes(row)
                             if duration_guess < 15:
                                 duration_guess = 15
 
@@ -3941,6 +4040,7 @@ def main():
                                     "Observações": obs_input,
                                     "Start": start_combined.isoformat(),
                                     "End": end_combined.isoformat(),
+                                    "TempoEstimadoMin": int(duration_input),
                                 }
                                 if apply_training_updates(user_id, uid, updates):
                                     st.session_state["editing_uid"] = None
