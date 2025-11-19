@@ -968,6 +968,27 @@ def extract_time_pattern_from_week(week_df: pd.DataFrame) -> dict:
     return pattern
 
 
+def _tipo_is_blank(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and pd.isna(value):
+        return True
+    value_str = str(value).strip()
+    return value_str == ""
+
+
+def _maybe_apply_slot_tipo(df: pd.DataFrame, idx: int, slot_tipo):
+    if _tipo_is_blank(slot_tipo):
+        return
+    if "Tipo de Treino" not in df.columns:
+        return
+    if idx not in df.index:
+        return
+    current = df.at[idx, "Tipo de Treino"]
+    if _tipo_is_blank(current):
+        df.at[idx, "Tipo de Treino"] = slot_tipo
+
+
 def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataFrame:
     """Aplica slots de horário por dia em um DataFrame de semana."""
 
@@ -1086,8 +1107,7 @@ def apply_time_pattern_to_week(week_df: pd.DataFrame, pattern: dict) -> pd.DataF
             df.at[idx, "StartDT"] = start_dt
             df.at[idx, "EndDT"] = end_dt
 
-            if slot_tipo:
-                df.at[idx, "Tipo de Treino"] = slot.get("tipo")
+            _maybe_apply_slot_tipo(df, idx, slot.get("tipo"))
 
     return df
 
@@ -1184,8 +1204,7 @@ def realign_week_types_with_pattern(
             df.at[best_idx, "StartDT"] = pd.NaT
             df.at[best_idx, "EndDT"] = pd.NaT
 
-            if slot.get("tipo"):
-                df.at[best_idx, "Tipo de Treino"] = slot.get("tipo")
+            _maybe_apply_slot_tipo(df, best_idx, slot.get("tipo"))
 
     return df
 
