@@ -32,6 +32,7 @@
 import os
 import json
 import math
+import re
 import calendar as py_calendar
 from datetime import datetime, date, timedelta, time, timezone
 from typing import Optional
@@ -1854,6 +1855,62 @@ def _run_session_multiplier(tipo: str) -> float:
     return 1.0
 
 
+def _normalize_training_label(text: str | None) -> str:
+    raw = unicodedata.normalize("NFKD", str(text or "")).encode("ASCII", "ignore").decode("ASCII")
+    raw = raw.lower()
+    return re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+
+
+def _infer_running_tipo_slug(tipo: str | None) -> str | None:
+    normalized = _normalize_training_label(tipo)
+    if not normalized:
+        return None
+    info = getattr(triplanner_engine, "RUN_TRAINING_TYPE_INFO", {})
+    for slug, meta in info.items():
+        names = {slug, slug.replace("_", ""), _normalize_training_label(meta.get("nome"))}
+        names = {n for n in names if n}
+        if normalized in names:
+            return slug
+        for name in names:
+            if name and (name in normalized or normalized in name):
+                return slug
+    if "long" in normalized:
+        return "longao"
+    if "tempo" in normalized:
+        return "tempo_run"
+    if "interval" in normalized or "vo2" in normalized:
+        return "intervalado_vo2max"
+    if "fartlek" in normalized:
+        return "fartlek"
+    if "regen" in normalized:
+        return "rodagem_regenerativa"
+    if "moderada" in normalized:
+        return "corrida_continua_moderada"
+    if "leve" in normalized:
+        return "corrida_continua_leve"
+    return None
+
+
+def _run_zone_minutes_from_pace(base_minutes: float | None) -> dict[str, float]:
+    try:
+        pace_val = float(base_minutes)
+    except (TypeError, ValueError):
+        return {}
+    if pace_val <= 0:
+        return {}
+    info = getattr(triplanner_engine, "RUN_TRAINING_TYPE_INFO", {})
+    zone_map: dict[str, float] = {}
+    for slug, meta in info.items():
+        factor = meta.get("pace_factor")
+        if not factor:
+            continue
+        try:
+            zone_map[slug] = float(pace_val) * float(factor)
+        except (TypeError, ValueError):
+            continue
+    return zone_map
+
+
 def estimate_session_duration_minutes(
     row: pd.Series, pace_context: dict | None = None
 ) -> int:
@@ -1869,10 +1926,24 @@ def estimate_session_duration_minutes(
 
     if unit == "min" and vol > 0:
         return max(int(round(vol)), 10)
-    if mod == "Corrida" and unit == "km" and vol > 0:
-        pace = pace_ctx.get("run_pace_min_per_km")
-        if pace:
-            duration = vol * float(pace) * _run_session_multiplier(tipo)
+    if str(mod).lower().startswith("cor") and unit == "km" and vol > 0:
+        zone_minutes = pace_ctx.get("run_zone_minutes")
+        if not zone_minutes:
+            zone_minutes = _run_zone_minutes_from_pace(pace_ctx.get("run_pace_min_per_km"))
+            if zone_minutes:
+                pace_ctx["run_zone_minutes"] = zone_minutes
+        pace_minutes = None
+        slug = _infer_running_tipo_slug(tipo)
+        if zone_minutes and slug and slug in zone_minutes:
+            pace_minutes = zone_minutes.get(slug)
+        if pace_minutes is None:
+            pace_base = zone_minutes.get("corrida_continua_leve") if zone_minutes else None
+            if not pace_base:
+                pace_base = pace_ctx.get("run_pace_min_per_km")
+            if pace_base:
+                pace_minutes = float(pace_base) * _run_session_multiplier(tipo)
+        if pace_minutes:
+            duration = vol * float(pace_minutes)
             return max(int(round(duration)), 15)
     if mod == "Ciclismo" and unit == "km" and vol > 0:
         speed = pace_ctx.get("bike_kmh")
@@ -2791,11 +2862,31 @@ def generate_cycle(
 
 
 def _pace_defaults_from_state() -> dict:
-    return {
-        "run_pace_min_per_km": float(st.session_state.get("run_pace_min_per_km", 5.0)),
+    run_pace = float(st.session_state.get("run_pace_min_per_km", 5.0))
+    paces = {
+        "run_pace_min_per_km": run_pace,
         "swim_sec_per_100m": float(st.session_state.get("swim_sec_per_100m", 110)),
         "bike_kmh": float(st.session_state.get("bike_kmh", 32.0)),
     }
+    zone_minutes = _run_zone_minutes_from_pace(run_pace)
+    if zone_minutes:
+        paces["run_zone_minutes"] = zone_minutes
+        for slug, minutes in zone_minutes.items():
+            paces[slug] = minutes
+    return paces
+
+
+def _pace_minutes_to_str(minutes: float | None) -> str | None:
+    try:
+        pace_val = float(minutes)
+    except (TypeError, ValueError):
+        return None
+    if pace_val <= 0:
+        return None
+    total_seconds = int(round(pace_val * 60))
+    total_seconds = max(total_seconds, 1)
+    mins, secs = divmod(total_seconds, 60)
+    return f"{int(mins):02d}:{int(secs):02d}/km"
 
 
 def _preferred_days_from_state(off_days: set[int]) -> dict:
@@ -3061,12 +3152,15 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
     )
 
     if st.button("Gerar plano semanal do ciclo", key="cycle_generate_btn"):
+        paces = _pace_defaults_from_state()
+        pace_hint = _pace_minutes_to_str(paces.get("run_pace_min_per_km"))
         plan = triplanner_engine.build_triplanner_plan(
             modality=modality,
             distance=distance,
             goal=goal,
             cycle_weeks=cycle_weeks,
             start_date=start_date,
+            pace_medio=pace_hint,
             nivel=nivel,
             notes=notes,
         )
@@ -3075,7 +3169,6 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
         pref_days = _preferred_days_from_state(off_days_cycle)
         sess_per_mod = _sessions_per_mod_from_state()
         key_sess = _key_sessions_from_state()
-        paces = _pace_defaults_from_state()
 
         new_cycle_df = cycle_plan_to_trainings(
             plan,
@@ -3237,13 +3330,14 @@ def main():
                 col_p1, col_p2, col_p3 = st.columns(3)
                 paces = {
                     "run_pace_min_per_km": col_p1.number_input(
-                        "Corrida (min/km)",
+                        "Corrida Z2 (min/km)",
                         value=float(st.session_state.get("run_pace_min_per_km", 5.0)),
                         min_value=3.0,
                         max_value=10.0,
                         step=0.1,
                         format="%.1f",
                         key="run_pace_min_per_km",
+                        help="Informe o pace confortável/Z2 (ex.: 6.0 = 6:00/km)",
                     ),
                     "swim_sec_per_100m": col_p2.number_input(
                         "Natação (seg/100m)",

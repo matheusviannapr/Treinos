@@ -69,6 +69,19 @@ BASE_TRAINING_TYPE_INFO = {
     },
 }
 
+RUN_TRAINING_PACE_FACTORS = {
+    "rodagem_regenerativa": 1.12,
+    "corrida_continua_leve": 1.0,
+    "corrida_continua_moderada": 0.94,
+    "tempo_run": 0.9,
+    "fartlek": 0.92,
+    "intervalado_vo2max": 0.82,
+    "longao": 1.05,
+    "educativos_tecnicos": 1.0,
+    "prova": 0.9,
+}
+
+
 RUN_TRAINING_TYPE_INFO = {
     "rodagem_regenerativa": {
         "nome": "Rodagem regenerativa",
@@ -77,46 +90,55 @@ RUN_TRAINING_TYPE_INFO = {
             "Corrida muito leve pós-longão ou após treinos fortes para recuperar "
             "mantendo mobilidade e fluxo sanguíneo."
         ),
+        "pace_factor": RUN_TRAINING_PACE_FACTORS["rodagem_regenerativa"],
     },
     "corrida_continua_leve": {
         "nome": "Corrida contínua leve",
         "zona": "Z2",
         "descricao": "Rodagem aeróbica confortável que compõe a base do volume semanal.",
+        "pace_factor": RUN_TRAINING_PACE_FACTORS["corrida_continua_leve"],
     },
     "corrida_continua_moderada": {
         "nome": "Corrida contínua moderada",
         "zona": "Z3",
         "descricao": "Z3 controlado, próximo ao limiar inferior, para ritmo sustentável.",
+        "pace_factor": RUN_TRAINING_PACE_FACTORS["corrida_continua_moderada"],
     },
     "tempo_run": {
         "nome": "Tempo Run (limiar)",
         "zona": "Z3–Z4",
         "descricao": "Segmento contínuo de 20–30 min em ritmo de limiar funcional.",
+        "pace_factor": RUN_TRAINING_PACE_FACTORS["tempo_run"],
     },
     "fartlek": {
         "nome": "Fartlek",
         "zona": "Z3–Z4",
         "descricao": "Blocos alternados forte/leve sem pace fixo para variar estímulos.",
+        "pace_factor": RUN_TRAINING_PACE_FACTORS["fartlek"],
     },
     "intervalado_vo2max": {
         "nome": "Intervalado (VO₂máx)",
         "zona": "Z4–Z5",
         "descricao": "Séries curtas ou médias acima do limiar para elevar VO₂máx.",
+        "pace_factor": RUN_TRAINING_PACE_FACTORS["intervalado_vo2max"],
     },
     "longao": {
         "nome": "Longão",
         "zona": "Z2",
         "descricao": "Sessão mais longa da semana, foco em endurance e confiança.",
+        "pace_factor": RUN_TRAINING_PACE_FACTORS["longao"],
     },
     "educativos_tecnicos": {
         "nome": "Educativos técnicos",
         "zona": "Neutro",
         "descricao": "Drills de coordenação (skipping, avanços, elevação de joelho).",
+        "pace_factor": RUN_TRAINING_PACE_FACTORS["educativos_tecnicos"],
     },
     "prova": {
         "nome": "Prova",
         "zona": "Z3–Z4",
         "descricao": "Evento alvo. Execute o aquecimento e corra no plano de prova.",
+        "pace_factor": RUN_TRAINING_PACE_FACTORS["prova"],
     },
 }
 
@@ -461,6 +483,16 @@ def _derive_current_pace_seconds(
     return 360.0  # padrão ~6:00/km
 
 
+def _derive_z2_pace_seconds(
+    tempo_recente: str | None, distance: str, pace_z2_hint: str | None
+) -> float:
+    pace_secs = _pace_str_to_seconds(pace_z2_hint)
+    if pace_secs:
+        return pace_secs
+    race_like = _derive_current_pace_seconds(tempo_recente, distance, None)
+    return max(240.0, race_like * 1.08)
+
+
 def _format_pace(seconds: float) -> str:
     seconds = max(1, int(round(seconds)))
     minutes, sec = divmod(seconds, 60)
@@ -494,22 +526,24 @@ def _estimate_session_duration_minutes(
 def _running_reference_paces(
     tempo_recente: str | None, distance: str, pace_medio: str | None
 ) -> dict[str, str]:
-    base = _derive_current_pace_seconds(tempo_recente, distance, pace_medio)
-    easy = base + 45
-    moderado = max(base - 5, base * 0.95)
-    tempo = max(base - 15, base * 0.9)
-    vo2 = max(base - 35, base * 0.82)
-    longao = easy + 30
-    regenerativo = easy + 25
+    base_z2 = _derive_z2_pace_seconds(tempo_recente, distance, pace_medio)
+
+    def _pace_for(tag: str, fallback_factor: float = 1.0) -> str:
+        factor = RUN_TRAINING_PACE_FACTORS.get(tag, fallback_factor)
+        seconds = max(120.0, base_z2 * factor)
+        return _format_pace(seconds)
+
+    easy = _pace_for("corrida_continua_leve")
+    tempo = _pace_for("tempo_run")
     return {
-        "rodagem_regenerativa": _format_pace(regenerativo),
-        "corrida_continua_leve": _format_pace(easy),
-        "corrida_continua_moderada": _format_pace(moderado),
-        "longao": _format_pace(longao),
-        "tempo_run": _format_pace(tempo),
-        "fartlek": f"Entre {_format_pace(easy)} e {_format_pace(tempo)}",
-        "intervalado_vo2max": _format_pace(vo2),
-        "prova": _format_pace(base),
+        "rodagem_regenerativa": _pace_for("rodagem_regenerativa"),
+        "corrida_continua_leve": easy,
+        "corrida_continua_moderada": _pace_for("corrida_continua_moderada"),
+        "longao": _pace_for("longao"),
+        "tempo_run": tempo,
+        "fartlek": f"Entre {easy} e {tempo}",
+        "intervalado_vo2max": _pace_for("intervalado_vo2max"),
+        "prova": _pace_for("prova"),
     }
 
 
