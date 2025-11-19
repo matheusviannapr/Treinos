@@ -2799,6 +2799,20 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
 
     goal = st.radio("Objetivo", ["Completar", "Performar"], horizontal=True)
 
+    level_options = {
+        "iniciante": "Iniciante",
+        "intermediario": "Intermediário",
+        "avancado": "Avançado",
+    }
+    level_keys = list(level_options.keys())
+    nivel = st.selectbox(
+        "Nível do atleta",
+        level_keys,
+        format_func=lambda key: level_options.get(key, key.title()),
+        index=0,
+        key="cycle_level_select",
+    )
+
     start_date_default = monday_of_week(today())
     start_date = st.date_input("Início do ciclo", value=start_date_default, key="cycle_start_date")
 
@@ -2830,6 +2844,7 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
             goal=goal,
             cycle_weeks=cycle_weeks,
             start_date=start_date,
+            nivel=nivel,
             notes=notes,
         )
 
