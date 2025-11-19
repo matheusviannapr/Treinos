@@ -3047,7 +3047,7 @@ def main():
             st.markdown("---")
     
             # 3. Semana atual
-            col1, col2, col3, col4 = st.columns([1, 2, 1, 1])
+            col1, col2, col3 = st.columns([1, 2, 1])
             if col1.button("⬅️ Semana anterior"):
                 st.session_state["current_week_start"] -= timedelta(days=7)
                 st.session_state["calendar_snapshot"] = []
@@ -3066,62 +3066,14 @@ def main():
             if st.session_state.get("pending_clear_week") not in (None, week_start):
                 st.session_state["pending_clear_week"] = None
 
-            if col4.button("🧹 Limpar semana", key=f"clear_week_{week_start}"):
-                st.session_state["pending_clear_week"] = week_start
-
-            if st.session_state.get("pending_clear_week") == week_start:
-                with st.container(border=True):
-                    st.warning(
-                        "Tem certeza de que deseja remover todos os treinos desta semana?"
-                    )
-                    col_confirma, col_clear_all, col_cancela = st.columns(3)
-
-                    if col_confirma.button(
-                        "Sim, limpar semana", key=f"confirm_clear_{week_start}"
-                    ):
-                        df_current = st.session_state.get("df", pd.DataFrame()).copy()
-                        if not df_current.empty and not np.issubdtype(
-                            df_current["WeekStart"].dtype, np.datetime64
-                        ):
-                            df_current["WeekStart"] = pd.to_datetime(
-                                df_current["WeekStart"], errors="coerce"
-                            ).dt.date
-
-                        mask = (df_current["UserID"] == user_id) & (
-                            df_current["WeekStart"] == week_start
-                        )
-                        df_current = df_current[~mask].copy()
-                        save_user_df(user_id, df_current)
-                        set_week_availability(user_id, week_start, [])
-                        canonical_week_df.clear()
-                        st.session_state["pending_clear_week"] = None
-                        st.success("Semana limpa com sucesso.")
-                        safe_rerun()
-
-                    if col_clear_all.button(
-                        "🔥 Limpar TODAS as semanas", key=f"confirm_clear_all_{week_start}"
-                    ):
-                        empty_df = pd.DataFrame(columns=SCHEMA_COLS)
-                        save_user_df(user_id, empty_df)
-                        clear_all_availability_for_user(user_id)
-                        canonical_week_df.clear()
-                        st.session_state["pending_clear_week"] = None
-                        st.success("Todas as semanas foram removidas para este atleta.")
-                        safe_rerun()
-
-                    if col_cancela.button(
-                        "Cancelar", key=f"cancel_clear_{week_start}"
-                    ):
-                        st.session_state["pending_clear_week"] = None
-
             week_df_raw = week_slice(df, week_start)
             if week_df_raw.empty:
                 week_df_raw = default_week_df(week_start, user_id)
     
             week_slots = get_week_availability(user_id, week_start)
     
-            # 3.1 Modo de agendamento
-            st.subheader("3. Como encaixar os treinos?")
+            # Modo de agendamento
+            st.subheader("Como encaixar os treinos?")
             opcoes_agendamento = [
                 "Padrão do app (ignorar horários livres)",
                 "Usar padrão de horários salvo",
@@ -3132,9 +3084,7 @@ def main():
                 horizontal=True,
             )
 
-            st.markdown("---")
-
-            # 4. Gerar semana automática
+            # Gerar semana automática
             if generate_week_clicked:
                 dias_map = dias_semana_options
                 off_days_set = set(user_preferences.get("off_days", []))
@@ -3191,13 +3141,11 @@ def main():
                 canonical_week_df.clear()
                 safe_rerun()
     
-            st.markdown("---")
-    
             # Recarrega df do usuário após geração
             df = st.session_state["df"]
-    
-            # 5. Calendário: usa df canônico (MESMO dataset do PDF/ICS)
-            st.subheader("4. Calendário da Semana")
+
+            # Calendário: usa df canônico (MESMO dataset do PDF/ICS)
+            st.subheader("Calendário da Semana")
     
             week_df_can = canonical_week_df(user_id, week_start)
     
@@ -3545,36 +3493,65 @@ def main():
                 else:
                     render_training_detail(uid)
     
-        # 5.4 Botão salvar semana (reforça persistência; canonical já lê direto de df)
-        st.markdown("---")
-        col_save_week, col_clear_all = st.columns([1, 1])
+        # Botões de persistência da semana
+        col_save_week, col_clear_week = st.columns([1, 1])
         if col_save_week.button("💾 Salvar Semana Atual"):
             st.session_state["calendar_forcar_snapshot"] = True
             if "calendar_snapshot" not in st.session_state:
                 st.session_state["calendar_snapshot"] = []
             safe_rerun()
 
-        if col_clear_all.button("🔥 Limpar TODAS as semanas", key=f"clear_all_{week_start}"):
-            st.session_state["pending_clear_all"] = True
+        if col_clear_week.button("🧹 Limpar semana", key=f"clear_week_bottom_{week_start}"):
+            st.session_state["pending_clear_week"] = week_start
 
-        if st.session_state.get("pending_clear_all"):
+        if st.session_state.get("pending_clear_week") == week_start:
             with st.container(border=True):
                 st.warning(
-                    "Esta ação irá remover TODAS as semanas e horários livres do atleta."
+                    "Tem certeza de que deseja remover todos os treinos desta semana?"
                 )
+                col_confirma, col_cancela = st.columns(2)
+
+                if col_confirma.button(
+                    "Sim, limpar semana", key=f"confirm_clear_{week_start}"
+                ):
+                    df_current = st.session_state.get("df", pd.DataFrame()).copy()
+                    if not df_current.empty and not np.issubdtype(
+                        df_current["WeekStart"].dtype, np.datetime64
+                    ):
+                        df_current["WeekStart"] = pd.to_datetime(
+                            df_current["WeekStart"], errors="coerce"
+                        ).dt.date
+
+                    mask = (df_current["UserID"] == user_id) & (
+                        df_current["WeekStart"] == week_start
+                    )
+                    df_current = df_current[~mask].copy()
+                    save_user_df(user_id, df_current)
+                    set_week_availability(user_id, week_start, [])
+                    canonical_week_df.clear()
+                    st.session_state["pending_clear_week"] = None
+                    st.success("Semana limpa com sucesso.")
+                    safe_rerun()
+
+                if col_cancela.button("Cancelar", key=f"cancel_clear_{week_start}"):
+                    st.session_state["pending_clear_week"] = None
+
+                st.warning("Esta ação irá remover TODAS as semanas e horários livres do atleta.")
                 col_confirm_all, col_cancel_all = st.columns(2)
 
-                if col_confirm_all.button("Confirmar limpeza total", key="confirm_clear_all"):
+                if col_confirm_all.button(
+                    "Confirmar limpeza total", key="confirm_clear_all"
+                ):
                     empty_df = pd.DataFrame(columns=SCHEMA_COLS)
                     save_user_df(user_id, empty_df)
                     clear_all_availability_for_user(user_id)
                     canonical_week_df.clear()
-                    st.session_state["pending_clear_all"] = False
+                    st.session_state["pending_clear_week"] = None
                     st.success("Todas as semanas foram removidas para este atleta.")
                     safe_rerun()
 
                 if col_cancel_all.button("Cancelar", key="cancel_clear_all"):
-                    st.session_state["pending_clear_all"] = False
+                    st.session_state["pending_clear_week"] = None
 
         col_pat1, col_pat2 = st.columns(2)
         if col_pat1.button("📌 Capturar padrão de horários desta semana"):
@@ -3618,7 +3595,7 @@ def main():
 
 
         # 6. Exportações — usam SEMPRE o df canônico (mesmo do calendário)
-        st.subheader("5. Exportar Semana Atual")
+        st.subheader("Exportar Semana Atual")
 
         # Força o recarregamento do canonical_week_df para garantir dados frescos para exportação
         week_df_export = canonical_week_df(user_id, week_start)
