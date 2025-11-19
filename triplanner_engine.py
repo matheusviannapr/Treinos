@@ -70,58 +70,28 @@ BASE_TRAINING_TYPE_INFO = {
 }
 
 RUN_TRAINING_TYPE_INFO = {
-    "recuperacao": {
+    "rodagem_regenerativa": {
         "nome": "Rodagem regenerativa",
         "zona": "Z1–Z2",
         "descricao": (
-            "Rodagem muito leve (Z1-Z2) para recuperar após treinos exigentes e acumular"
-            " volume com baixo estresse."
+            "Corrida muito leve pós-longão ou após treinos fortes para recuperar "
+            "mantendo mobilidade e fluxo sanguíneo."
         ),
     },
-    "easy": {
+    "corrida_continua_leve": {
         "nome": "Corrida contínua leve",
         "zona": "Z2",
-        "descricao": "Corrida contínua em Z2 para consolidar base aeróbia e volume semanal.",
+        "descricao": "Rodagem aeróbica confortável que compõe a base do volume semanal.",
     },
     "corrida_continua_moderada": {
         "nome": "Corrida contínua moderada",
         "zona": "Z3",
-        "descricao": "Z3 controlado para desenvolver ritmo sustentável sem entrar em limiar.",
-    },
-    "longao": {
-        "nome": "Longão",
-        "zona": "Z2",
-        "descricao": "Corrida longa semanal, foco em endurance com ritmo controlado.",
-    },
-    "tiros_curtos": {
-        "nome": "Tiros Curtos",
-        "zona": "Z4–Z5",
-        "descricao": "Repetições de 200–400 m focadas em VO₂ máx e velocidade.",
-    },
-    "tiros_medios": {
-        "nome": "Tiros Médios",
-        "zona": "Z4",
-        "descricao": "Repetições de 600–1000 m próximas ao ritmo de 3K–5K.",
-    },
-    "intervalado_longo": {
-        "nome": "Intervalado Longo",
-        "zona": "Z3–Z4",
-        "descricao": "Repetições de 1200–2000 m em ritmo de 10K, com pausas curtas.",
+        "descricao": "Z3 controlado, próximo ao limiar inferior, para ritmo sustentável.",
     },
     "tempo_run": {
-        "nome": "Tempo Run",
+        "nome": "Tempo Run (limiar)",
         "zona": "Z3–Z4",
-        "descricao": "Corrida contínua de 15–30 min em ritmo de limiar (Z3 alto/Z4 baixo).",
-    },
-    "limiar_intervalado": {
-        "nome": "Limiar Intervalado",
-        "zona": "Z3",
-        "descricao": "Blocos como 3×10 min em limiar separados por trotes curtos.",
-    },
-    "progressivo": {
-        "nome": "Progressivo",
-        "zona": "Z2–Z4",
-        "descricao": "Inicia leve e termina forte, elevando gradualmente a intensidade.",
+        "descricao": "Segmento contínuo de 20–30 min em ritmo de limiar funcional.",
     },
     "intervalado": {
         "nome": "Intervalado",
@@ -131,32 +101,27 @@ RUN_TRAINING_TYPE_INFO = {
     "fartlek": {
         "nome": "Fartlek",
         "zona": "Z3–Z4",
-        "descricao": "Alternâncias livres entre estímulo e recuperação para ritmo e variação.",
+        "descricao": "Blocos alternados forte/leve sem pace fixo para variar estímulos.",
     },
-    "race_pace": {
-        "nome": "Race Pace",
-        "zona": "Z3–Z4",
-        "descricao": "Corrida contínua no pace alvo da prova para simular esforço.",
+    "intervalado_vo2max": {
+        "nome": "Intervalado (VO₂máx)",
+        "zona": "Z4–Z5",
+        "descricao": "Séries curtas ou médias acima do limiar para elevar VO₂máx.",
     },
-    "bloco_especifico": {
-        "nome": "Bloco Específico",
-        "zona": "Z3–Z4",
-        "descricao": "Bloco longo simulando esforço de prova (ex.: 10K em ritmo de 21K).",
+    "longao": {
+        "nome": "Longão",
+        "zona": "Z2",
+        "descricao": "Sessão mais longa da semana, foco em endurance e confiança.",
     },
-    "steady_state": {
-        "nome": "Steady State",
-        "zona": "Z3",
-        "descricao": "Ritmo sustentado próximo ao limiar, abaixo do tempo run.",
-    },
-    "tecnica": {
-        "nome": "Educativos",
-        "zona": "Neutra",
-        "descricao": "Drills e educativos focados em economia, postura e mobilidade.",
+    "educativos_tecnicos": {
+        "nome": "Educativos técnicos",
+        "zona": "Neutro",
+        "descricao": "Drills de coordenação (skipping, avanços, elevação de joelho).",
     },
     "prova": {
         "nome": "Prova",
         "zona": "Z3–Z4",
-        "descricao": "Evento alvo da semana. Aquecer leve e execute no ritmo planejado.",
+        "descricao": "Evento alvo. Execute o aquecimento e corra no plano de prova.",
     },
 }
 
@@ -536,33 +501,20 @@ def _running_reference_paces(
 ) -> dict[str, str]:
     base = _derive_current_pace_seconds(tempo_recente, distance, pace_medio)
     easy = base + 45
+    moderado = max(base - 5, base * 0.95)
     tempo = max(base - 15, base * 0.9)
-    limiar = max(base - 12, base * 0.92)
-    steady = max(base - 10, base * 0.94)
-    longao = easy + 25
-    race = base
-    tiros_curtos = max(base - 30, base * 0.85)
-    tiros_medios = max(base - 25, base * 0.87)
-    intervalado_longo = max(base - 15, base * 0.9)
-    recuperacao = easy + 20
+    vo2 = max(base - 35, base * 0.82)
+    longao = easy + 30
+    regenerativo = easy + 25
     return {
-        "recuperacao": _format_pace(recuperacao),
-        "rodagem_regenerativa": _format_pace(recuperacao),
-        "easy": _format_pace(easy),
+        "rodagem_regenerativa": _format_pace(regenerativo),
         "corrida_continua_leve": _format_pace(easy),
-        "corrida_continua_moderada": _format_pace(steady),
+        "corrida_continua_moderada": _format_pace(moderado),
         "longao": _format_pace(longao),
-        "progressivo": f"{_format_pace(easy)} → {_format_pace(tempo)}",
-        "fartlek": f"Entre {_format_pace(easy)} e {_format_pace(tempo)}",
         "tempo_run": _format_pace(tempo),
-        "limiar_intervalado": _format_pace(limiar),
-        "steady_state": _format_pace(steady),
-        "race_pace": _format_pace(race),
-        "bloco_especifico": _format_pace(race),
-        "tiros_curtos": _format_pace(tiros_curtos),
-        "tiros_medios": _format_pace(tiros_medios),
-        "intervalado_longo": _format_pace(intervalado_longo),
-        "intervalado": _format_pace(tiros_curtos),
+        "fartlek": f"Entre {_format_pace(easy)} e {_format_pace(tempo)}",
+        "intervalado_vo2max": _format_pace(vo2),
+        "prova": _format_pace(base),
     }
 
 
@@ -1198,39 +1150,65 @@ def _intensity_slots_from_days(dias_treino: int | None, is_recovery: bool) -> in
 
 
 def _select_running_intensity_types(
-    phase: str, distance: str, goal: str, slots: int, is_recovery: bool
+    phase: str,
+    distance: str,
+    goal: str,
+    slots: int,
+    is_recovery: bool,
+    nivel: str | None,
 ) -> list[str]:
     if slots <= 0:
         return []
     phase_key = phase.split()[0]
     dist = str(distance).lower()
-    pool: list[str]
-    if phase_key == "Base":
-        pool = ["progressivo", "fartlek", "tecnica"]
-    elif phase_key == "Build":
-        if dist in {"5k", "10k"}:
-            pool = ["tiros_curtos", "tiros_medios", "tempo_run", "limiar_intervalado"]
-        elif dist == "21k":
-            pool = ["tempo_run", "limiar_intervalado", "intervalado_longo", "progressivo"]
-        else:
-            pool = ["limiar_intervalado", "steady_state", "intervalado_longo", "tempo_run"]
-    elif phase_key == "Peak":
-        pool = ["race_pace", "bloco_especifico", "steady_state", "limiar_intervalado"]
+    nivel_norm = _normalize_level(nivel)
+    types: list[str] = []
+    primary = "fartlek" if phase_key.startswith("Base") or is_recovery else "tempo_run"
+    if dist in {"5k", "10k"} and not phase_key.startswith("Base"):
+        primary = "tempo_run"
+    if slots > 0:
+        types.append(primary)
+
+    remaining = slots - len(types)
+    if remaining <= 0:
+        return types
+
+    if phase_key.startswith("Base"):
+        candidate_pool = ["tempo_run", "fartlek"]
+    elif phase_key in {"Build", "Peak"}:
+        candidate_pool = ["tempo_run", "intervalado_vo2max", "fartlek"]
     elif phase_key == "Taper":
-        pool = ["race_pace", "easy", "recuperacao"]
+        candidate_pool = ["tempo_run"]
     else:
-        pool = ["tempo_run", "easy", "race_pace"]
+        candidate_pool = ["tempo_run", "fartlek"]
 
-    if is_recovery:
-        pool = [t for t in pool if t not in {"tiros_curtos", "tiros_medios"}]
+    allow_vo2 = nivel_norm != "iniciante" or (phase_key in {"Build", "Peak"} and not is_recovery)
+    seen = set(types)
+    vo2_added = False
+    for cand in candidate_pool:
+        if cand == "intervalado_vo2max" and not allow_vo2:
+            continue
+        if cand == "intervalado_vo2max" and vo2_added:
+            continue
+        if cand in seen:
+            continue
+        types.append(cand)
+        seen.add(cand)
+        if cand == "intervalado_vo2max":
+            vo2_added = True
+        remaining -= 1
+        if remaining <= 0:
+            break
 
-    seen = set()
-    deduped = [t for t in pool if not (t in seen or seen.add(t))]
-    return deduped[:slots]
+    return types
 
 
 def _training_zone(tag: str) -> str:
     return RUN_TRAINING_TYPE_INFO.get(tag, {}).get("zona", "")
+
+
+def _training_type_name(tag: str) -> str:
+    return RUN_TRAINING_TYPE_INFO.get(tag, {}).get("nome", tag.title())
 
 
 def _running_week_sessions(
@@ -1253,11 +1231,16 @@ def _running_week_sessions(
         total_sessions = max(total_sessions, 4)
     is_taper_phase = "taper" in phase.lower()
     intensity_slots = _intensity_slots_from_days(total_sessions, is_recovery)
+    if intensity_slots <= 0 and week_volume > 0:
+        intensity_slots = 1
     intensity_types = _select_running_intensity_types(
-        phase, distance, goal, intensity_slots, is_recovery
+        phase, distance, goal, intensity_slots, is_recovery, nivel
     )
     if is_taper_phase:
-        intensity_types = [t for t in intensity_types if t == "race_pace"]
+        allowed = {"tempo_run", "fartlek"}
+        intensity_types = [t for t in intensity_types if t in allowed]
+        if not intensity_types and intensity_slots > 0:
+            intensity_types = ["tempo_run"]
         if is_final_week:
             intensity_types = intensity_types[:1]
     zone_dist = _running_zone_distribution(distance, goal, is_recovery)
@@ -1289,13 +1272,14 @@ def _running_week_sessions(
     if include_long_run:
         session = {
             "tipo": "longao",
+            "tipo_nome": _training_type_name("longao"),
             "zona": _training_zone("longao"),
             "volume_km": round(longao_volume, 1),
             "ritmo": paces.get("longao"),
             "descricao": RUN_TRAINING_TYPE_INFO.get("longao", {}).get("descricao", ""),
         }
         duration = _estimate_session_duration_minutes(
-            session["volume_km"], session["ritmo"], paces.get("easy")
+            session["volume_km"], session["ritmo"], paces.get("corrida_continua_leve")
         )
         if duration is not None:
             session["duracao_estimada_min"] = duration
@@ -1328,11 +1312,12 @@ def _running_week_sessions(
             "tipo": t,
             "zona": zone,
             "volume_km": round(vol, 1),
-            "ritmo": paces.get(t) or paces.get("easy"),
+            "tipo_nome": _training_type_name(t),
+            "ritmo": paces.get(t) or paces.get("corrida_continua_leve"),
             "descricao": RUN_TRAINING_TYPE_INFO.get(t, {}).get("descricao", ""),
         }
         duration = _estimate_session_duration_minutes(
-            session["volume_km"], session["ritmo"], paces.get("easy")
+            session["volume_km"], session["ritmo"], paces.get("corrida_continua_leve")
         )
         if duration is not None:
             session["duracao_estimada_min"] = duration
@@ -1341,24 +1326,33 @@ def _running_week_sessions(
 
     race_slot = 1 if race_distance > 0 else 0
     easy_sessions = total_sessions - len(sessions) - race_slot
-    if is_taper_phase and easy_sessions <= 0 and total_sessions > len(sessions) + race_slot:
-        easy_sessions = 1
-    easy_sessions = max(easy_sessions, 0)
+    min_easy = 1 if total_sessions - race_slot >= 2 else 0
+    if is_taper_phase and is_final_week:
+        min_easy = 1
+    easy_sessions = max(easy_sessions, min_easy)
     easy_volume = max(week_volume - race_distance - sum(sess["volume_km"] for sess in sessions), 0)
     per_easy = easy_volume / max(easy_sessions, 1)
     if is_taper_phase:
         per_easy = min(per_easy, max(week_volume * 0.25, 3.0))
-    easy_tag = "recuperacao" if (is_recovery or is_final_week) else "easy"
-    for _ in range(max(easy_sessions, 0)):
+    default_easy_tag = "rodagem_regenerativa" if (is_recovery or is_final_week) else "corrida_continua_leve"
+    easy_tags: list[str]
+    if max(easy_sessions, 0) == 0:
+        easy_tags = []
+    elif default_easy_tag == "corrida_continua_leve" and easy_sessions > 1:
+        easy_tags = ["corrida_continua_moderada"] + [default_easy_tag] * (easy_sessions - 1)
+    else:
+        easy_tags = [default_easy_tag] * easy_sessions
+    for tag in easy_tags:
         session = {
-            "tipo": easy_tag,
-            "zona": _training_zone(easy_tag),
+            "tipo": tag,
+            "tipo_nome": _training_type_name(tag),
+            "zona": _training_zone(tag),
             "volume_km": round(per_easy, 1),
-            "ritmo": paces.get(easy_tag, paces.get("easy")),
-            "descricao": RUN_TRAINING_TYPE_INFO.get(easy_tag, {}).get("descricao", ""),
+            "ritmo": paces.get(tag, paces.get("corrida_continua_leve")),
+            "descricao": RUN_TRAINING_TYPE_INFO.get(tag, {}).get("descricao", ""),
         }
         duration = _estimate_session_duration_minutes(
-            session["volume_km"], session["ritmo"], paces.get("easy")
+            session["volume_km"], session["ritmo"], paces.get("corrida_continua_leve")
         )
         if duration is not None:
             session["duracao_estimada_min"] = duration
@@ -1367,9 +1361,10 @@ def _running_week_sessions(
     if race_distance > 0:
         session = {
             "tipo": "prova",
-            "zona": _training_zone("race_pace"),
+            "tipo_nome": _training_type_name("prova"),
+            "zona": _training_zone("prova"),
             "volume_km": round(race_distance, 1),
-            "ritmo": paces.get("race_pace") or paces.get("tempo_run"),
+            "ritmo": paces.get("prova") or paces.get("tempo_run"),
             "descricao": RUN_TRAINING_TYPE_INFO.get("prova", {}).get("descricao", ""),
         }
         duration = _estimate_session_duration_minutes(
@@ -1457,11 +1452,25 @@ def build_triplanner_plan(
                 is_final_week,
             )
             if sessions:
-                focus = [s["tipo"] for s in sessions if s.get("tipo") != "longao"][:4]
-            if is_taper_week and "race_pace" not in focus:
-                focus = ["race_pace", "recuperacao"] + [f for f in focus if f not in {"race_pace", "recuperacao"}]
+                derived: list[str] = []
+                for s in sessions:
+                    if s.get("tipo") == "longao":
+                        continue
+                    nome = s.get("tipo_nome") or _training_type_name(s.get("tipo", ""))
+                    if nome and nome not in derived:
+                        derived.append(nome)
+                    if len(derived) == 4:
+                        break
+                if derived:
+                    focus = derived
+            if is_taper_week:
+                tempo_nome = RUN_TRAINING_TYPE_INFO.get("tempo_run", {}).get("nome", "Tempo Run")
+                regen_nome = RUN_TRAINING_TYPE_INFO.get("rodagem_regenerativa", {}).get("nome", "Rodagem regenerativa")
+                if tempo_nome not in focus:
+                    focus = [tempo_nome, regen_nome] + [f for f in focus if f not in {tempo_nome, regen_nome}]
             if is_final_week:
-                focus = ["recuperacao", "confiança", "mobilidade", "prova"]
+                regen_nome = RUN_TRAINING_TYPE_INFO.get("rodagem_regenerativa", {}).get("nome", "Rodagem regenerativa")
+                focus = [regen_nome, "Confiança", "Mobilidade", "Prova"]
         else:
             intensity = _intensity_for_week(method, is_recovery, phase.name)
             focus = _week_focus(modality_norm, method, is_recovery, idx + 1)
