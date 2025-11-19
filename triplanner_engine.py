@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 import json
 import math
+import re
 
 # ---------------------------------------------------------------------------
 # Constants — tables extracted from the training brief
@@ -70,14 +71,22 @@ BASE_TRAINING_TYPE_INFO = {
 
 RUN_TRAINING_TYPE_INFO = {
     "recuperacao": {
-        "nome": "Recuperação",
-        "zona": "Z1",
-        "descricao": "Rodagem regenerativa pós esforço intenso, ritmo muito leve.",
+        "nome": "Rodagem regenerativa",
+        "zona": "Z1–Z2",
+        "descricao": (
+            "Rodagem muito leve (Z1-Z2) para recuperar após treinos exigentes e acumular"
+            " volume com baixo estresse."
+        ),
     },
     "easy": {
-        "nome": "Easy",
-        "zona": "Z1–Z2",
-        "descricao": "Rodagem contínua leve para construir base aeróbia.",
+        "nome": "Corrida contínua leve",
+        "zona": "Z2",
+        "descricao": "Corrida contínua em Z2 para consolidar base aeróbia e volume semanal.",
+    },
+    "corrida_continua_moderada": {
+        "nome": "Corrida contínua moderada",
+        "zona": "Z3",
+        "descricao": "Z3 controlado para desenvolver ritmo sustentável sem entrar em limiar.",
     },
     "longao": {
         "nome": "Longão",
@@ -101,8 +110,8 @@ RUN_TRAINING_TYPE_INFO = {
     },
     "tempo_run": {
         "nome": "Tempo Run",
-        "zona": "Z3",
-        "descricao": "Corrida contínua de 15–30 min em ritmo de limiar.",
+        "zona": "Z3–Z4",
+        "descricao": "Corrida contínua de 15–30 min em ritmo de limiar (Z3 alto/Z4 baixo).",
     },
     "limiar_intervalado": {
         "nome": "Limiar Intervalado",
@@ -114,9 +123,14 @@ RUN_TRAINING_TYPE_INFO = {
         "zona": "Z2–Z4",
         "descricao": "Inicia leve e termina forte, elevando gradualmente a intensidade.",
     },
+    "intervalado": {
+        "nome": "Intervalado",
+        "zona": "Z4–Z5",
+        "descricao": "Repetições curtas e intensas (Z4-Z5) com pausas completas para VO₂ máx.",
+    },
     "fartlek": {
         "nome": "Fartlek",
-        "zona": "Z2–Z4",
+        "zona": "Z3–Z4",
         "descricao": "Alternâncias livres entre estímulo e recuperação para ritmo e variação.",
     },
     "race_pace": {
@@ -135,9 +149,9 @@ RUN_TRAINING_TYPE_INFO = {
         "descricao": "Ritmo sustentado próximo ao limiar, abaixo do tempo run.",
     },
     "tecnica": {
-        "nome": "Técnica",
+        "nome": "Educativos",
         "zona": "Neutra",
-        "descricao": "Drills e educativos focados em economia e postura.",
+        "descricao": "Drills e educativos focados em economia, postura e mobilidade.",
     },
     "prova": {
         "nome": "Prova",
@@ -213,10 +227,10 @@ RUN_PHASE_VOLUME_TABLE = {
     },
     "21k": {
         "iniciante": {
-            "Base": (20, 28),
-            "Construção": (28, 38),
-            "Específica": (30, 42),
-            "Taper": (22, 30),
+            "Base": (17, 24),
+            "Construção": (25, 34),
+            "Específica": (36, 40),
+            "Taper": (18, 24),
         },
         "intermediario": {
             "Base": (30, 40),
@@ -441,7 +455,13 @@ def _time_str_to_seconds(time_str: str | None) -> float | None:
     if not time_str:
         return None
     t = str(time_str).strip().lower()
-    t = t.replace("\"", "").replace("'", ":").replace("’", ":").replace("min", ":")
+    t = t.replace("/km", "").replace("km", "")
+    t = (
+        t.replace("\"", "")
+        .replace("'", ":")
+        .replace("’", ":")
+        .replace("min", ":")
+    )
     if "h" in t:
         parts = t.replace("h", ":").replace("m", ":").replace("s", "").split(":")
     else:
@@ -487,6 +507,30 @@ def _format_pace(seconds: float) -> str:
     return f"{int(minutes):02d}:{int(sec):02d}/km"
 
 
+def _primary_pace_token(pace_str: str | None) -> str | None:
+    if not pace_str:
+        return None
+    text = str(pace_str).replace("→", " ").replace("-", " ").replace("a", " ")
+    tokens = [tok for tok in re.split(r"\s+", text) if tok]
+    for token in tokens:
+        if ":" in token:
+            return token
+    return str(pace_str)
+
+
+def _estimate_session_duration_minutes(
+    volume_km: float, pace_hint: str | None, fallback: str | None = None
+) -> float | None:
+    if volume_km is None or volume_km <= 0:
+        return None
+    target = _primary_pace_token(pace_hint) or _primary_pace_token(fallback)
+    secs = _pace_str_to_seconds(target)
+    if secs is None:
+        return None
+    minutes = (volume_km * secs) / 60.0
+    return round(minutes, 1)
+
+
 def _running_reference_paces(
     tempo_recente: str | None, distance: str, pace_medio: str | None
 ) -> dict[str, str]:
@@ -503,7 +547,10 @@ def _running_reference_paces(
     recuperacao = easy + 20
     return {
         "recuperacao": _format_pace(recuperacao),
+        "rodagem_regenerativa": _format_pace(recuperacao),
         "easy": _format_pace(easy),
+        "corrida_continua_leve": _format_pace(easy),
+        "corrida_continua_moderada": _format_pace(steady),
         "longao": _format_pace(longao),
         "progressivo": f"{_format_pace(easy)} → {_format_pace(tempo)}",
         "fartlek": f"Entre {_format_pace(easy)} e {_format_pace(tempo)}",
@@ -515,6 +562,7 @@ def _running_reference_paces(
         "tiros_curtos": _format_pace(tiros_curtos),
         "tiros_medios": _format_pace(tiros_medios),
         "intervalado_longo": _format_pace(intervalado_longo),
+        "intervalado": _format_pace(tiros_curtos),
     }
 
 
@@ -685,7 +733,7 @@ def _taper_reduction_sequence(taper_weeks: int) -> list[float]:
         return []
     presets = {
         1: [0.65],
-        2: [0.78, 0.65],
+        2: [0.7, 0.45],
         3: [0.9, 0.78, 0.62],
     }
     if taper_weeks in presets:
@@ -933,13 +981,16 @@ def _long_run_share_bounds(distance: str, nivel: str | None) -> tuple[float, flo
     dist_key = str(distance).lower()
     nivel_norm = _normalize_level(nivel)
     base_ranges = {
-        "21k": (0.25, 0.35),
+        "21k": (0.32, 0.42),
         "42k": (0.32, 0.46),
     }
     base_min, base_max = base_ranges.get(dist_key, (0.22, 0.32))
     if nivel_norm == "iniciante":
         base_min += 0.01
-        base_max = min(base_max + 0.02, 0.48 if dist_key == "42k" else 0.37)
+        if dist_key == "21k":
+            base_max = min(0.45, base_max + 0.03)
+        else:
+            base_max = min(base_max + 0.02, 0.48 if dist_key == "42k" else 0.37)
     elif nivel_norm == "avancado":
         base_max = max(base_min + 0.02, base_max - 0.07)
         base_min = max(base_min - 0.02, base_max - 0.08)
@@ -952,17 +1003,66 @@ def _canonical_long_run_sequence(distance: str) -> list[float]:
         # Conservador para iniciantes, com cutbacks frequentes e pico em 32 km
         return [14, 16, 18, 12, 20, 22, 16, 24, 26, 20, 28, 30, 32, 20]
     if dist_key == "21k":
-        # Progressão clássica com topo em 16 km (75% da prova) e quedas planejadas
-        return [8, 10, 12, 10, 14, 16, 12, 16, 14, 10]
+        # Progressão de 12 semanas com cutbacks e pico em 16 km na semana 9-10
+        return [8, 9, 10, 7, 11, 12, 13, 10, 14, 16, 10, 6]
     # fallback genérico
     return [max(5, round((RUN_VOLUMES.get(dist_key, {"completar": (10, 20)})["completar"][0]) * 0.35))]
 
 
+def _resample_sequence(base: list[float], weeks: int) -> list[float]:
+    if not base:
+        return [0.0] * weeks
+    if weeks <= len(base):
+        return [float(base[i]) for i in range(weeks)]
+    if weeks <= 1:
+        return [float(base[0])]
+    span = len(base) - 1
+    scaled: list[float] = []
+    for i in range(weeks):
+        pos = i * span / max(weeks - 1, 1)
+        low = int(math.floor(pos))
+        high = min(span, low + 1)
+        frac = pos - low
+        value = base[low] + (base[high] - base[low]) * frac
+        scaled.append(round(value, 1))
+    return scaled
+
+
+def _apply_half_marathon_long_run_rules(long_runs: list[float]) -> list[float]:
+    total = len(long_runs)
+    if total == 0:
+        return long_runs
+    adjusted = [round(min(16.0, max(0.0, val)), 1) for val in long_runs]
+    if total == 1:
+        return adjusted
+    adjusted[-1] = 0.0
+    penultimate_idx = total - 2
+    adjusted[penultimate_idx] = 10.0
+    if total >= 3:
+        if total >= 10:
+            target_idx = min(max(8, total - 3), 9)
+        else:
+            target_idx = max(0, total - 3)
+        adjusted[target_idx] = min(16.0, max(adjusted[target_idx], 12.0))
+        for idx in range(target_idx + 1, penultimate_idx):
+            adjusted[idx] = min(adjusted[idx], 14.0)
+        for idx in range(1, target_idx + 1):
+            prev = adjusted[idx - 1]
+            if adjusted[idx] < prev and (idx + 1) % 4 != 0:
+                adjusted[idx] = min(16.0, max(prev, adjusted[idx - 1]) + 1)
+    return adjusted
+
+
 def _long_run_progression(distance: str, weeks: int) -> list[float]:
     base = _canonical_long_run_sequence(distance)
+    dist_key = str(distance).lower()
     if weeks <= 1:
-        return [round(min(base[0], 32.0 if distance == "42k" else 16.0), 1)]
-    cap = 32.0 if distance == "42k" else 16.0 if distance == "21k" else base[-1]
+        cap = 32.0 if dist_key == "42k" else 16.0 if dist_key == "21k" else base[-1]
+        return [round(min(base[0], cap), 1)]
+    if dist_key == "21k":
+        scaled = _resample_sequence(base, weeks)
+        return _apply_half_marathon_long_run_rules(scaled)
+    cap = 32.0 if dist_key == "42k" else base[-1]
     idxs = [round(i * (len(base) - 1) / (weeks - 1)) for i in range(weeks)]
     return [round(min(cap, base[i]), 1) for i in idxs]
 
@@ -998,22 +1098,33 @@ def _running_long_run_plan(
             share_low *= 0.7
             share_high *= 0.8
         share = _clamp(share_high if not is_recovery else share_high - 0.01, share_low, share_high)
+        base_target = progression_targets[idx]
         long_km = volume * share
         cap = 32.0 if dist_key == "42k" else 16.0 if dist_key == "21k" else volume * 0.45
-        long_km = min(long_km, cap, volume * share_high)
-        long_km = max(long_km, volume * share_low, progression_targets[idx])
-        long_runs.append(round(long_km, 1))
+        if dist_key == "21k":
+            if base_target <= 0:
+                long_km = 0.0
+            else:
+                feasible = min(cap, volume * share_high)
+                target = min(feasible, base_target)
+                long_km = max(target, volume * share_low)
+        else:
+            long_km = min(long_km, cap, volume * share_high)
+            long_km = max(long_km, volume * share_low, base_target)
+        value = round(long_km, 1)
+        if dist_key == "21k":
+            value = round(value * 2) / 2.0
+        long_runs.append(value)
 
-    if dist_key in {"21k", "42k"}:
-        goal_km = 21.097 if dist_key == "21k" else 42.195
-        threshold = round(
-            min(goal_km * 0.7, 16.0 if dist_key == "21k" else 32.0), 1
-        )
+    if dist_key == "42k":
+        goal_km = 42.195
+        threshold = round(min(goal_km * 0.7, 32.0), 1)
+        required_hits = 3
         non_taper_weeks = [i for i, name in enumerate(phase_by_week) if "Taper" not in name]
         candidates = sorted(non_taper_weeks, key=lambda i: (week_volumes[i], i), reverse=True)
         hits = sum(1 for km in long_runs if km >= threshold)
         for idx in candidates:
-            if hits >= 3:
+            if hits >= required_hits:
                 break
             volume = week_volumes[idx]
             cap = 32.0 if dist_key == "42k" else 16.0
@@ -1025,10 +1136,10 @@ def _running_long_run_plan(
             long_runs[idx] = round(max(long_runs[idx], target), 1)
             hits = sum(1 for km in long_runs if km >= threshold)
 
-        if hits < 3:
+        if hits < required_hits:
             remaining = [i for i in range(len(week_volumes)) if i not in candidates]
             for idx in sorted(remaining, key=lambda i: (week_volumes[i], i), reverse=True):
-                if hits >= 3:
+                if hits >= required_hits:
                     break
                 volume = week_volumes[idx]
                 cap = 32.0 if dist_key == "42k" else 16.0
@@ -1047,6 +1158,12 @@ def _running_long_run_plan(
         for idx in range(last_long_idx + 1, len(long_runs)):
             long_runs[idx] = 0.0
 
+    if dist_key == "21k" and len(long_runs) >= 2:
+        long_runs[-2] = 10.0
+
+    if dist_key == "21k":
+        long_runs = [round(val * 2) / 2.0 for val in long_runs]
+
     return long_runs
 
 
@@ -1054,7 +1171,9 @@ def _last_long_run_offsets(distance: str, taper_weeks: int) -> int:
     dist_key = str(distance).lower()
     if dist_key == "42k":
         return 2
-    if dist_key in {"21k", "10k"}:
+    if dist_key == "21k":
+        return 1
+    if dist_key == "10k":
         return 1
     if taper_weeks > 0:
         return 1
@@ -1128,6 +1247,8 @@ def _running_week_sessions(
 ) -> list[dict]:
     dist_key = str(distance).lower()
     total_sessions = min(7, max(3, int(dias_treino or 4)))
+    if is_final_week:
+        total_sessions = min(total_sessions, 3)
     if dist_key == "42k":
         total_sessions = max(total_sessions, 4)
     is_taper_phase = "taper" in phase.lower()
@@ -1146,33 +1267,39 @@ def _running_week_sessions(
 
     share_low, share_high = _long_run_share_bounds(dist_key, nivel)
 
-    longao_volume = longao_volume or _clamp(week_volume * share_high, week_volume * share_low, week_volume * share_high)
-    if z1z2_km:
+    if longao_volume is None:
+        longao_volume = _clamp(week_volume * share_high, week_volume * share_low, week_volume * share_high)
+    if longao_volume > 0 and z1z2_km:
         longao_volume = min(longao_volume, z1z2_km * 0.8)
-    if dist_key == "42k":
+    if longao_volume > 0 and dist_key == "42k":
         ceiling = min(32.0, z1z2_km * 0.82 if z1z2_km else week_volume * share_high)
         floor = max(longao_volume * 0.85, week_volume * share_low)
         longao_volume = _clamp(longao_volume, floor, ceiling)
-    elif dist_key == "21k":
+    elif longao_volume > 0 and dist_key == "21k":
         ceiling = min(16.0, z1z2_km * 0.8 if z1z2_km else week_volume * share_high)
         floor = max(longao_volume * 0.85, week_volume * share_low)
         longao_volume = _clamp(longao_volume, floor, ceiling)
 
     include_long_run = not is_final_week and longao_volume > 0
+    non_long_ceiling = longao_volume * 0.9 if include_long_run else None
     if not include_long_run:
         longao_volume = 0.0
 
     sessions: list[dict] = []
     if include_long_run:
-        sessions.append(
-            {
-                "tipo": "longao",
-                "zona": _training_zone("longao"),
-                "volume_km": round(longao_volume, 1),
-                "ritmo": paces.get("longao"),
-                "descricao": RUN_TRAINING_TYPE_INFO.get("longao", {}).get("descricao", ""),
-            }
+        session = {
+            "tipo": "longao",
+            "zona": _training_zone("longao"),
+            "volume_km": round(longao_volume, 1),
+            "ritmo": paces.get("longao"),
+            "descricao": RUN_TRAINING_TYPE_INFO.get("longao", {}).get("descricao", ""),
+        }
+        duration = _estimate_session_duration_minutes(
+            session["volume_km"], session["ritmo"], paces.get("easy")
         )
+        if duration is not None:
+            session["duracao_estimada_min"] = duration
+        sessions.append(session)
 
     race_distance = _distance_to_km(distance) if is_final_week else 0.0
     remaining_volume = max(week_volume - longao_volume - race_distance, 0)
@@ -1187,7 +1314,7 @@ def _running_week_sessions(
 
     for t in intensity_types:
         zone = _training_zone(t)
-        if "Z4" in zone:
+        if "Z4" in zone and "Z3" not in zone:
             vol = max(z4_per, remaining_volume * 0.1)
         elif "Z3" in zone:
             vol = max(z3_per, remaining_volume * 0.12)
@@ -1195,15 +1322,21 @@ def _running_week_sessions(
             vol = max(z1z2_km * 0.1, week_volume * 0.08)
         if is_taper_phase:
             vol = min(vol, week_volume * (0.2 if not is_final_week else 0.15))
-        sessions.append(
-            {
-                "tipo": t,
-                "zona": zone,
-                "volume_km": round(vol, 1),
-                "ritmo": paces.get(t) or paces.get("easy"),
-                "descricao": RUN_TRAINING_TYPE_INFO.get(t, {}).get("descricao", ""),
-            }
+        if non_long_ceiling is not None:
+            vol = min(vol, non_long_ceiling)
+        session = {
+            "tipo": t,
+            "zona": zone,
+            "volume_km": round(vol, 1),
+            "ritmo": paces.get(t) or paces.get("easy"),
+            "descricao": RUN_TRAINING_TYPE_INFO.get(t, {}).get("descricao", ""),
+        }
+        duration = _estimate_session_duration_minutes(
+            session["volume_km"], session["ritmo"], paces.get("easy")
         )
+        if duration is not None:
+            session["duracao_estimada_min"] = duration
+        sessions.append(session)
         remaining_volume = max(0, remaining_volume - vol)
 
     race_slot = 1 if race_distance > 0 else 0
@@ -1215,28 +1348,36 @@ def _running_week_sessions(
     per_easy = easy_volume / max(easy_sessions, 1)
     if is_taper_phase:
         per_easy = min(per_easy, max(week_volume * 0.25, 3.0))
-    easy_tag = "recuperacao" if is_recovery else "easy"
+    easy_tag = "recuperacao" if (is_recovery or is_final_week) else "easy"
     for _ in range(max(easy_sessions, 0)):
-        sessions.append(
-            {
-                "tipo": easy_tag,
-                "zona": _training_zone(easy_tag),
-                "volume_km": round(per_easy, 1),
-                "ritmo": paces.get(easy_tag, paces.get("easy")),
-                "descricao": RUN_TRAINING_TYPE_INFO.get(easy_tag, {}).get("descricao", ""),
-            }
+        session = {
+            "tipo": easy_tag,
+            "zona": _training_zone(easy_tag),
+            "volume_km": round(per_easy, 1),
+            "ritmo": paces.get(easy_tag, paces.get("easy")),
+            "descricao": RUN_TRAINING_TYPE_INFO.get(easy_tag, {}).get("descricao", ""),
+        }
+        duration = _estimate_session_duration_minutes(
+            session["volume_km"], session["ritmo"], paces.get("easy")
         )
+        if duration is not None:
+            session["duracao_estimada_min"] = duration
+        sessions.append(session)
 
     if race_distance > 0:
-        sessions.append(
-            {
-                "tipo": "prova",
-                "zona": _training_zone("race_pace"),
-                "volume_km": round(race_distance, 1),
-                "ritmo": paces.get("race_pace") or paces.get("tempo_run"),
-                "descricao": RUN_TRAINING_TYPE_INFO.get("prova", {}).get("descricao", ""),
-            }
+        session = {
+            "tipo": "prova",
+            "zona": _training_zone("race_pace"),
+            "volume_km": round(race_distance, 1),
+            "ritmo": paces.get("race_pace") or paces.get("tempo_run"),
+            "descricao": RUN_TRAINING_TYPE_INFO.get("prova", {}).get("descricao", ""),
+        }
+        duration = _estimate_session_duration_minutes(
+            session["volume_km"], session["ritmo"], paces.get("tempo_run")
         )
+        if duration is not None:
+            session["duracao_estimada_min"] = duration
+        sessions.append(session)
 
     return sessions
 
@@ -1255,6 +1396,7 @@ def build_triplanner_plan(
 ) -> dict:
     modality_norm = _normalize_modality(modality)
     goal_norm = _normalize_goal(goal)
+    nivel_norm = _normalize_level(nivel)
     cycle_weeks = int(cycle_weeks)
     unit = _volume_unit(modality_norm)
     method = _resolve_method(modality_norm, distance)
@@ -1319,7 +1461,7 @@ def build_triplanner_plan(
             if is_taper_week and "race_pace" not in focus:
                 focus = ["race_pace", "recuperacao"] + [f for f in focus if f not in {"race_pace", "recuperacao"}]
             if is_final_week:
-                focus = ["prova"] + [f for f in focus if f != "prova"]
+                focus = ["recuperacao", "confiança", "mobilidade", "prova"]
         else:
             intensity = _intensity_for_week(method, is_recovery, phase.name)
             focus = _week_focus(modality_norm, method, is_recovery, idx + 1)
@@ -1356,6 +1498,21 @@ def build_triplanner_plan(
     if modality_norm == "corrida":
         training_catalog = {**BASE_TRAINING_TYPE_INFO, **RUN_TRAINING_TYPE_INFO}
 
+    cycle_recommendation: dict[str, int | str] = {}
+    if modality_norm == "corrida" and str(distance).lower() == "21k" and nivel_norm == "iniciante":
+        cycle_recommendation = {
+            "ideal_semanas": 12,
+            "semanas_planejadas": cycle_weeks,
+        }
+        if cycle_weeks < 12:
+            cycle_recommendation[
+                "observacao"
+            ] = "Plano mais agressivo por ter menos de 12 semanas até a prova."
+        else:
+            cycle_recommendation[
+                "observacao"
+            ] = "Ciclo alinhado com as 12 semanas ideais para iniciantes em meia maratona."
+
     plan = {
         "modalidade": modality_norm,
         "distancia": distance,
@@ -1384,9 +1541,11 @@ def build_triplanner_plan(
         "semanas": weeks_payload,
         "tipos_de_treino": training_catalog,
         "observacoes": notes or "",
-        "nivel": nivel or "",
+        "nivel": nivel_norm or "",
         "dias_treino": dias_treino or 0,
     }
+    if cycle_recommendation:
+        plan["recomendacao_ciclo"] = cycle_recommendation
     return plan
 
 
