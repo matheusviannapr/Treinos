@@ -890,7 +890,19 @@ def get_strava_config() -> dict | None:
     redirect_uri = None
 
     try:
-        if "strava" in st.secrets:  # type: ignore[attr-defined]
+        row = db.fetch_one(
+            "SELECT value FROM meta WHERE key = 'strava_config'"
+        )
+        if row and row.get("value"):
+            payload = json.loads(row["value"])
+            client_id = payload.get("client_id")
+            client_secret = payload.get("client_secret")
+            redirect_uri = payload.get("redirect_uri")
+    except Exception:
+        pass
+
+    try:
+        if not client_id and "strava" in st.secrets:  # type: ignore[attr-defined]
             secrets_section = st.secrets["strava"]
             client_id = secrets_section.get("client_id")
             client_secret = secrets_section.get("client_secret")
@@ -1098,9 +1110,9 @@ def render_strava_tab(user_id: str):
 
     cfg = get_strava_config()
     if not cfg:
-        st.warning(
-            "Credenciais do Strava não configuradas. Defina STRAVA_CLIENT_ID, "
-            "STRAVA_CLIENT_SECRET e STRAVA_REDIRECT_URI em st.secrets ou variáveis de ambiente."
+        st.error(
+            "Integração com Strava indisponível no momento. Tente novamente mais tarde "
+            "ou contate o suporte."
         )
 
     params = _get_query_params()
@@ -1138,7 +1150,10 @@ def render_strava_tab(user_id: str):
         auth_url = build_strava_auth_url(user_id)
         st.info("Conecte sua conta do Strava para importar suas atividades recentes.")
         if auth_url:
-            st.link_button("Conectar ao Strava", auth_url, type="primary")
+            st.markdown(
+                f"<a href='{auth_url}' target='_blank' rel='noopener noreferrer' class='st-btn st-btn-primary'>Conectar ao Strava (popup)</a>",
+                unsafe_allow_html=True,
+            )
         else:
             st.error(
                 "Não foi possível construir a URL de autorização. Verifique as credenciais do Strava."
