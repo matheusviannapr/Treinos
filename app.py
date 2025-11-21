@@ -1498,7 +1498,7 @@ def render_strava_tab(user_id: str):
 
         st.caption("Sugestões automáticas são feitas apenas quando data e modalidade são idênticas.")
 
-        today_local = today()
+        suggestions: list[tuple[pd.Series, pd.DataFrame]] = []
         for _, act in filtered_df.iterrows():
             plan_mod = _plan_modality_from_strava(act.get("Tipo"))
             if not plan_mod:
@@ -1508,30 +1508,60 @@ def render_strava_tab(user_id: str):
                 & (planned_candidates["Modalidade"].str.lower() == plan_mod.lower())
                 & (planned_candidates.get("StravaID", "").astype(str).str.strip() == "")
             ]
-            if len(same_day) == 1:
-                target = same_day.iloc[0]
-                with st.expander(
-                    f"Sugestão: {act.get('Nome', '')} ↔ {target.get('Tipo de Treino', '')} ({target.get('Data')})",
-                    expanded=False,
-                ):
+            if not same_day.empty:
+                suggestions.append((act, same_day))
+
+        if not suggestions:
+            st.info("Nenhum match automático disponível para as atividades e filtros selecionados.")
+        else:
+            for act, same_day in suggestions:
+                header = f"Sugestão: {act.get('Nome', '')} ({act.get('Data')})"
+                with st.expander(header, expanded=False):
                     st.write(
-                        f"Sugerimos associar o treino **{act.get('Nome', '')}** ao planejado "
-                        f"**{target.get('Tipo de Treino', '')} ({target.get('Modalidade')})** em {target.get('Data')}"
+                        "Encontramos treinos planejados com mesma data e modalidade: selecione ou confirme a associação."
                     )
-                    col_c, col_r = st.columns(2)
-                    with col_c:
-                        if st.button(
-                            "Confirmar match",
-                            key=f"confirm_auto_{act.get('ID')}_{target.get('UID')}",
-                        ):
-                            _apply_activity_to_training(user_id, target.get("UID"), act)
-                            safe_rerun()
-                    with col_r:
-                        st.button("Recusar", key=f"reject_auto_{act.get('ID')}_{target.get('UID')}")
+                    if len(same_day) == 1:
+                        target = same_day.iloc[0]
+                        st.markdown(
+                            f"**Planejado:** {target.get('Tipo de Treino', '')} ({target.get('Modalidade')}) em {target.get('Data')}"
+                        )
+                        col_c, col_r = st.columns(2)
+                        with col_c:
+                            if st.button(
+                                "Confirmar match",
+                                key=f"confirm_auto_{act.get('ID')}_{target.get('UID')}",
+                            ):
+                                _apply_activity_to_training(user_id, target.get("UID"), act)
+                                safe_rerun()
+                        with col_r:
+                            st.button("Recusar", key=f"reject_auto_{act.get('ID')}_{target.get('UID')}")
+                    else:
+                        plan_options = {
+                            f"{row['Data']} - {row['Tipo de Treino']} ({row['Modalidade']})": row["UID"]
+                            for _, row in same_day.iterrows()
+                        }
+                        chosen_plan = st.selectbox(
+                            "Escolha o treino planejado para associar",
+                            options=list(plan_options.keys()),
+                            key=f"auto_plan_select_{act.get('ID')}",
+                        )
+                        col_c, col_r = st.columns(2)
+                        with col_c:
+                            if st.button(
+                                "Confirmar match",
+                                key=f"confirm_auto_{act.get('ID')}_multi",
+                            ):
+                                target_uid = plan_options.get(chosen_plan)
+                                if target_uid:
+                                    _apply_activity_to_training(user_id, target_uid, act)
+                                    safe_rerun()
+                        with col_r:
+                            st.button("Recusar", key=f"reject_auto_{act.get('ID')}_multi")
 
         st.markdown("---")
         st.subheader("Match manual")
 
+        today_local = today()
         planned_dates = sorted(
             {
                 d
