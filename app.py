@@ -1350,12 +1350,16 @@ def _normalize_strava_activities(activities: list[dict]) -> pd.DataFrame:
         moving_seconds = act.get("moving_time") or 0
         distance_m = act.get("distance") or 0
         np_power = act.get("weighted_average_watts")
+        elev_gain = act.get("total_elevation_gain") or 0.0
         map_data = act.get("map") or {}
         polyline_raw = (
             map_data.get("summary_polyline")
             or act.get("summary_polyline")
             or act.get("map.summary_polyline")
         )
+        pace_min_per_km = 0.0
+        if distance_m and moving_seconds:
+            pace_min_per_km = round((float(moving_seconds) / 60.0) / (float(distance_m) / 1000), 2)
         rows.append(
             {
                 "Nome": act.get("name"),
@@ -1369,6 +1373,8 @@ def _normalize_strava_activities(activities: list[dict]) -> pd.DataFrame:
                 )
                 if moving_seconds
                 else 0.0,
+                "Ritmo médio (min/km)": pace_min_per_km,
+                "Ganho de elevação (m)": round(float(elev_gain), 1),
                 "ID": act.get("id"),
                 "MovingSeconds": moving_seconds,
                 "DistanceMeters": distance_m,
@@ -1384,6 +1390,18 @@ def _normalize_strava_activities(activities: list[dict]) -> pd.DataFrame:
     if not df.empty:
         df.sort_values(by=["Data", "Hora"], ascending=[False, False], inplace=True)
     return df
+
+
+def _format_minutes_as_label(minutes_value: float | int) -> str:
+    try:
+        total_seconds = int(float(minutes_value) * 60)
+    except Exception:
+        return "0min"
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes = remainder // 60
+    if hours <= 0:
+        return f"{minutes}min"
+    return f"{hours:02d}h{minutes:02d}min"
 
 
 def _plan_modality_from_strava(strava_type: str | None) -> str | None:
@@ -1603,6 +1621,7 @@ def render_strava_tab(user_id: str):
     ])
 
     with tab_acts:
+        st.subheader("Visão geral das atividades importadas")
         cols_to_hide = [
             "ID",
             "MovingSeconds",
@@ -1614,7 +1633,93 @@ def render_strava_tab(user_id: str):
             "EndLatLng",
         ]
         cols_to_drop = [c for c in cols_to_hide if c in filtered_df.columns]
-        st.dataframe(filtered_df.drop(columns=cols_to_drop), use_container_width=True)
+        show_only_routes = st.toggle(
+            "Mostrar somente atividades com percurso mapeado",
+            value=False,
+            key="strava_route_toggle",
+            help="Filtra atividades que possuem trajeto disponível para o mapa",
+        )
+
+        activities_view = filtered_df.copy()
+
+        if show_only_routes:
+            activities_view = activities_view[activities_view["Polyline"].astype(str).str.strip() != ""].copy()
+
+        total_distance = activities_view.get("Distância (km)", pd.Series(dtype=float)).sum()
+        total_minutes = activities_view.get("Duração (min)", pd.Series(dtype=float)).sum()
+        total_elev = activities_view.get("Ganho de elevação (m)", pd.Series(dtype=float)).sum()
+        avg_speed = (
+            activities_view.get("Velocidade média (km/h)", pd.Series(dtype=float))
+            .replace([np.inf, -np.inf], 0)
+            .fillna(0)
+            .mean()
+            if not activities_view.empty
+            else 0.0
+        )
+
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Atividades filtradas", f"{len(activities_view)}")
+        m2.metric("Distância total", f"{total_distance:.1f} km")
+        m3.metric("Tempo em movimento", _format_minutes_as_label(total_minutes))
+        m4.metric("Ganho de elevação", f"{total_elev:.0f} m")
+        m5.metric("Velocidade média", f"{avg_speed:.1f} km/h")
+
+        if activities_view.empty:
+            st.info("Nenhuma atividade após aplicar filtros e opções.")
+        else:
+            display_df = activities_view.drop(columns=cols_to_drop)
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Distância (km)": st.column_config.NumberColumn(format="%.2f km"),
+                    "Duração (min)": st.column_config.NumberColumn(format="%.1f min"),
+                    "Velocidade média (km/h)": st.column_config.NumberColumn(format="%.1f km/h"),
+                    "Ritmo médio (min/km)": st.column_config.NumberColumn(format="%.2f min/km"),
+                    "Ganho de elevação (m)": st.column_config.NumberColumn(format="%.0f m"),
+                },
+            )
+
+            detail_container = st.container()
+            map_container = st.container()
+            map_options = {
+                f"{row['Data']} - {row['Nome']} ({row['Tipo']})": row["ID"]
+                for _, row in activities_view.iterrows()
+            }
+
+            if map_options:
+                selected_map_label = st.selectbox(
+                    "Selecionar atividade para visualizar o mapa",
+                    options=list(map_options.keys()),
+                    index=0,
+                    key="strava_map_select_acts",
+                )
+                selected_map_id = map_options.get(selected_map_label)
+                selected_row = activities_view[activities_view["ID"] == selected_map_id]
+                if not selected_row.empty:
+                    selected_act = selected_row.iloc[0]
+                    with detail_container:
+                        st.markdown("#### Destaque da atividade")
+                        c1, c2, c3, c4 = st.columns(4)
+                        c1.metric("Distância", f"{selected_act.get('Distância (km)', 0):.2f} km")
+                        c2.metric("Duração", _format_minutes_as_label(selected_act.get("Duração (min)")))
+                        c3.metric("Velocidade média", f"{selected_act.get('Velocidade média (km/h)', 0):.1f} km/h")
+                        pace_val = selected_act.get("Ritmo médio (min/km)") or 0.0
+                        pace_label = f"{pace_val:.2f} min/km" if pace_val else "--"
+                        c4.metric("Ritmo médio", pace_label)
+                        st.caption(
+                            f"{selected_act.get('Data')} às {selected_act.get('Hora')} — {selected_act.get('Nome', '')}"
+                        )
+
+                    render_activity_map(
+                        selected_act,
+                        map_container,
+                        map_key=f"strava-activities-map-{selected_map_id}",
+                    )
+            else:
+                with map_container:
+                    st.info("Nenhuma atividade disponível para exibir no mapa.")
 
         map_container = st.container()
         map_options = {
