@@ -1343,7 +1343,7 @@ def _update_training_loads(user_id: str, user_df: pd.DataFrame) -> pd.DataFrame:
         atl = atl + (tss_today - atl) / 7.0
         ctl = ctl + (tss_today - ctl) / 42.0
         tsb = ctl - atl
-        metrics[cursor.isoformat()] = {"ATL": atl, "CTL": ctl, "TSB": tsb}
+        metrics[cursor.isoformat()] = {"ATL": atl, "CTL": ctl, "TSB": tsb, "TSS": tss_today}
         cursor += timedelta(days=1)
 
     for idx, row in df.iterrows():
@@ -1498,6 +1498,7 @@ def render_strava_tab(user_id: str):
 
         st.caption("Sugestões automáticas são feitas apenas quando data e modalidade são idênticas.")
 
+        today_local = today()
         for _, act in filtered_df.iterrows():
             plan_mod = _plan_modality_from_strava(act.get("Tipo"))
             if not plan_mod:
@@ -1509,6 +1510,11 @@ def render_strava_tab(user_id: str):
             ]
             if len(same_day) == 1:
                 target = same_day.iloc[0]
+                target_date = target.get("Data")
+                if isinstance(target_date, pd.Timestamp):
+                    target_date = target_date.date()
+                if target_date and target_date < today_local:
+                    continue
                 with st.expander(
                     f"Sugestão: {act.get('Nome', '')} ↔ {target.get('Tipo de Treino', '')} ({target.get('Data')})",
                     expanded=False,
@@ -1531,17 +1537,53 @@ def render_strava_tab(user_id: str):
         st.markdown("---")
         st.subheader("Match manual")
 
+        planned_dates = sorted(
+            {
+                d
+                for d in planned_candidates["Data"].tolist()
+                if isinstance(d, (date, datetime, pd.Timestamp)) and not pd.isna(d)
+            }
+        )
+        strava_dates = sorted(
+            {
+                d
+                for d in filtered_df["Data"].tolist()
+                if isinstance(d, (date, datetime, pd.Timestamp)) and not pd.isna(d)
+            }
+        )
+
+        def _default_date(opts: list[date]):
+            if not opts:
+                return today_local
+            normalized = [dt.date() if isinstance(dt, datetime) else dt for dt in opts]
+            if today_local in normalized:
+                return today_local
+            return sorted(normalized, key=lambda d: abs(d - today_local))[0]
+
+        col_plan_date, col_act_date = st.columns(2)
+        planned_date_choice = col_plan_date.date_input(
+            "Dia do treino planejado", value=_default_date(planned_dates), key="manual_plan_date"
+        )
+        act_date_choice = col_act_date.date_input(
+            "Dia da atividade Strava", value=_default_date(strava_dates), key="manual_act_date"
+        )
+
+        planned_filtered = planned_candidates[planned_candidates["Data"] == planned_date_choice]
+        strava_filtered = filtered_df[filtered_df["Data"] == act_date_choice]
+
         planned_options = {
             f"{row['Data']} - {row['Modalidade']} - {row['Tipo de Treino']}": row["UID"]
-            for _, row in planned_candidates.iterrows()
+            for _, row in planned_filtered.iterrows()
         }
         strava_options = {
             f"{row['Data']} - {row['Tipo']} - {row['Nome']}": row["ID"]
-            for _, row in filtered_df.iterrows()
+            for _, row in strava_filtered.iterrows()
         }
 
         if not planned_options or not strava_options:
-            st.info("Nenhum treino planejado elegível ou nenhuma atividade do Strava disponível.")
+            st.info(
+                "Nenhum treino planejado elegível ou nenhuma atividade do Strava disponível para as datas selecionadas."
+            )
         else:
             col_p, col_s = st.columns(2)
             with col_p:
@@ -1560,7 +1602,7 @@ def render_strava_tab(user_id: str):
             if st.button("Associar manualmente"):
                 planned_uid = planned_options.get(selected_planned)
                 strava_id = strava_options.get(selected_strava)
-                act_row = filtered_df[filtered_df["ID"] == strava_id]
+                act_row = strava_filtered[strava_filtered["ID"] == strava_id]
                 if not act_row.empty and planned_uid:
                     _apply_activity_to_training(user_id, planned_uid, act_row.iloc[0])
                     safe_rerun()
@@ -4884,6 +4926,27 @@ def main():
             plot_load_chart(weekly_metrics)
             st.dataframe(df_with_load)
 
+            metrics_memory = _load_training_loads(user_id)
+            if metrics_memory:
+                memory_rows = []
+                for day_str, vals in metrics_memory.items():
+                    memory_rows.append(
+                        {
+                            "Data": day_str,
+                            "TSS": round(float(vals.get("TSS", 0.0) or 0.0), 2),
+                            "ATL": round(float(vals.get("ATL", 0.0) or 0.0), 2),
+                            "CTL": round(float(vals.get("CTL", 0.0) or 0.0), 2),
+                            "TSB": round(float(vals.get("TSB", 0.0) or 0.0), 2),
+                        }
+                    )
+
+                memory_df = pd.DataFrame(memory_rows)
+                memory_df["Data"] = pd.to_datetime(memory_df["Data"], errors="coerce").dt.date
+                memory_df = memory_df.dropna(subset=["Data"]).sort_values("Data", ascending=False)
+
+                with st.expander("Memória de cálculo ATL/CTL/TSB (diário)", expanded=False):
+                    st.dataframe(memory_df, use_container_width=True)
+
         with tab_aderencia:
             adherence_df = compute_weekly_adherence(df_dashboard)
             if adherence_df.empty:
@@ -4900,10 +4963,17 @@ def main():
                 if month_keys:
                     month_labels = [m.strftime("%m/%Y") for m in month_keys]
                     month_map = dict(zip(month_labels, month_keys))
+                    current_month = date.today().replace(day=1)
+                    default_index = 0
+                    if current_month in month_keys:
+                        try:
+                            default_index = month_labels.index(current_month.strftime("%m/%Y"))
+                        except ValueError:
+                            default_index = 0
                     selected_label = st.selectbox(
                         "Selecione o mês",
                         month_labels,
-                        index=0,
+                        index=default_index,
                         key="adherence_month_select",
                     )
                     selected_month = month_map[selected_label]
