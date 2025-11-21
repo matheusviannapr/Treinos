@@ -3303,6 +3303,16 @@ def _read_query_code_state():
         state = (params.get("state") or [None])[0]
         return code, state
 
+
+def _clear_strava_query_params():
+    try:
+        st.query_params.clear()
+    except Exception:
+        try:
+            st.experimental_set_query_params()
+        except Exception:
+            return
+
 def _strava_exchange_token(code):
     client_id, client_secret, redirect_uri, _ = _strava_config()
     data = {
@@ -3317,10 +3327,7 @@ def _strava_exchange_token(code):
     tok = r.json()
     st.session_state["strava_token"] = tok
     st.session_state["strava_athlete"] = tok.get("athlete")
-    try:
-        st.query_params.clear()
-    except Exception:
-        st.experimental_set_query_params()
+    _clear_strava_query_params()
 
 def _strava_refresh_token_if_needed():
     tok = st.session_state.get("strava_token")
@@ -3359,15 +3366,57 @@ def _strava_logout():
     st.session_state.pop("strava_athlete", None)
     st.session_state.pop("strava_state", None)
 
+
+def _strava_fetch_activities(start_date: date, end_date: date):
+    params: dict[str, int | str] = {"per_page": 50}
+    if start_date:
+        after_dt = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
+        params["after"] = int(after_dt.timestamp())
+    if end_date:
+        before_dt = datetime.combine(end_date, time.max, tzinfo=timezone.utc)
+        params["before"] = int(before_dt.timestamp())
+    return _strava_api_get("/athlete/activities", params)
+
+
+def _normalize_strava_activities_for_ui(activities: list[dict] | None) -> pd.DataFrame:
+    if not activities:
+        return pd.DataFrame(columns=["Título", "Tipo", "Distância (km)", "Duração (min)", "Início"])
+
+    rows = []
+    for act in activities:
+        start_str = act.get("start_date_local") or act.get("start_date")
+        start_dt = pd.to_datetime(start_str, errors="coerce")
+        rows.append(
+            {
+                "Título": act.get("name", "-"),
+                "Tipo": act.get("type", "-"),
+                "Distância (km)": round(float(act.get("distance", 0) or 0) / 1000, 2),
+                "Duração (min)": round(float(act.get("moving_time", 0) or 0) / 60, 1),
+                "Início": start_dt,
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    if not df.empty and "Início" in df.columns:
+        df = df.sort_values(by="Início", ascending=False)
+    return df
+
 def render_strava_tab(user_id: str):
     st.header("🚴 Strava")
     code, state = _read_query_code_state()
-    if code and state and state == st.session_state.get("strava_state"):
+    state_in_session = st.session_state.get("strava_state")
+    if code:
+        if state_in_session and state and state != state_in_session:
+            st.warning("O retorno do Strava não corresponde ao estado atual. Tentando reconectar mesmo assim.")
         try:
+            if not state_in_session and state:
+                st.session_state["strava_state"] = state
             _strava_exchange_token(code)
             st.success("Conectado ao Strava.")
+            safe_rerun()
         except Exception:
             st.error("Falha na troca do token.")
+            _clear_strava_query_params()
     if "strava_token" not in st.session_state:
         url = _strava_auth_url()
         if not url:
@@ -3391,12 +3440,44 @@ def render_strava_tab(user_id: str):
         _strava_logout()
         st.success("Desconectado.")
         safe_rerun()
-    if col2.button("Listar minhas atividades"):
-        try:
-            acts = _strava_api_get("/athlete/activities", {"per_page": 30})
-            st.json(acts or [])
-        except Exception:
-            st.error("Erro ao listar atividades.")
+    today = date.today()
+    default_start = today - timedelta(days=30)
+    start_date, end_date = st.date_input(
+        "Período das atividades",
+        value=(default_start, today),
+        min_value=today - timedelta(days=365),
+        max_value=today,
+        key="strava_date_range_v2",
+    )
+
+    refresh_clicked = col2.button("Atualizar atividades")
+
+    cached_range = st.session_state.get("strava_last_range")
+    should_fetch = refresh_clicked or cached_range != (start_date, end_date)
+
+    if should_fetch:
+        with st.spinner("Buscando atividades do Strava..."):
+            try:
+                acts = _strava_fetch_activities(start_date, end_date)
+                st.session_state["strava_activities"] = acts or []
+                st.session_state["strava_last_range"] = (start_date, end_date)
+            except Exception:
+                st.error("Erro ao listar atividades.")
+
+    activities = st.session_state.get("strava_activities", [])
+    activities_df = _normalize_strava_activities_for_ui(activities)
+
+    if activities_df.empty:
+        st.info("Nenhuma atividade encontrada para o período selecionado.")
+    else:
+        st.subheader("Atividades recentes")
+        st.dataframe(
+            activities_df,
+            use_container_width=True,
+            column_config={
+                "Início": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm"),
+            },
+        )
 
 # ----------------------------------------------------------------------------
 # Periodização — generate_cycle
