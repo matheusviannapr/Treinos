@@ -1128,6 +1128,7 @@ def render_strava_tab(user_id: str):
             "Integração com Strava indisponível no momento. Tente novamente mais tarde "
             "ou contate o suporte."
         )
+        return
 
     params = _get_query_params()
 
