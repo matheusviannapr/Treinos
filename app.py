@@ -1510,11 +1510,6 @@ def render_strava_tab(user_id: str):
             ]
             if len(same_day) == 1:
                 target = same_day.iloc[0]
-                target_date = target.get("Data")
-                if isinstance(target_date, pd.Timestamp):
-                    target_date = target_date.date()
-                if target_date and target_date < today_local:
-                    continue
                 with st.expander(
                     f"Sugestão: {act.get('Nome', '')} ↔ {target.get('Tipo de Treino', '')} ({target.get('Data')})",
                     expanded=False,
@@ -4069,6 +4064,14 @@ def main():
         with tab_semana:
 
             off_days_set = set(user_preferences.get("off_days", []))
+            opcoes_agendamento = [
+                "Padrão do app (ignorar horários livres)",
+                "Usar padrão de horários salvo",
+            ]
+            modo_agendamento_default = st.session_state.get(
+                "modo_agendamento_choice", opcoes_agendamento[0]
+            )
+
             generate_week_clicked = False
             with st.popover(
                 "⚙️ Parâmetros de prescrição e metas semanais", use_container_width=True
@@ -4167,6 +4170,18 @@ def main():
 
                 st.caption("Essas metas também alimentam a geração de ciclo direto no calendário.")
 
+                st.markdown("**Como encaixar os treinos no horário?**")
+                modo_agendamento = st.radio(
+                    "Opção de agendamento",
+                    opcoes_agendamento,
+                    index=opcoes_agendamento.index(modo_agendamento_default)
+                    if modo_agendamento_default in opcoes_agendamento
+                    else 0,
+                    horizontal=True,
+                    key="modo_agendamento_radio",
+                )
+                st.session_state["modo_agendamento_choice"] = modo_agendamento
+
                 generate_week_clicked = st.button(
                     "📆 Gerar Semana Automática",
                     use_container_width=True,
@@ -4174,7 +4189,7 @@ def main():
                 )
 
             st.markdown("---")
-    
+
             # 3. Semana atual
             col1, col2, col3 = st.columns([1, 2, 1])
             if col1.button("⬅️ Semana anterior"):
@@ -4201,18 +4216,6 @@ def main():
     
             week_slots = get_week_availability(user_id, week_start)
     
-            # Modo de agendamento
-            st.subheader("Como encaixar os treinos?")
-            opcoes_agendamento = [
-                "Padrão do app (ignorar horários livres)",
-                "Usar padrão de horários salvo",
-            ]
-            modo_agendamento = st.radio(
-                "Opção de agendamento",
-                opcoes_agendamento,
-                horizontal=True,
-            )
-
             # Gerar semana automática
             if generate_week_clicked:
                 dias_map = dias_semana_options
@@ -4912,49 +4915,19 @@ def main():
     elif menu == "📈 Dashboard":
         st.header("📈 Dashboard de Performance")
         weekly_metrics, df_with_load = calculate_metrics(df)
+        metrics_memory = _load_training_loads(user_id)
 
         df_dashboard = df.copy()
         if not df_dashboard.empty:
             df_dashboard["Data"] = pd.to_datetime(df_dashboard["Data"], errors="coerce").dt.date
             df_dashboard["WeekStart"] = pd.to_datetime(df_dashboard["WeekStart"], errors="coerce").dt.date
 
-        tab_carga, tab_aderencia, tab_historico = st.tabs([
-            "Carga", "Aderência", "Histórico de Edição"
+        tab_aderencia, tab_carga, tab_historico = st.tabs([
+            "Aderência", "Carga", "Histórico de Edição"
         ])
 
-        with tab_carga:
-            plot_load_chart(weekly_metrics)
-            st.dataframe(df_with_load)
-
-            metrics_memory = _load_training_loads(user_id)
-            if metrics_memory:
-                memory_rows = []
-                for day_str, vals in metrics_memory.items():
-                    memory_rows.append(
-                        {
-                            "Data": day_str,
-                            "TSS": round(float(vals.get("TSS", 0.0) or 0.0), 2),
-                            "ATL": round(float(vals.get("ATL", 0.0) or 0.0), 2),
-                            "CTL": round(float(vals.get("CTL", 0.0) or 0.0), 2),
-                            "TSB": round(float(vals.get("TSB", 0.0) or 0.0), 2),
-                        }
-                    )
-
-                memory_df = pd.DataFrame(memory_rows)
-                memory_df["Data"] = pd.to_datetime(memory_df["Data"], errors="coerce").dt.date
-                memory_df = memory_df.dropna(subset=["Data"]).sort_values("Data", ascending=False)
-
-                with st.expander("Memória de cálculo ATL/CTL/TSB (diário)", expanded=False):
-                    st.dataframe(memory_df, use_container_width=True)
-
         with tab_aderencia:
-            adherence_df = compute_weekly_adherence(df_dashboard)
-            if adherence_df.empty:
-                st.info("Sem dados suficientes para calcular aderência semanal.")
-            else:
-                st.dataframe(adherence_df, use_container_width=True)
-                st.caption("S:% = aderência em sessões. V:% = aderência em volume.")
-
+            st.subheader("Aderência diária")
             if df_dashboard.empty:
                 st.info("Cadastre treinos para visualizar a aderência diária.")
             else:
@@ -4989,6 +4962,60 @@ def main():
                         )
                 else:
                     st.info("Cadastre treinos para visualizar a aderência diária.")
+
+            if metrics_memory:
+                st.markdown("---")
+                st.subheader("Carga do atleta (ATL/CTL/TSB)")
+                memory_rows = []
+                for day_str, vals in metrics_memory.items():
+                    memory_rows.append(
+                        {
+                            "Data": day_str,
+                            "TSS": round(float(vals.get("TSS", 0.0) or 0.0), 2),
+                            "ATL": round(float(vals.get("ATL", 0.0) or 0.0), 2),
+                            "CTL": round(float(vals.get("CTL", 0.0) or 0.0), 2),
+                            "TSB": round(float(vals.get("TSB", 0.0) or 0.0), 2),
+                        }
+                    )
+
+                memory_df = pd.DataFrame(memory_rows)
+                memory_df["Data"] = pd.to_datetime(memory_df["Data"], errors="coerce").dt.date
+                memory_df = memory_df.dropna(subset=["Data"]).sort_values("Data")
+
+                latest = memory_df.iloc[-1]
+                prev = memory_df.iloc[-2] if len(memory_df) > 1 else None
+                col_atl, col_ctl, col_tsb = st.columns(3)
+                col_atl.metric(
+                    "ATL", f"{latest['ATL']:.1f}",
+                    delta=(latest["ATL"] - prev["ATL"]) if prev is not None else None,
+                    help=f"Última atualização em {latest['Data'].strftime('%d/%m/%Y')}"
+                )
+                col_ctl.metric(
+                    "CTL", f"{latest['CTL']:.1f}",
+                    delta=(latest["CTL"] - prev["CTL"]) if prev is not None else None,
+                    help=f"Última atualização em {latest['Data'].strftime('%d/%m/%Y')}"
+                )
+                col_tsb.metric(
+                    "TSB", f"{latest['TSB']:.1f}",
+                    delta=(latest["TSB"] - prev["TSB"]) if prev is not None else None,
+                    help=f"Última atualização em {latest['Data'].strftime('%d/%m/%Y')}"
+                )
+
+                with st.expander("Memória de cálculo ATL/CTL/TSB (diário)", expanded=False):
+                    st.dataframe(memory_df.sort_values("Data", ascending=False), use_container_width=True)
+
+            st.markdown("---")
+            st.subheader("Planilha de aderência semanal")
+            adherence_df = compute_weekly_adherence(df_dashboard)
+            if adherence_df.empty:
+                st.info("Sem dados suficientes para calcular aderência semanal.")
+            else:
+                st.dataframe(adherence_df, use_container_width=True)
+                st.caption("S:% = aderência em sessões. V:% = aderência em volume.")
+
+        with tab_carga:
+            plot_load_chart(weekly_metrics)
+            st.dataframe(df_with_load)
 
         with tab_historico:
             if df_dashboard.empty:
