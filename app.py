@@ -884,8 +884,54 @@ def _set_query_params(**params):
         return
 
 
+DEFAULT_STRAVA_REDIRECT_URI = os.getenv("DEFAULT_STRAVA_REDIRECT_URI") or "https://treinos.streamlit.app/"
+DEFAULT_STRAVA_CLIENT_ID = "186420"
+DEFAULT_STRAVA_CLIENT_SECRET = "be2b6979209ada4f74cf347b33e17f2e43e41eae"
+DEFAULT_STRAVA_ACCESS_TOKEN = "c1baef1b58be5f92951d117add5cd68fbd967659"
+DEFAULT_STRAVA_REFRESH_TOKEN = "dfb851ddf3fe70bab71c03ec7c28ede74cb58f67"
+
+
+def seed_default_strava_config_if_missing():
+    init_database()
+    try:
+        row = db.fetch_one("SELECT value FROM meta WHERE key = 'strava_config'")
+    except Exception:
+        return
+
+    if row and row.get("value"):
+        return
+
+    redirect_uri = os.getenv("STRAVA_REDIRECT_URI") or DEFAULT_STRAVA_REDIRECT_URI
+    client_id = os.getenv("STRAVA_CLIENT_ID") or DEFAULT_STRAVA_CLIENT_ID
+    client_secret = os.getenv("STRAVA_CLIENT_SECRET") or DEFAULT_STRAVA_CLIENT_SECRET
+
+    if not client_id or not client_secret or not redirect_uri:
+        return
+
+    payload = {
+        "client_id": str(client_id),
+        "client_secret": str(client_secret),
+        "redirect_uri": str(redirect_uri),
+        "seed_access_token": DEFAULT_STRAVA_ACCESS_TOKEN,
+        "seed_refresh_token": DEFAULT_STRAVA_REFRESH_TOKEN,
+    }
+
+    try:
+        db.execute(
+            """
+            INSERT INTO meta (key, value)
+            VALUES ('strava_config', :value)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """,
+            {"value": json.dumps(payload)},
+        )
+    except Exception:
+        return
+
+
 def get_strava_config() -> dict | None:
     init_database()
+    seed_default_strava_config_if_missing()
     client_id = None
     client_secret = None
     redirect_uri = None
@@ -1122,14 +1168,6 @@ def _normalize_strava_activities(activities: list[dict]) -> pd.DataFrame:
 
 def render_strava_tab(user_id: str):
     st.header("🚴 Integração com Strava")
-
-    cfg = get_strava_config()
-    if not cfg:
-        st.error(
-            "Integração com Strava indisponível no momento. Tente novamente mais tarde "
-            "ou contate o suporte."
-        )
-        return
 
     params = _get_query_params()
 
