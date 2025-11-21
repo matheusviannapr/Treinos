@@ -885,6 +885,7 @@ def _set_query_params(**params):
 
 
 def get_strava_config() -> dict | None:
+    init_database()
     client_id = None
     client_secret = None
     redirect_uri = None
@@ -1168,7 +1169,7 @@ def render_strava_tab(user_id: str):
             _render_strava_popup_button(auth_url)
         else:
             st.error(
-                "Não foi possível construir a URL de autorização. Verifique as credenciais do Strava."
+                "Não foi possível iniciar a conexão com o Strava agora. Tente novamente em instantes ou contate o suporte."
             )
         return
 
