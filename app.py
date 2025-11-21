@@ -884,7 +884,7 @@ def _set_query_params(**params):
         return
 
 
-DEFAULT_STRAVA_REDIRECT_URI = os.getenv("DEFAULT_STRAVA_REDIRECT_URI") or "https://treinos.streamlit.app/"
+DEFAULT_STRAVA_REDIRECT_URI = os.getenv("DEFAULT_STRAVA_REDIRECT_URI") or "http://localhost:8501/"
 DEFAULT_STRAVA_CLIENT_ID = "186420"
 DEFAULT_STRAVA_CLIENT_SECRET = "be2b6979209ada4f74cf347b33e17f2e43e41eae"
 DEFAULT_STRAVA_ACCESS_TOKEN = "c1baef1b58be5f92951d117add5cd68fbd967659"
@@ -949,17 +949,17 @@ def get_strava_config() -> dict | None:
         pass
 
     try:
-        if not client_id and "strava" in st.secrets:  # type: ignore[attr-defined]
+        if "strava" in st.secrets:  # type: ignore[attr-defined]
             secrets_section = st.secrets["strava"]
-            client_id = secrets_section.get("client_id")
-            client_secret = secrets_section.get("client_secret")
-            redirect_uri = secrets_section.get("redirect_uri")
+            client_id = secrets_section.get("client_id") or client_id
+            client_secret = secrets_section.get("client_secret") or client_secret
+            redirect_uri = secrets_section.get("redirect_uri") or redirect_uri
     except Exception:
         pass
 
-    client_id = client_id or os.getenv("STRAVA_CLIENT_ID")
-    client_secret = client_secret or os.getenv("STRAVA_CLIENT_SECRET")
-    redirect_uri = redirect_uri or os.getenv("STRAVA_REDIRECT_URI")
+    client_id = os.getenv("STRAVA_CLIENT_ID") or client_id
+    client_secret = os.getenv("STRAVA_CLIENT_SECRET") or client_secret
+    redirect_uri = os.getenv("STRAVA_REDIRECT_URI") or redirect_uri
 
     if not client_id or not client_secret or not redirect_uri:
         return None
