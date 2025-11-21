@@ -46,6 +46,8 @@ from fpdf import FPDF
 import matplotlib.pyplot as plt
 import unicodedata
 import secrets
+import folium
+from streamlit_folium import st_folium
 
 from streamlit_calendar import calendar as st_calendar  # pip install streamlit-calendar
 
@@ -1069,6 +1071,115 @@ def _render_strava_popup_button(auth_url: str):
     st.components.v1.html(button_html, height=90)
 
 
+def _decode_polyline_fallback(polyline_str: str) -> list[tuple[float, float]]:
+    if not polyline_str:
+        return []
+
+    index = 0
+    lat = 0
+    lng = 0
+    coordinates: list[tuple[float, float]] = []
+
+    while index < len(polyline_str):
+        result = 0
+        shift = 0
+
+        while True:
+            b = ord(polyline_str[index]) - 63
+            index += 1
+            result |= (b & 0x1F) << shift
+            shift += 5
+            if b < 0x20:
+                break
+
+        delta_lat = ~(result >> 1) if (result & 1) else (result >> 1)
+        lat += delta_lat
+
+        result = 0
+        shift = 0
+        while True:
+            b = ord(polyline_str[index]) - 63
+            index += 1
+            result |= (b & 0x1F) << shift
+            shift += 5
+            if b < 0x20:
+                break
+
+        delta_lng = ~(result >> 1) if (result & 1) else (result >> 1)
+        lng += delta_lng
+
+        coordinates.append((lat / 1e5, lng / 1e5))
+
+    return coordinates
+
+
+def _decode_polyline(polyline_str: str | None) -> list[tuple[float, float]]:
+    if not polyline_str:
+        return []
+    try:
+        import polyline as polyline_lib
+
+        decoded = polyline_lib.decode(polyline_str)
+    except Exception:
+        decoded = _decode_polyline_fallback(polyline_str)
+
+    coords: list[tuple[float, float]] = []
+    for pair in decoded:
+        try:
+            lat, lon = pair
+            coords.append((float(lat), float(lon)))
+        except Exception:
+            continue
+    return coords
+
+
+def _extract_activity_coords(act: pd.Series) -> list[tuple[float, float]]:
+    polyline_str = act.get("Polyline") or act.get("summary_polyline")
+    coords = _decode_polyline(polyline_str)
+    if coords:
+        return coords
+
+    start_latlng = act.get("StartLatLng")
+    end_latlng = act.get("EndLatLng")
+    try:
+        if start_latlng and end_latlng:
+            return [
+                (float(start_latlng[0]), float(start_latlng[1])),
+                (float(end_latlng[0]), float(end_latlng[1])),
+            ]
+    except Exception:
+        pass
+    return []
+
+
+def render_activity_map(act: pd.Series, container):
+    with container:
+        st.markdown("### 🗺️ Percurso da atividade")
+        coords = _extract_activity_coords(act)
+        if not coords:
+            st.info("Esta atividade não possui dados de rota para exibição no mapa.")
+            return
+
+        center = coords[len(coords) // 2]
+        fmap = folium.Map(location=[center[0], center[1]], tiles="OpenStreetMap", zoom_start=13)
+        folium.PolyLine(coords, color="#fc4c02", weight=5, opacity=0.8).add_to(fmap)
+
+        try:
+            folium.Marker(coords[0], popup="Início", icon=folium.Icon(color="green")).add_to(fmap)
+            folium.Marker(coords[-1], popup="Fim", icon=folium.Icon(color="red")).add_to(fmap)
+        except Exception:
+            pass
+
+        try:
+            lats = [c[0] for c in coords]
+            lons = [c[1] for c in coords]
+            fmap.fit_bounds([[min(lats), min(lons)], [max(lats), max(lons)]])
+        except Exception:
+            pass
+
+        st_folium(fmap, height=420, width=None, returned_objects=[])
+
+
 def _apply_activity_to_training(user_id: str, planned_uid: str, activity_row: pd.Series):
     df = st.session_state.get("df", pd.DataFrame()).copy()
     idx = df[df["UID"] == planned_uid].index
@@ -1104,6 +1215,7 @@ def _apply_activity_to_training(user_id: str, planned_uid: str, activity_row: pd
     df = _update_training_loads(user_id, df)
     st.session_state["df"] = df
     save_user_df(user_id, df)
+    canonical_week_df.clear()
     st.success("Treino associado e métricas atualizadas!")
 
 
@@ -1237,6 +1349,12 @@ def _normalize_strava_activities(activities: list[dict]) -> pd.DataFrame:
         moving_seconds = act.get("moving_time") or 0
         distance_m = act.get("distance") or 0
         np_power = act.get("weighted_average_watts")
+        map_data = act.get("map") or {}
+        polyline_raw = (
+            map_data.get("summary_polyline")
+            or act.get("summary_polyline")
+            or act.get("map.summary_polyline")
+        )
         rows.append(
             {
                 "Nome": act.get("name"),
@@ -1255,6 +1373,9 @@ def _normalize_strava_activities(activities: list[dict]) -> pd.DataFrame:
                 "DistanceMeters": distance_m,
                 "TypeNormalized": str(act.get("type", "")),
                 "NP": np_power or 0.0,
+                "Polyline": polyline_raw,
+                "StartLatLng": map_data.get("start_latlng") or act.get("start_latlng"),
+                "EndLatLng": map_data.get("end_latlng") or act.get("end_latlng"),
             }
         )
 
@@ -1481,12 +1602,45 @@ def render_strava_tab(user_id: str):
     ])
 
     with tab_acts:
-        cols_to_hide = ["ID", "MovingSeconds", "DistanceMeters", "TypeNormalized", "NP"]
+        cols_to_hide = [
+            "ID",
+            "MovingSeconds",
+            "DistanceMeters",
+            "TypeNormalized",
+            "NP",
+            "Polyline",
+            "StartLatLng",
+            "EndLatLng",
+        ]
         cols_to_drop = [c for c in cols_to_hide if c in filtered_df.columns]
         st.dataframe(filtered_df.drop(columns=cols_to_drop), use_container_width=True)
 
+        map_container = st.container()
+        map_options = {
+            f"{row['Data']} - {row['Nome']} ({row['Tipo']})": row["ID"]
+            for _, row in filtered_df.iterrows()
+        }
+
+        if map_options:
+            selected_map_label = st.selectbox(
+                "Selecionar atividade para visualizar o mapa",
+                options=list(map_options.keys()),
+                index=0,
+                key="strava_map_select_acts",
+            )
+            selected_map_id = map_options.get(selected_map_label)
+            selected_row = filtered_df[filtered_df["ID"] == selected_map_id]
+            if not selected_row.empty:
+                render_activity_map(selected_row.iloc[0], map_container)
+        else:
+            with map_container:
+                st.info("Nenhuma atividade disponível para exibir no mapa.")
+
     with tab_match:
         st.subheader("Match Treinos Planejados x Realizados")
+
+        if "strava_match_map_id" not in st.session_state:
+            st.session_state["strava_match_map_id"] = None
 
         planned_df = st.session_state.get("df", pd.DataFrame()).copy()
         if not planned_df.empty:
@@ -1520,6 +1674,8 @@ def render_strava_tab(user_id: str):
                     st.write(
                         "Encontramos treinos planejados com mesma data e modalidade: selecione ou confirme a associação."
                     )
+                    if st.button("Ver no mapa", key=f"map_suggestion_{act.get('ID')}"):
+                        st.session_state["strava_match_map_id"] = act.get("ID")
                     if len(same_day) == 1:
                         target = same_day.iloc[0]
                         st.markdown(
@@ -1624,6 +1780,9 @@ def render_strava_tab(user_id: str):
                     key="manual_strava_select",
                 )
 
+            if selected_strava:
+                st.session_state["strava_match_map_id"] = strava_options.get(selected_strava)
+
             if st.button("Associar manualmente"):
                 planned_uid = planned_options.get(selected_planned)
                 strava_id = strava_options.get(selected_strava)
@@ -1633,6 +1792,19 @@ def render_strava_tab(user_id: str):
                     safe_rerun()
                 else:
                     st.error("Seleção inválida para associação manual.")
+
+        map_container = st.container()
+        selected_map_id = st.session_state.get("strava_match_map_id")
+        if selected_map_id:
+            selected_row = filtered_df[filtered_df["ID"] == selected_map_id]
+            if not selected_row.empty:
+                render_activity_map(selected_row.iloc[0], map_container)
+            else:
+                with map_container:
+                    st.info("Selecione uma atividade com percurso para exibição no mapa.")
+        else:
+            with map_container:
+                st.info("Selecione uma atividade para visualizar o percurso no mapa.")
 
 # ----------------------------------------------------------------------------
 # Observações diárias
