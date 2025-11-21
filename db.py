@@ -112,7 +112,16 @@ def init_db() -> None:
                     "AdjAppliedAt" TEXT,
                     "ChangeLog" TEXT,
                     "LastEditedAt" TEXT,
-                    "WeekStart" DATE
+                    "WeekStart" DATE,
+                    "TSS" NUMERIC,
+                    "IF" NUMERIC,
+                    "ATL" NUMERIC,
+                    "CTL" NUMERIC,
+                    "TSB" NUMERIC,
+                    "StravaID" TEXT,
+                    "StravaURL" TEXT,
+                    "DuracaoRealMin" NUMERIC,
+                    "DistanciaReal" NUMERIC
                 )
                 """
             )
@@ -122,6 +131,23 @@ def init_db() -> None:
                 'ALTER TABLE treinos ADD COLUMN IF NOT EXISTS "TempoEstimadoMin" NUMERIC'
             )
         )
+        for extra_col in [
+            "TSS",
+            "IF",
+            "ATL",
+            "CTL",
+            "TSB",
+            "StravaID",
+            "StravaURL",
+            "DuracaoRealMin",
+            "DistanciaReal",
+        ]:
+            col_type = "TEXT" if extra_col in ["StravaID", "StravaURL"] else "NUMERIC"
+            conn.execute(
+                text(
+                    f'ALTER TABLE treinos ADD COLUMN IF NOT EXISTS "{extra_col}" {col_type}'
+                )
+            )
         conn.execute(
             text(
                 """

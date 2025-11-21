@@ -96,6 +96,15 @@ SCHEMA_COLS = [
     "ChangeLog",
     "LastEditedAt",
     "WeekStart",
+    "TSS",
+    "IF",
+    "ATL",
+    "CTL",
+    "TSB",
+    "StravaID",
+    "StravaURL",
+    "DuracaoRealMin",
+    "DistanciaReal",
 ]
 
 MODALITY_COLORS = {
@@ -118,6 +127,18 @@ MODALITY_EMOJIS = {
     "Força/Calistenia": "💪",
     "Mobilidade": "🤸",
     "Descanso": "😴",
+}
+
+STRAVA_TO_PLAN_MODALITY = {
+    "run": "corrida",
+    "run_workout": "corrida",
+    "virtual_run": "corrida",
+    "ride": "ciclismo",
+    "virtual_ride": "ciclismo",
+    "bike": "ciclismo",
+    "swim": "natação",
+    "lap_swim": "natação",
+    "open_water_swim": "natação",
 }
 
 PDF_REPLACE = str.maketrans({
@@ -536,18 +557,32 @@ def load_all() -> pd.DataFrame:
     init_database()
     df = db.fetch_dataframe(
         "SELECT "
-        "    \"UserID\", \"UID\", \"Data\"::text AS \"Data\", \"Start\"::text AS \"Start\", \"End\"::text AS \"End\", \"Modalidade\","
-        "    \"Tipo de Treino\", \"Volume\", \"Unidade\", \"RPE\", \"Detalhamento\", \"TempoEstimadoMin\","
-        "    \"Observações\", \"Status\", \"adj\", \"AdjAppliedAt\", \"ChangeLog\","
-        "    \"LastEditedAt\", \"WeekStart\"::text AS \"WeekStart\""
+        "    \"UserID\", \"UID\", \"Data\"::text AS \"Data\", \"Start\"::text AS \"Start\", \"End\"::text AS \"End\", \"Modalidade\"," 
+        "    \"Tipo de Treino\", \"Volume\", \"Unidade\", \"RPE\", \"Detalhamento\", \"TempoEstimadoMin\"," 
+        "    \"Observações\", \"Status\", \"adj\", \"AdjAppliedAt\", \"ChangeLog\"," 
+        "    \"LastEditedAt\", \"WeekStart\"::text AS \"WeekStart\", \"TSS\", \"IF\", \"ATL\", \"CTL\", \"TSB\", \"StravaID\", \"StravaURL\", \"DuracaoRealMin\", \"DistanciaReal\""
         " FROM treinos"
     )
     if df.empty:
         df = pd.DataFrame(columns=SCHEMA_COLS)
 
+    numeric_cols = [
+        "Volume",
+        "RPE",
+        "adj",
+        "TempoEstimadoMin",
+        "TSS",
+        "IF",
+        "ATL",
+        "CTL",
+        "TSB",
+        "DuracaoRealMin",
+        "DistanciaReal",
+    ]
+
     for col in SCHEMA_COLS:
         if col not in df.columns:
-            if col in ["Volume", "RPE", "adj"]:
+            if col in numeric_cols:
                 df[col] = 0.0
             else:
                 df[col] = ""
@@ -556,7 +591,7 @@ def load_all() -> pd.DataFrame:
         df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
         df["WeekStart"] = pd.to_datetime(df["WeekStart"], errors="coerce").dt.date
 
-        for c in ["Volume", "RPE", "adj", "TempoEstimadoMin"]:
+        for c in numeric_cols:
             df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
 
         for c in ["ChangeLog", "Detalhamento", "Observações"]:
@@ -590,12 +625,12 @@ def save_all(df: pd.DataFrame):
                 "UserID", "UID", "Data", "Start", "End", "Modalidade",
                 "Tipo de Treino", "Volume", "Unidade", "RPE", "Detalhamento", "TempoEstimadoMin",
                 "Observações", "Status", "adj", "AdjAppliedAt", "ChangeLog",
-                "LastEditedAt", "WeekStart"
+                "LastEditedAt", "WeekStart", "TSS", "IF", "ATL", "CTL", "TSB", "StravaID", "StravaURL", "DuracaoRealMin", "DistanciaReal"
             ) VALUES (
                 :user_id, :uid, :data, :start, :end, :modalidade,
                 :tipo_treino, :volume, :unidade, :rpe, :detalhamento, :tempo_estimado_min,
                 :observacoes, :status, :adj, :adj_applied_at, :changelog,
-                :last_edited_at, :week_start
+                :last_edited_at, :week_start, :tss, :intensity, :atl, :ctl, :tsb, :strava_id, :strava_url, :duracao_real, :distancia_real
             )
             """,
             [
@@ -619,6 +654,15 @@ def save_all(df: pd.DataFrame):
                     "changelog": rec.get("ChangeLog", ""),
                     "last_edited_at": rec.get("LastEditedAt", ""),
                     "week_start": rec.get("WeekStart") or None,
+                    "tss": float(rec.get("TSS", 0.0) or 0.0),
+                    "intensity": float(rec.get("IF", 0.0) or 0.0),
+                    "atl": float(rec.get("ATL", 0.0) or 0.0),
+                    "ctl": float(rec.get("CTL", 0.0) or 0.0),
+                    "tsb": float(rec.get("TSB", 0.0) or 0.0),
+                    "strava_id": rec.get("StravaID", ""),
+                    "strava_url": rec.get("StravaURL", ""),
+                    "duracao_real": float(rec.get("DuracaoRealMin", 0.0) or 0.0),
+                    "distancia_real": float(rec.get("DistanciaReal", 0.0) or 0.0),
                 }
                 for rec in records
             ],
@@ -1025,6 +1069,44 @@ def _render_strava_popup_button(auth_url: str):
     st.components.v1.html(button_html, height=90)
 
 
+def _apply_activity_to_training(user_id: str, planned_uid: str, activity_row: pd.Series):
+    df = st.session_state.get("df", pd.DataFrame()).copy()
+    idx = df[df["UID"] == planned_uid].index
+    if idx.empty:
+        return
+
+    idx = idx[0]
+    rpe_val = float(df.at[idx, "RPE"] or 0.0)
+    duration_seconds = float(activity_row.get("MovingSeconds", 0.0) or 0.0)
+    np_val = float(activity_row.get("NP", 0.0) or 0.0)
+    ftp = None
+    tss_val, intensity = _compute_tss(duration_seconds, np_val, ftp, rpe_val)
+
+    distance_km = float(activity_row.get("Distância (km)", 0.0) or 0.0)
+    duration_min = float(activity_row.get("Duração (min)", 0.0) or 0.0)
+    strava_id = activity_row.get("ID")
+    strava_url = f"https://www.strava.com/activities/{strava_id}" if strava_id else ""
+
+    df.at[idx, "Status"] = "Realizado"
+    df.at[idx, "TSS"] = round(tss_val, 2)
+    df.at[idx, "IF"] = round(intensity or 0.0, 3)
+    df.at[idx, "StravaID"] = str(strava_id or "")
+    df.at[idx, "StravaURL"] = strava_url
+    df.at[idx, "DuracaoRealMin"] = duration_min
+    df.at[idx, "DistanciaReal"] = distance_km
+    df.at[idx, "TempoEstimadoMin"] = duration_min
+    if df.at[idx, "Unidade"] in ["km", "m"]:
+        if df.at[idx, "Unidade"] == "m":
+            df.at[idx, "Volume"] = distance_km * 1000.0
+        else:
+            df.at[idx, "Volume"] = distance_km
+
+    df = _update_training_loads(user_id, df)
+    st.session_state["df"] = df
+    save_user_df(user_id, df)
+    st.success("Treino associado e métricas atualizadas!")
+
+
 def get_saved_strava_token(user_id: str) -> dict | None:
     data = _load_strava_data(user_id)
     token = data.get("token") if isinstance(data, dict) else None
@@ -1154,6 +1236,7 @@ def _normalize_strava_activities(activities: list[dict]) -> pd.DataFrame:
         start_local = pd.to_datetime(act.get("start_date_local"), errors="coerce")
         moving_seconds = act.get("moving_time") or 0
         distance_m = act.get("distance") or 0
+        np_power = act.get("weighted_average_watts")
         rows.append(
             {
                 "Nome": act.get("name"),
@@ -1168,12 +1251,113 @@ def _normalize_strava_activities(activities: list[dict]) -> pd.DataFrame:
                 if moving_seconds
                 else 0.0,
                 "ID": act.get("id"),
+                "MovingSeconds": moving_seconds,
+                "DistanceMeters": distance_m,
+                "TypeNormalized": str(act.get("type", "")),
+                "NP": np_power or 0.0,
             }
         )
 
     df = pd.DataFrame(rows)
     if not df.empty:
         df.sort_values(by=["Data", "Hora"], ascending=[False, False], inplace=True)
+    return df
+
+
+def _plan_modality_from_strava(strava_type: str | None) -> str | None:
+    if not strava_type:
+        return None
+    mapped = STRAVA_TO_PLAN_MODALITY.get(str(strava_type).strip().lower())
+    if not mapped:
+        return None
+    if mapped == "corrida":
+        return "Corrida"
+    if mapped == "ciclismo":
+        return "Ciclismo"
+    if mapped == "natação":
+        return "Natação"
+    return None
+
+
+def _load_training_loads(user_id: str) -> dict:
+    row = db.fetch_one(
+        "SELECT value FROM meta WHERE key = :key", {"key": f"load_metrics_{user_id}"}
+    )
+    if row and row.get("value"):
+        try:
+            return json.loads(row["value"])
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_training_loads(user_id: str, payload: dict):
+    db.execute(
+        """
+        INSERT INTO meta (key, value)
+        VALUES (:key, :value)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """,
+        {"key": f"load_metrics_{user_id}", "value": json.dumps(payload)},
+    )
+
+
+def _compute_tss(duration_seconds: float, np_value: float | None, ftp: float | None, rpe: float | None) -> tuple[float, float]:
+    ftp_val = ftp or 0.0
+    np_val = np_value or 0.0
+    if ftp_val > 0 and np_val > 0:
+        intensity = np_val / ftp_val
+        tss_val = (duration_seconds * (intensity**2) / 3600.0) * 100.0
+        return tss_val, intensity
+    duration_minutes = duration_seconds / 60.0
+    rpe_val = rpe or 0.0
+    if rpe_val <= 0:
+        rpe_val = 5.0
+    tss_val = (duration_minutes / 60.0) * rpe_val * 10.0
+    return tss_val, 0.0
+
+
+def _update_training_loads(user_id: str, user_df: pd.DataFrame) -> pd.DataFrame:
+    df = user_df.copy()
+    df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
+    df["TSS"] = pd.to_numeric(df.get("TSS", 0.0), errors="coerce").fillna(0.0)
+    tss_per_day = (
+        df.dropna(subset=["Data"])
+        .groupby("Data")
+        ["TSS"]
+        .sum()
+        .to_dict()
+    )
+    if not tss_per_day:
+        _save_training_loads(user_id, {})
+        return df
+
+    start_date = min(tss_per_day.keys())
+    end_date = max(tss_per_day.keys())
+    atl = 0.0
+    ctl = 0.0
+    metrics: dict[str, dict[str, float]] = {}
+    cursor = start_date
+    while cursor <= end_date:
+        tss_today = float(tss_per_day.get(cursor, 0.0) or 0.0)
+        atl = atl + (tss_today - atl) / 7.0
+        ctl = ctl + (tss_today - ctl) / 42.0
+        tsb = ctl - atl
+        metrics[cursor.isoformat()] = {"ATL": atl, "CTL": ctl, "TSB": tsb, "TSS": tss_today}
+        cursor += timedelta(days=1)
+
+    for idx, row in df.iterrows():
+        d = row.get("Data")
+        if isinstance(d, pd.Timestamp):
+            d = d.date()
+        if isinstance(d, date):
+            key = d.isoformat()
+            if key in metrics:
+                df.at[idx, "ATL"] = metrics[key]["ATL"]
+                df.at[idx, "CTL"] = metrics[key]["CTL"]
+                df.at[idx, "TSB"] = metrics[key]["TSB"]
+
+    _save_training_loads(user_id, metrics)
     return df
 
 
@@ -1267,6 +1451,9 @@ def render_strava_tab(user_id: str):
     try:
         activities = client.get_athlete_activities(after=after_dt, before=before_dt)
         activities_df = _normalize_strava_activities(activities)
+        strava_data = strava_data if isinstance(strava_data, dict) else {}
+        strava_data["activities"] = activities
+        _save_strava_data(user_id, strava_data)
         if refresh_clicked:
             st.success("Atividades atualizadas a partir do Strava.")
     except Exception as exc:  # noqa: BLE001
@@ -1288,7 +1475,164 @@ def render_strava_tab(user_id: str):
         activities_df["Tipo"].isin(selected_types) if selected_types else [True] * len(activities_df)
     ]
 
-    st.dataframe(filtered_df.drop(columns=["ID"]), use_container_width=True)
+    tab_acts, tab_match = st.tabs([
+        "Atividades",
+        "Match Treinos Planejados x Realizados",
+    ])
+
+    with tab_acts:
+        cols_to_hide = ["ID", "MovingSeconds", "DistanceMeters", "TypeNormalized", "NP"]
+        cols_to_drop = [c for c in cols_to_hide if c in filtered_df.columns]
+        st.dataframe(filtered_df.drop(columns=cols_to_drop), use_container_width=True)
+
+    with tab_match:
+        st.subheader("Match Treinos Planejados x Realizados")
+
+        planned_df = st.session_state.get("df", pd.DataFrame()).copy()
+        if not planned_df.empty:
+            planned_df["Data"] = pd.to_datetime(planned_df["Data"], errors="coerce").dt.date
+        planned_candidates = planned_df[
+            planned_df["Status"].astype(str).str.lower() != "realizado"
+        ].copy()
+        planned_candidates = planned_candidates[planned_candidates["Modalidade"] != "Descanso"]
+
+        st.caption("Sugestões automáticas são feitas apenas quando data e modalidade são idênticas.")
+
+        suggestions: list[tuple[pd.Series, pd.DataFrame]] = []
+        for _, act in filtered_df.iterrows():
+            plan_mod = _plan_modality_from_strava(act.get("Tipo"))
+            if not plan_mod:
+                continue
+            same_day = planned_candidates[
+                (planned_candidates["Data"] == act.get("Data"))
+                & (planned_candidates["Modalidade"].str.lower() == plan_mod.lower())
+                & (planned_candidates.get("StravaID", "").astype(str).str.strip() == "")
+            ]
+            if not same_day.empty:
+                suggestions.append((act, same_day))
+
+        if not suggestions:
+            st.info("Nenhum match automático disponível para as atividades e filtros selecionados.")
+        else:
+            for act, same_day in suggestions:
+                header = f"Sugestão: {act.get('Nome', '')} ({act.get('Data')})"
+                with st.expander(header, expanded=False):
+                    st.write(
+                        "Encontramos treinos planejados com mesma data e modalidade: selecione ou confirme a associação."
+                    )
+                    if len(same_day) == 1:
+                        target = same_day.iloc[0]
+                        st.markdown(
+                            f"**Planejado:** {target.get('Tipo de Treino', '')} ({target.get('Modalidade')}) em {target.get('Data')}"
+                        )
+                        col_c, col_r = st.columns(2)
+                        with col_c:
+                            if st.button(
+                                "Confirmar match",
+                                key=f"confirm_auto_{act.get('ID')}_{target.get('UID')}",
+                            ):
+                                _apply_activity_to_training(user_id, target.get("UID"), act)
+                                safe_rerun()
+                        with col_r:
+                            st.button("Recusar", key=f"reject_auto_{act.get('ID')}_{target.get('UID')}")
+                    else:
+                        plan_options = {
+                            f"{row['Data']} - {row['Tipo de Treino']} ({row['Modalidade']})": row["UID"]
+                            for _, row in same_day.iterrows()
+                        }
+                        chosen_plan = st.selectbox(
+                            "Escolha o treino planejado para associar",
+                            options=list(plan_options.keys()),
+                            key=f"auto_plan_select_{act.get('ID')}",
+                        )
+                        col_c, col_r = st.columns(2)
+                        with col_c:
+                            if st.button(
+                                "Confirmar match",
+                                key=f"confirm_auto_{act.get('ID')}_multi",
+                            ):
+                                target_uid = plan_options.get(chosen_plan)
+                                if target_uid:
+                                    _apply_activity_to_training(user_id, target_uid, act)
+                                    safe_rerun()
+                        with col_r:
+                            st.button("Recusar", key=f"reject_auto_{act.get('ID')}_multi")
+
+        st.markdown("---")
+        st.subheader("Match manual")
+
+        today_local = today()
+        planned_dates = sorted(
+            {
+                d
+                for d in planned_candidates["Data"].tolist()
+                if isinstance(d, (date, datetime, pd.Timestamp)) and not pd.isna(d)
+            }
+        )
+        strava_dates = sorted(
+            {
+                d
+                for d in filtered_df["Data"].tolist()
+                if isinstance(d, (date, datetime, pd.Timestamp)) and not pd.isna(d)
+            }
+        )
+
+        def _default_date(opts: list[date]):
+            if not opts:
+                return today_local
+            normalized = [dt.date() if isinstance(dt, datetime) else dt for dt in opts]
+            if today_local in normalized:
+                return today_local
+            return sorted(normalized, key=lambda d: abs(d - today_local))[0]
+
+        col_plan_date, col_act_date = st.columns(2)
+        planned_date_choice = col_plan_date.date_input(
+            "Dia do treino planejado", value=_default_date(planned_dates), key="manual_plan_date"
+        )
+        act_date_choice = col_act_date.date_input(
+            "Dia da atividade Strava", value=_default_date(strava_dates), key="manual_act_date"
+        )
+
+        planned_filtered = planned_candidates[planned_candidates["Data"] == planned_date_choice]
+        strava_filtered = filtered_df[filtered_df["Data"] == act_date_choice]
+
+        planned_options = {
+            f"{row['Data']} - {row['Modalidade']} - {row['Tipo de Treino']}": row["UID"]
+            for _, row in planned_filtered.iterrows()
+        }
+        strava_options = {
+            f"{row['Data']} - {row['Tipo']} - {row['Nome']}": row["ID"]
+            for _, row in strava_filtered.iterrows()
+        }
+
+        if not planned_options or not strava_options:
+            st.info(
+                "Nenhum treino planejado elegível ou nenhuma atividade do Strava disponível para as datas selecionadas."
+            )
+        else:
+            col_p, col_s = st.columns(2)
+            with col_p:
+                selected_planned = st.selectbox(
+                    "Treino planejado",
+                    options=list(planned_options.keys()),
+                    key="manual_planned_select",
+                )
+            with col_s:
+                selected_strava = st.selectbox(
+                    "Treino Strava",
+                    options=list(strava_options.keys()),
+                    key="manual_strava_select",
+                )
+
+            if st.button("Associar manualmente"):
+                planned_uid = planned_options.get(selected_planned)
+                strava_id = strava_options.get(selected_strava)
+                act_row = strava_filtered[strava_filtered["ID"] == strava_id]
+                if not act_row.empty and planned_uid:
+                    _apply_activity_to_training(user_id, planned_uid, act_row.iloc[0])
+                    safe_rerun()
+                else:
+                    st.error("Seleção inválida para associação manual.")
 
 # ----------------------------------------------------------------------------
 # Observações diárias
@@ -3750,6 +4094,14 @@ def main():
         with tab_semana:
 
             off_days_set = set(user_preferences.get("off_days", []))
+            opcoes_agendamento = [
+                "Padrão do app (ignorar horários livres)",
+                "Usar padrão de horários salvo",
+            ]
+            modo_agendamento_default = st.session_state.get(
+                "modo_agendamento_choice", opcoes_agendamento[0]
+            )
+
             generate_week_clicked = False
             with st.popover(
                 "⚙️ Parâmetros de prescrição e metas semanais", use_container_width=True
@@ -3848,6 +4200,18 @@ def main():
 
                 st.caption("Essas metas também alimentam a geração de ciclo direto no calendário.")
 
+                st.markdown("**Como encaixar os treinos no horário?**")
+                modo_agendamento = st.radio(
+                    "Opção de agendamento",
+                    opcoes_agendamento,
+                    index=opcoes_agendamento.index(modo_agendamento_default)
+                    if modo_agendamento_default in opcoes_agendamento
+                    else 0,
+                    horizontal=True,
+                    key="modo_agendamento_radio",
+                )
+                st.session_state["modo_agendamento_choice"] = modo_agendamento
+
                 generate_week_clicked = st.button(
                     "📆 Gerar Semana Automática",
                     use_container_width=True,
@@ -3855,7 +4219,7 @@ def main():
                 )
 
             st.markdown("---")
-    
+
             # 3. Semana atual
             col1, col2, col3 = st.columns([1, 2, 1])
             if col1.button("⬅️ Semana anterior"):
@@ -3882,18 +4246,6 @@ def main():
     
             week_slots = get_week_availability(user_id, week_start)
     
-            # Modo de agendamento
-            st.subheader("Como encaixar os treinos?")
-            opcoes_agendamento = [
-                "Padrão do app (ignorar horários livres)",
-                "Usar padrão de horários salvo",
-            ]
-            modo_agendamento = st.radio(
-                "Opção de agendamento",
-                opcoes_agendamento,
-                horizontal=True,
-            )
-
             # Gerar semana automática
             if generate_week_clicked:
                 dias_map = dias_semana_options
@@ -4593,28 +4945,19 @@ def main():
     elif menu == "📈 Dashboard":
         st.header("📈 Dashboard de Performance")
         weekly_metrics, df_with_load = calculate_metrics(df)
+        metrics_memory = _load_training_loads(user_id)
 
         df_dashboard = df.copy()
         if not df_dashboard.empty:
             df_dashboard["Data"] = pd.to_datetime(df_dashboard["Data"], errors="coerce").dt.date
             df_dashboard["WeekStart"] = pd.to_datetime(df_dashboard["WeekStart"], errors="coerce").dt.date
 
-        tab_carga, tab_aderencia, tab_historico = st.tabs([
-            "Carga", "Aderência", "Histórico de Edição"
+        tab_aderencia, tab_carga, tab_historico = st.tabs([
+            "Aderência", "Carga", "Histórico de Edição"
         ])
 
-        with tab_carga:
-            plot_load_chart(weekly_metrics)
-            st.dataframe(df_with_load)
-
         with tab_aderencia:
-            adherence_df = compute_weekly_adherence(df_dashboard)
-            if adherence_df.empty:
-                st.info("Sem dados suficientes para calcular aderência semanal.")
-            else:
-                st.dataframe(adherence_df, use_container_width=True)
-                st.caption("S:% = aderência em sessões. V:% = aderência em volume.")
-
+            st.subheader("Aderência diária")
             if df_dashboard.empty:
                 st.info("Cadastre treinos para visualizar a aderência diária.")
             else:
@@ -4623,10 +4966,17 @@ def main():
                 if month_keys:
                     month_labels = [m.strftime("%m/%Y") for m in month_keys]
                     month_map = dict(zip(month_labels, month_keys))
+                    current_month = date.today().replace(day=1)
+                    default_index = 0
+                    if current_month in month_keys:
+                        try:
+                            default_index = month_labels.index(current_month.strftime("%m/%Y"))
+                        except ValueError:
+                            default_index = 0
                     selected_label = st.selectbox(
                         "Selecione o mês",
                         month_labels,
-                        index=0,
+                        index=default_index,
                         key="adherence_month_select",
                     )
                     selected_month = month_map[selected_label]
@@ -4642,6 +4992,60 @@ def main():
                         )
                 else:
                     st.info("Cadastre treinos para visualizar a aderência diária.")
+
+            if metrics_memory:
+                st.markdown("---")
+                st.subheader("Carga do atleta (ATL/CTL/TSB)")
+                memory_rows = []
+                for day_str, vals in metrics_memory.items():
+                    memory_rows.append(
+                        {
+                            "Data": day_str,
+                            "TSS": round(float(vals.get("TSS", 0.0) or 0.0), 2),
+                            "ATL": round(float(vals.get("ATL", 0.0) or 0.0), 2),
+                            "CTL": round(float(vals.get("CTL", 0.0) or 0.0), 2),
+                            "TSB": round(float(vals.get("TSB", 0.0) or 0.0), 2),
+                        }
+                    )
+
+                memory_df = pd.DataFrame(memory_rows)
+                memory_df["Data"] = pd.to_datetime(memory_df["Data"], errors="coerce").dt.date
+                memory_df = memory_df.dropna(subset=["Data"]).sort_values("Data")
+
+                latest = memory_df.iloc[-1]
+                prev = memory_df.iloc[-2] if len(memory_df) > 1 else None
+                col_atl, col_ctl, col_tsb = st.columns(3)
+                col_atl.metric(
+                    "ATL", f"{latest['ATL']:.1f}",
+                    delta=(latest["ATL"] - prev["ATL"]) if prev is not None else None,
+                    help=f"Última atualização em {latest['Data'].strftime('%d/%m/%Y')}"
+                )
+                col_ctl.metric(
+                    "CTL", f"{latest['CTL']:.1f}",
+                    delta=(latest["CTL"] - prev["CTL"]) if prev is not None else None,
+                    help=f"Última atualização em {latest['Data'].strftime('%d/%m/%Y')}"
+                )
+                col_tsb.metric(
+                    "TSB", f"{latest['TSB']:.1f}",
+                    delta=(latest["TSB"] - prev["TSB"]) if prev is not None else None,
+                    help=f"Última atualização em {latest['Data'].strftime('%d/%m/%Y')}"
+                )
+
+                with st.expander("Memória de cálculo ATL/CTL/TSB (diário)", expanded=False):
+                    st.dataframe(memory_df.sort_values("Data", ascending=False), use_container_width=True)
+
+            st.markdown("---")
+            st.subheader("Planilha de aderência semanal")
+            adherence_df = compute_weekly_adherence(df_dashboard)
+            if adherence_df.empty:
+                st.info("Sem dados suficientes para calcular aderência semanal.")
+            else:
+                st.dataframe(adherence_df, use_container_width=True)
+                st.caption("S:% = aderência em sessões. V:% = aderência em volume.")
+
+        with tab_carga:
+            plot_load_chart(weekly_metrics)
+            st.dataframe(df_with_load)
 
         with tab_historico:
             if df_dashboard.empty:
