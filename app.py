@@ -3246,10 +3246,33 @@ def plot_load_chart(weekly_metrics: pd.DataFrame):
 # ----------------------------------------------------------------------------
 
 def _strava_config():
-    client_id = str(st.secrets.get("STRAVA_CLIENT_ID", ""))
-    client_secret = str(st.secrets.get("STRAVA_CLIENT_SECRET", ""))
-    redirect_uri = str(st.secrets.get("STRAVA_REDIRECT_URI", ""))
-    scope = str(st.secrets.get("STRAVA_SCOPE", "read,activity:read"))
+    client_id = str(
+        st.secrets.get("STRAVA_CLIENT_ID", "")
+        or os.getenv("STRAVA_CLIENT_ID", "")
+    )
+    client_secret = str(
+        st.secrets.get("STRAVA_CLIENT_SECRET", "")
+        or os.getenv("STRAVA_CLIENT_SECRET", "")
+    )
+    redirect_uri = str(
+        st.secrets.get("STRAVA_REDIRECT_URI", "")
+        or os.getenv("STRAVA_REDIRECT_URI", "")
+    )
+    scope = str(
+        st.secrets.get("STRAVA_SCOPE", "")
+        or os.getenv("STRAVA_SCOPE", "")
+        or "read,activity:read"
+    )
+    try:
+        if "strava" in st.secrets:
+            section = st.secrets["strava"]
+            client_id = section.get("client_id") or client_id
+            client_secret = section.get("client_secret") or client_secret
+            redirect_uri = section.get("redirect_uri") or redirect_uri
+            scope = section.get("scope") or scope
+    except Exception:
+        pass
+    redirect_uri = redirect_uri.strip().rstrip("/") if redirect_uri else ""
     return client_id, client_secret, redirect_uri, scope
 
 def _strava_auth_url():
@@ -3349,6 +3372,8 @@ def render_strava_tab(user_id: str):
         url = _strava_auth_url()
         if not url:
             st.error("Configure STRAVA_REDIRECT_URI, STRAVA_CLIENT_ID e STRAVA_CLIENT_SECRET em st.secrets.")
+            _, _, ru, sc = _strava_config()
+            st.caption(f"redirect_uri configurado: {ru or '(vazio)'} | scope: {sc}")
         else:
             st.link_button("Entrar com Strava", url)
         return
