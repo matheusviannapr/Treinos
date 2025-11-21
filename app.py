@@ -1152,7 +1152,7 @@ def _extract_activity_coords(act: pd.Series) -> list[tuple[float, float]]:
     return []
 
 
-def render_activity_map(act: pd.Series, container):
+def render_activity_map(act: pd.Series, container, *, map_key: str | None = None):
     with container:
         st.markdown("### 🗺️ Percurso da atividade")
         coords = _extract_activity_coords(act)
@@ -1177,7 +1177,8 @@ def render_activity_map(act: pd.Series, container):
         except Exception:
             pass
 
-        st_folium(fmap, height=420, width=None, returned_objects=[])
+        map_component_key = map_key or f"activity-map-{act.get('ID') or act.get('UID') or 'unknown'}"
+        st_folium(fmap, height=420, width=None, returned_objects=[], key=map_component_key)
 
 
 def _apply_activity_to_training(user_id: str, planned_uid: str, activity_row: pd.Series):
@@ -1631,7 +1632,11 @@ def render_strava_tab(user_id: str):
             selected_map_id = map_options.get(selected_map_label)
             selected_row = filtered_df[filtered_df["ID"] == selected_map_id]
             if not selected_row.empty:
-                render_activity_map(selected_row.iloc[0], map_container)
+                render_activity_map(
+                    selected_row.iloc[0],
+                    map_container,
+                    map_key=f"strava-activities-map-{selected_map_id}",
+                )
         else:
             with map_container:
                 st.info("Nenhuma atividade disponível para exibir no mapa.")
@@ -1798,7 +1803,11 @@ def render_strava_tab(user_id: str):
         if selected_map_id:
             selected_row = filtered_df[filtered_df["ID"] == selected_map_id]
             if not selected_row.empty:
-                render_activity_map(selected_row.iloc[0], map_container)
+                render_activity_map(
+                    selected_row.iloc[0],
+                    map_container,
+                    map_key=f"strava-match-map-{selected_map_id}",
+                )
             else:
                 with map_container:
                     st.info("Selecione uma atividade com percurso para exibição no mapa.")
