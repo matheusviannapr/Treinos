@@ -953,6 +953,20 @@ def _save_strava_data(user_id: str, strava_data: dict):
     st.session_state["user_preferences_cache_user"] = user_id
 
 
+def _render_strava_popup_button(auth_url: str):
+    button_html = f"""
+    <div style='display: flex; flex-direction: column; gap: 6px; align-items: flex-start;'>
+        <button type='button'
+            onclick="const win = window.open('{auth_url}', 'strava_auth', 'width=900,height=900'); if(win){{win.focus();}} else {{window.location.href='{auth_url}';}}"
+            style='background-color: #fc4c02; color: white; border: none; padding: 10px 16px; border-radius: 6px; font-weight: 700; cursor: pointer;'>
+            Conectar ao Strava
+        </button>
+        <span style='font-size: 13px; color: #4a4a4a;'>Uma janela do Strava será aberta para você autorizar o acesso. Se não abrir, <a href='{auth_url}' target='_blank' rel='noopener noreferrer'>clique aqui</a>.</span>
+    </div>
+    """
+    st.components.v1.html(button_html, height=90)
+
+
 def get_saved_strava_token(user_id: str) -> dict | None:
     data = _load_strava_data(user_id)
     token = data.get("token") if isinstance(data, dict) else None
@@ -1150,10 +1164,7 @@ def render_strava_tab(user_id: str):
         auth_url = build_strava_auth_url(user_id)
         st.info("Conecte sua conta do Strava para importar suas atividades recentes.")
         if auth_url:
-            st.markdown(
-                f"<a href='{auth_url}' target='_blank' rel='noopener noreferrer' class='st-btn st-btn-primary'>Conectar ao Strava (popup)</a>",
-                unsafe_allow_html=True,
-            )
+            _render_strava_popup_button(auth_url)
         else:
             st.error(
                 "Não foi possível construir a URL de autorização. Verifique as credenciais do Strava."
