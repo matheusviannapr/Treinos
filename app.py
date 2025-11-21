@@ -4127,6 +4127,16 @@ def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
 
     week_df["Volume"] = pd.to_numeric(week_df["Volume"], errors="coerce").fillna(0.0)
 
+    # Preenche detalhamento ausente no DF canônico e persiste no base_df
+    pace_ctx = _pace_defaults_from_state()
+    enriched = enrich_detalhamento_for_export(week_df, pace_ctx)
+    if not enriched["Detalhamento"].fillna("").equals(week_df["Detalhamento"].fillna("")):
+        week_df = enriched
+        for idx in week_df.index:
+            base_df.at[idx, "Detalhamento"] = week_df.at[idx, "Detalhamento"]
+        save_user_df(user_id, base_df)
+        st.session_state["df"] = base_df
+
     # Garante UID estável: qualquer UID vazio ganha um novo e isso é salvo no base_df
     if "UID" not in week_df.columns:
         week_df["UID"] = ""
