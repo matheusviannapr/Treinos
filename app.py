@@ -884,11 +884,18 @@ def _set_query_params(**params):
         return
 
 
-DEFAULT_STRAVA_REDIRECT_URI = os.getenv("DEFAULT_STRAVA_REDIRECT_URI") or "http://localhost:8501/"
+DEFAULT_STRAVA_REDIRECT_URI = os.getenv("DEFAULT_STRAVA_REDIRECT_URI") or "http://localhost:8501"
 DEFAULT_STRAVA_CLIENT_ID = "186420"
 DEFAULT_STRAVA_CLIENT_SECRET = "be2b6979209ada4f74cf347b33e17f2e43e41eae"
 DEFAULT_STRAVA_ACCESS_TOKEN = "c1baef1b58be5f92951d117add5cd68fbd967659"
 DEFAULT_STRAVA_REFRESH_TOKEN = "dfb851ddf3fe70bab71c03ec7c28ede74cb58f67"
+
+
+def _normalize_redirect_uri(uri: str | None) -> str | None:
+    if not uri:
+        return None
+    normalized = str(uri).strip().rstrip("/")
+    return normalized
 
 
 def seed_default_strava_config_if_missing():
@@ -901,7 +908,9 @@ def seed_default_strava_config_if_missing():
     if row and row.get("value"):
         return
 
-    redirect_uri = os.getenv("STRAVA_REDIRECT_URI") or DEFAULT_STRAVA_REDIRECT_URI
+    redirect_uri = _normalize_redirect_uri(
+        os.getenv("STRAVA_REDIRECT_URI") or DEFAULT_STRAVA_REDIRECT_URI
+    )
     client_id = os.getenv("STRAVA_CLIENT_ID") or DEFAULT_STRAVA_CLIENT_ID
     client_secret = os.getenv("STRAVA_CLIENT_SECRET") or DEFAULT_STRAVA_CLIENT_SECRET
 
@@ -961,6 +970,7 @@ def get_strava_config() -> dict | None:
     client_secret = os.getenv("STRAVA_CLIENT_SECRET") or client_secret
     redirect_uri = os.getenv("STRAVA_REDIRECT_URI") or redirect_uri
 
+    redirect_uri = _normalize_redirect_uri(redirect_uri)
     if not client_id or not client_secret or not redirect_uri:
         return None
 
