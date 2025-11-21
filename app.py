@@ -34,12 +34,14 @@ import json
 import math
 import re
 import calendar as py_calendar
+import urllib.parse
 from datetime import datetime, date, timedelta, time, timezone
 from typing import Optional
 
 import pandas as pd
 import numpy as np
 import streamlit as st
+import requests
 from fpdf import FPDF
 import matplotlib.pyplot as plt
 import unicodedata
@@ -837,11 +839,13 @@ def load_preferences_for_user(user_id: str) -> dict:
         prefs = json.loads(row.iloc[0]["PreferencesJSON"])
     except Exception:
         return default
-    return {
-        "time_preferences": prefs.get("time_preferences", {}),
-        "daily_limit_minutes": prefs.get("daily_limit_minutes"),
-        "off_days": prefs.get("off_days", []),
-    }
+    if not isinstance(prefs, dict):
+        return default
+
+    merged = prefs.copy()
+    for key, default_value in default.items():
+        merged.setdefault(key, default_value)
+    return merged
 
 
 def save_preferences_for_user(user_id: str, preferences: dict):
@@ -857,6 +861,423 @@ def save_preferences_for_user(user_id: str, preferences: dict):
     )
     load_all_preferences.clear()
 
+
+# ----------------------------------------------------------------------------
+# Integração Strava
+# ----------------------------------------------------------------------------
+
+
+def _get_query_params() -> dict:
+    try:
+        return dict(st.query_params)  # type: ignore[attr-defined]
+    except Exception:
+        try:
+            return st.experimental_get_query_params()  # type: ignore[attr-defined]
+        except Exception:
+            return {}
+
+
+def _set_query_params(**params):
+    try:
+        st.experimental_set_query_params(**params)  # type: ignore[attr-defined]
+    except Exception:
+        return
+
+
+DEFAULT_STRAVA_REDIRECT_URI = os.getenv("DEFAULT_STRAVA_REDIRECT_URI") or "http://localhost:8501/"
+DEFAULT_STRAVA_CLIENT_ID = "186420"
+DEFAULT_STRAVA_CLIENT_SECRET = "be2b6979209ada4f74cf347b33e17f2e43e41eae"
+DEFAULT_STRAVA_ACCESS_TOKEN = "c1baef1b58be5f92951d117add5cd68fbd967659"
+DEFAULT_STRAVA_REFRESH_TOKEN = "dfb851ddf3fe70bab71c03ec7c28ede74cb58f67"
+
+
+def seed_default_strava_config_if_missing():
+    init_database()
+    try:
+        row = db.fetch_one("SELECT value FROM meta WHERE key = 'strava_config'")
+    except Exception:
+        return
+
+    if row and row.get("value"):
+        return
+
+    redirect_uri = os.getenv("STRAVA_REDIRECT_URI") or DEFAULT_STRAVA_REDIRECT_URI
+    client_id = os.getenv("STRAVA_CLIENT_ID") or DEFAULT_STRAVA_CLIENT_ID
+    client_secret = os.getenv("STRAVA_CLIENT_SECRET") or DEFAULT_STRAVA_CLIENT_SECRET
+
+    if not client_id or not client_secret or not redirect_uri:
+        return
+
+    payload = {
+        "client_id": str(client_id),
+        "client_secret": str(client_secret),
+        "redirect_uri": str(redirect_uri),
+        "seed_access_token": DEFAULT_STRAVA_ACCESS_TOKEN,
+        "seed_refresh_token": DEFAULT_STRAVA_REFRESH_TOKEN,
+    }
+
+    try:
+        db.execute(
+            """
+            INSERT INTO meta (key, value)
+            VALUES ('strava_config', :value)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """,
+            {"value": json.dumps(payload)},
+        )
+    except Exception:
+        return
+
+
+def get_strava_config() -> dict | None:
+    init_database()
+    seed_default_strava_config_if_missing()
+    client_id = None
+    client_secret = None
+    redirect_uri = None
+
+    try:
+        row = db.fetch_one(
+            "SELECT value FROM meta WHERE key = 'strava_config'"
+        )
+        if row and row.get("value"):
+            payload = json.loads(row["value"])
+            client_id = payload.get("client_id")
+            client_secret = payload.get("client_secret")
+            redirect_uri = payload.get("redirect_uri")
+    except Exception:
+        pass
+
+    try:
+        if "strava" in st.secrets:  # type: ignore[attr-defined]
+            secrets_section = st.secrets["strava"]
+            client_id = secrets_section.get("client_id") or client_id
+            client_secret = secrets_section.get("client_secret") or client_secret
+            redirect_uri = secrets_section.get("redirect_uri") or redirect_uri
+    except Exception:
+        pass
+
+    client_id = os.getenv("STRAVA_CLIENT_ID") or client_id
+    client_secret = os.getenv("STRAVA_CLIENT_SECRET") or client_secret
+    redirect_uri = os.getenv("STRAVA_REDIRECT_URI") or redirect_uri
+
+    if not client_id or not client_secret or not redirect_uri:
+        return None
+
+    return {
+        "client_id": str(client_id),
+        "client_secret": str(client_secret),
+        "redirect_uri": str(redirect_uri),
+    }
+
+
+def build_strava_auth_url(user_id: str) -> str | None:
+    cfg = get_strava_config()
+    if not cfg:
+        return None
+
+    params = {
+        "client_id": cfg["client_id"],
+        "response_type": "code",
+        "redirect_uri": cfg["redirect_uri"],
+        "scope": "read,activity:read_all",
+        "approval_prompt": "auto",
+        "state": user_id,
+    }
+    return "https://www.strava.com/oauth/authorize?" + urllib.parse.urlencode(params)
+
+
+def _load_strava_data(user_id: str) -> dict:
+    prefs = load_preferences_for_user(user_id)
+    return prefs.get("strava", {}) if isinstance(prefs, dict) else {}
+
+
+def _save_strava_data(user_id: str, strava_data: dict):
+    prefs = load_preferences_for_user(user_id)
+    prefs["strava"] = strava_data
+    save_preferences_for_user(user_id, prefs)
+    st.session_state["user_preferences_cache"] = prefs
+    st.session_state["user_preferences_cache_user"] = user_id
+
+
+def _render_strava_popup_button(auth_url: str):
+    button_html = f"""
+    <div style='display: flex; flex-direction: column; gap: 6px; align-items: flex-start;'>
+        <button type='button'
+            onclick="const win = window.open('{auth_url}', 'strava_auth', 'width=900,height=900'); if(win){{win.focus();}} else {{window.location.href='{auth_url}';}}"
+            style='background-color: #fc4c02; color: white; border: none; padding: 10px 16px; border-radius: 6px; font-weight: 700; cursor: pointer;'>
+            Conectar ao Strava
+        </button>
+        <span style='font-size: 13px; color: #4a4a4a;'>Uma janela do Strava será aberta para você autorizar o acesso. Se não abrir, <a href='{auth_url}' target='_blank' rel='noopener noreferrer'>clique aqui</a>.</span>
+    </div>
+    """
+    st.components.v1.html(button_html, height=90)
+
+
+def get_saved_strava_token(user_id: str) -> dict | None:
+    data = _load_strava_data(user_id)
+    token = data.get("token") if isinstance(data, dict) else None
+    return token if isinstance(token, dict) else None
+
+
+def save_strava_token(user_id: str, token_data: dict, athlete: dict | None = None):
+    data = _load_strava_data(user_id)
+    if not isinstance(data, dict):
+        data = {}
+    data["token"] = token_data
+    if athlete is not None:
+        data["athlete"] = athlete
+    _save_strava_data(user_id, data)
+
+
+def exchange_strava_code_for_token(user_id: str, code: str) -> tuple[dict | None, str | None]:
+    cfg = get_strava_config()
+    if not cfg:
+        return None, "Configuração do Strava ausente."
+    try:
+        response = requests.post(
+            "https://www.strava.com/oauth/token",
+            data={
+                "client_id": cfg["client_id"],
+                "client_secret": cfg["client_secret"],
+                "code": code,
+                "grant_type": "authorization_code",
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        token_data = {
+            "access_token": payload.get("access_token"),
+            "refresh_token": payload.get("refresh_token"),
+            "expires_at": payload.get("expires_at"),
+            "token_type": payload.get("token_type"),
+        }
+        athlete_data = payload.get("athlete")
+        save_strava_token(user_id, token_data, athlete=athlete_data)
+        return token_data, None
+    except Exception as exc:  # noqa: BLE001
+        return None, f"Falha ao trocar o código: {exc}"
+
+
+def refresh_strava_token(user_id: str, refresh_token: str) -> tuple[dict | None, str | None]:
+    cfg = get_strava_config()
+    if not cfg:
+        return None, "Configuração do Strava ausente."
+    try:
+        response = requests.post(
+            "https://www.strava.com/oauth/token",
+            data={
+                "client_id": cfg["client_id"],
+                "client_secret": cfg["client_secret"],
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        token_data = {
+            "access_token": payload.get("access_token"),
+            "refresh_token": payload.get("refresh_token", refresh_token),
+            "expires_at": payload.get("expires_at"),
+            "token_type": payload.get("token_type"),
+        }
+        athlete_data = payload.get("athlete")
+        save_strava_token(user_id, token_data, athlete=athlete_data)
+        return token_data, None
+    except Exception as exc:  # noqa: BLE001
+        return None, f"Falha ao renovar o token: {exc}"
+
+
+def ensure_valid_strava_token(user_id: str) -> dict | None:
+    token = get_saved_strava_token(user_id)
+    if not token:
+        return None
+
+    expires_at = token.get("expires_at")
+    now_ts = datetime.now(timezone.utc).timestamp()
+    if expires_at and isinstance(expires_at, (int, float)) and now_ts >= float(expires_at) - 60:
+        refresh_token = token.get("refresh_token")
+        if not refresh_token:
+            return None
+        refreshed, _ = refresh_strava_token(user_id, refresh_token)
+        return refreshed
+    return token
+
+
+class StravaClient:
+    def __init__(self, access_token: str):
+        self.access_token = access_token
+        self.base_url = "https://www.strava.com/api/v3"
+
+    def _get(self, path: str, params: dict | None = None):
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        response = requests.get(
+            f"{self.base_url}{path}", headers=headers, params=params or {}, timeout=15
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_athlete(self):
+        return self._get("/athlete")
+
+    def get_athlete_activities(
+        self,
+        after: datetime | None = None,
+        before: datetime | None = None,
+        per_page: int = 50,
+        page: int = 1,
+    ):
+        params: dict[str, int] = {"per_page": per_page, "page": page}
+        if after:
+            params["after"] = int(after.timestamp())
+        if before:
+            params["before"] = int(before.timestamp())
+        return self._get("/athlete/activities", params=params)
+
+
+def _normalize_strava_activities(activities: list[dict]) -> pd.DataFrame:
+    rows = []
+    for act in activities:
+        start_local = pd.to_datetime(act.get("start_date_local"), errors="coerce")
+        moving_seconds = act.get("moving_time") or 0
+        distance_m = act.get("distance") or 0
+        rows.append(
+            {
+                "Nome": act.get("name"),
+                "Tipo": act.get("type"),
+                "Data": start_local.date() if isinstance(start_local, pd.Timestamp) else None,
+                "Hora": start_local.strftime("%H:%M") if isinstance(start_local, pd.Timestamp) else "--:--",
+                "Distância (km)": round(float(distance_m) / 1000, 2) if distance_m else 0.0,
+                "Duração (min)": round(float(moving_seconds) / 60, 1) if moving_seconds else 0.0,
+                "Velocidade média (km/h)": round(
+                    (float(distance_m) / 1000) / (float(moving_seconds) / 3600), 2
+                )
+                if moving_seconds
+                else 0.0,
+                "ID": act.get("id"),
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df.sort_values(by=["Data", "Hora"], ascending=[False, False], inplace=True)
+    return df
+
+
+def render_strava_tab(user_id: str):
+    st.header("🚴 Integração com Strava")
+
+    params = _get_query_params()
+
+    def _first(value):
+        if isinstance(value, list):
+            return value[0]
+        return value
+
+    code_param = _first(params.get("code")) if params else None
+    state_param = _first(params.get("state")) if params else None
+    error_param = _first(params.get("error")) if params else None
+
+    if code_param:
+        if state_param and state_param != user_id:
+            st.error("O retorno do Strava não corresponde ao usuário atual.")
+        else:
+            with st.spinner("Finalizando conexão com o Strava..."):
+                _, err = exchange_strava_code_for_token(user_id, str(code_param))
+            _set_query_params()
+            if err:
+                st.error(err)
+            else:
+                st.success("Conta Strava conectada com sucesso!")
+                safe_rerun()
+    elif error_param:
+        st.error(f"Erro retornado pelo Strava: {error_param}")
+        _set_query_params()
+
+    token_data = ensure_valid_strava_token(user_id)
+    strava_data = _load_strava_data(user_id)
+    athlete_data = strava_data.get("athlete") if isinstance(strava_data, dict) else None
+
+    if not token_data or not token_data.get("access_token"):
+        auth_url = build_strava_auth_url(user_id)
+        st.info("Conecte sua conta do Strava para importar suas atividades recentes.")
+        if auth_url:
+            _render_strava_popup_button(auth_url)
+        else:
+            st.error(
+                "Não foi possível iniciar a conexão com o Strava agora. Tente novamente em instantes ou contate o suporte."
+            )
+        return
+
+    client = StravaClient(token_data["access_token"])
+
+    if not athlete_data:
+        try:
+            athlete_data = client.get_athlete()
+            strava_data = strava_data if isinstance(strava_data, dict) else {}
+            strava_data["athlete"] = athlete_data
+            _save_strava_data(user_id, strava_data)
+        except Exception as exc:  # noqa: BLE001
+            st.warning(f"Não foi possível carregar o perfil do atleta: {exc}")
+
+    col_info, col_token = st.columns([3, 1])
+    with col_info:
+        if athlete_data:
+            st.success(
+                f"Conectado como **{athlete_data.get('firstname', '')} {athlete_data.get('lastname', '')}**"
+            )
+        else:
+            st.success("Conta Strava conectada.")
+    with col_token:
+        exp_ts = token_data.get("expires_at")
+        if exp_ts:
+            exp_dt = datetime.fromtimestamp(exp_ts, tz=timezone.utc)
+            st.caption(f"Token expira em {exp_dt.astimezone().strftime('%d/%m %H:%M')} (local)")
+
+    today_dt = today()
+    default_start = today_dt - timedelta(days=30)
+    date_range = st.date_input(
+        "Período", (default_start, today_dt), key="strava_date_range", help="Defina o intervalo desejado"
+    )
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        start_date, end_date = date_range
+    else:
+        start_date = default_start
+        end_date = today_dt
+
+    refresh_clicked = st.button("Atualizar atividades")
+
+    after_dt = datetime.combine(start_date, time.min, tzinfo=timezone.utc) if start_date else None
+    before_dt = datetime.combine(end_date, time.max, tzinfo=timezone.utc) if end_date else None
+
+    activities_df: pd.DataFrame | None = None
+    try:
+        activities = client.get_athlete_activities(after=after_dt, before=before_dt)
+        activities_df = _normalize_strava_activities(activities)
+        if refresh_clicked:
+            st.success("Atividades atualizadas a partir do Strava.")
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Erro ao buscar atividades no Strava: {exc}")
+
+    if activities_df is None or activities_df.empty:
+        st.info("Nenhuma atividade encontrada para o período selecionado.")
+        return
+
+    activity_types = sorted([t for t in activities_df["Tipo"].dropna().unique()])
+    selected_types = st.multiselect(
+        "Filtrar por tipo de atividade",
+        options=activity_types,
+        default=activity_types,
+        key="strava_type_filter",
+    )
+
+    filtered_df = activities_df[
+        activities_df["Tipo"].isin(selected_types) if selected_types else [True] * len(activities_df)
+    ]
+
+    st.dataframe(filtered_df.drop(columns=["ID"]), use_container_width=True)
 
 # ----------------------------------------------------------------------------
 # Observações diárias
@@ -3305,7 +3726,7 @@ def main():
 
     menu = st.sidebar.radio(
         "Navegação",
-        ["📅 Planejamento Semanal", "🗓️ Resumo do Dia", "📈 Dashboard"],
+        ["📅 Planejamento Semanal", "🗓️ Resumo do Dia", "📈 Dashboard", "🚴 Strava"],
         index=0,
     )
     st.sidebar.markdown("---")
@@ -4277,6 +4698,9 @@ def main():
                                         st.markdown(f"- {change}")
                                 else:
                                     st.caption("Alteração sem detalhes adicionais.")
+
+    elif menu == "🚴 Strava":
+        render_strava_tab(user_id)
 
     
 if __name__ == "__main__":
