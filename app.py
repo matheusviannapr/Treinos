@@ -3952,7 +3952,8 @@ def generate_cycle(
 
     if not all_weeks:
         return pd.DataFrame(columns=SCHEMA_COLS)
-    return pd.concat(all_weeks, ignore_index=True)[SCHEMA_COLS]
+    df_cycle = pd.concat(all_weeks, ignore_index=True)[SCHEMA_COLS]
+    return enrich_detalhamento_for_export(df_cycle, paces)
 
 
 def _pace_defaults_from_state() -> dict:
@@ -4095,7 +4096,8 @@ def cycle_plan_to_trainings(
 
     if not all_weeks:
         return pd.DataFrame(columns=SCHEMA_COLS)
-    return pd.concat(all_weeks, ignore_index=True)[SCHEMA_COLS]
+    df_cycle = pd.concat(all_weeks, ignore_index=True)[SCHEMA_COLS]
+    return enrich_detalhamento_for_export(df_cycle, paces)
 
 # ----------------------------------------------------------------------------
 # UI Principal
