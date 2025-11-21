@@ -3303,6 +3303,16 @@ def _read_query_code_state():
         state = (params.get("state") or [None])[0]
         return code, state
 
+
+def _clear_strava_query_params():
+    try:
+        st.query_params.clear()
+    except Exception:
+        try:
+            st.experimental_set_query_params()
+        except Exception:
+            return
+
 def _strava_exchange_token(code):
     client_id, client_secret, redirect_uri, _ = _strava_config()
     data = {
@@ -3317,10 +3327,7 @@ def _strava_exchange_token(code):
     tok = r.json()
     st.session_state["strava_token"] = tok
     st.session_state["strava_athlete"] = tok.get("athlete")
-    try:
-        st.query_params.clear()
-    except Exception:
-        st.experimental_set_query_params()
+    _clear_strava_query_params()
 
 def _strava_refresh_token_if_needed():
     tok = st.session_state.get("strava_token")
@@ -3397,12 +3404,19 @@ def _normalize_strava_activities_for_ui(activities: list[dict] | None) -> pd.Dat
 def render_strava_tab(user_id: str):
     st.header("🚴 Strava")
     code, state = _read_query_code_state()
-    if code and state and state == st.session_state.get("strava_state"):
+    state_in_session = st.session_state.get("strava_state")
+    if code:
+        if state_in_session and state and state != state_in_session:
+            st.warning("O retorno do Strava não corresponde ao estado atual. Tentando reconectar mesmo assim.")
         try:
+            if not state_in_session and state:
+                st.session_state["strava_state"] = state
             _strava_exchange_token(code)
             st.success("Conectado ao Strava.")
+            safe_rerun()
         except Exception:
             st.error("Falha na troca do token.")
+            _clear_strava_query_params()
     if "strava_token" not in st.session_state:
         url = _strava_auth_url()
         if not url:
