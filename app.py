@@ -1721,6 +1721,31 @@ def render_strava_tab(user_id: str):
                 with map_container:
                     st.info("Nenhuma atividade disponível para exibir no mapa.")
 
+        map_container = st.container()
+        map_options = {
+            f"{row['Data']} - {row['Nome']} ({row['Tipo']})": row["ID"]
+            for _, row in filtered_df.iterrows()
+        }
+
+        if map_options:
+            selected_map_label = st.selectbox(
+                "Selecionar atividade para visualizar o mapa",
+                options=list(map_options.keys()),
+                index=0,
+                key="strava_map_select_acts",
+            )
+            selected_map_id = map_options.get(selected_map_label)
+            selected_row = filtered_df[filtered_df["ID"] == selected_map_id]
+            if not selected_row.empty:
+                render_activity_map(
+                    selected_row.iloc[0],
+                    map_container,
+                    map_key=f"strava-activities-map-{selected_map_id}",
+                )
+        else:
+            with map_container:
+                st.info("Nenhuma atividade disponível para exibir no mapa.")
+
     with tab_match:
         st.subheader("Match Treinos Planejados x Realizados")
 
