@@ -8,3 +8,4 @@ streamlit_calendar
 sqlalchemy
 psycopg[binary]
 python-dotenv
+requests
