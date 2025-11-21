@@ -9,3 +9,6 @@ sqlalchemy
 psycopg[binary]
 python-dotenv
 requests
+folium
+streamlit-folium
+polyline
