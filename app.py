@@ -2583,7 +2583,7 @@ def prescribe_detail(mod, tipo, volume, unit, paces, duration_override=None):
             reps = max(6, min(10, int(vol / 200)))
             return (
                 f"{reps}×200m em ritmo de prova curta (Z3)."  # estrutura
-                " Aqueça 400m, inclua 4×50m progressivos, faça as séries com saída a cada 3'–3'30" e"
+                " Aqueça 400m, inclua 4×50m progressivos, faça as séries com saída a cada 3'–3'30"
                 " recupere 100m soltos ao final."
             )
         if tipo == "Intervalado":
