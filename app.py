@@ -2583,7 +2583,7 @@ def prescribe_detail(mod, tipo, volume, unit, paces, duration_override=None):
             reps = max(6, min(10, int(vol / 200)))
             return (
                 f"{reps}×200m em ritmo de prova curta (Z3)."  # estrutura
-                " Aqueça 400m, inclua 4×50m progressivos, faça as séries com saída a cada 3'–3'30"
+                " Aqueça 400m, inclua 4×50m progressivos, faça as séries com saída a cada 3'–3'30" e"
                 " recupere 100m soltos ao final."
             )
         if tipo == "Intervalado":
@@ -3276,6 +3276,7 @@ def update_availability_from_current_week(user_id: str, week_start: date):
 # ----------------------------------------------------------------------------
 
 def generate_ics(df: pd.DataFrame) -> str:
+    df = enrich_detalhamento_for_export(df)
     ics = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//TriPlano//Planner//EN\n"
     for _, row in df.iterrows():
         start = row["StartDT"]
@@ -3298,6 +3299,39 @@ def generate_ics(df: pd.DataFrame) -> str:
         ics += "END:VEVENT\n"
     ics += "END:VCALENDAR\n"
     return ics
+
+
+def enrich_detalhamento_for_export(
+    df: pd.DataFrame, pace_context: dict | None = None
+) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    pace_ctx = pace_context
+    if pace_ctx is None:
+        try:
+            pace_ctx = _pace_defaults_from_state()
+        except Exception:
+            pace_ctx = None
+
+    enriched = df.copy()
+    for idx, row in enriched.iterrows():
+        detail_raw = str(row.get("Detalhamento", ""))
+        if detail_raw and detail_raw.lower() != "nan":
+            continue
+
+        mod = row.get("Modalidade")
+        tipo = row.get("Tipo de Treino")
+        try:
+            vol = float(row.get("Volume") or 0.0)
+        except (TypeError, ValueError):
+            vol = 0.0
+        unit = row.get("Unidade") or UNITS_ALLOWED.get(mod, "")
+        prescribed = prescribe_detail(mod, tipo, vol, unit, pace_ctx)
+        if prescribed:
+            enriched.at[idx, "Detalhamento"] = prescribed
+
+    return enriched
 
 class PDF(FPDF):
     def header(self):
@@ -3537,6 +3571,7 @@ def _render_week_into_pdf(pdf: PDF, df: pd.DataFrame, week_start: date):
 def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
     pdf = PDF(orientation="L")  # já em paisagem
     pdf.alias_nb_pages()
+    df = enrich_detalhamento_for_export(df)
     _render_week_into_pdf(pdf, df, week_start)
     return pdf.output(dest="S").encode("latin-1")
 
@@ -3554,6 +3589,7 @@ def generate_cycle_pdf(user_id: str, week_starts: list[date]) -> bytes:
 
     for week_start in week_starts:
         week_df = canonical_week_df(user_id, week_start)
+        week_df = enrich_detalhamento_for_export(week_df)
         _render_week_into_pdf(pdf, week_df, week_start)
 
     return pdf.output(dest="S").encode("latin-1")
