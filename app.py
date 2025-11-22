@@ -98,6 +98,7 @@ SCHEMA_COLS = [
     "ChangeLog",
     "LastEditedAt",
     "WeekStart",
+    "Fase",
     "TSS",
     "IF",
     "ATL",
@@ -2550,64 +2551,68 @@ def prescribe_detail(mod, tipo, volume, unit, paces, duration_override=None):
             dur_h = vol / vel if vel > 0 else 0
             return (
                 f"Endurance {vol:g} km (~{dur_h:.1f}h) em Z2 controlado."  # tempo estimado
-                " Sequência: 15min aquecendo com giros fáceis, bloco contínuo em 85–95rpm mantendo"
-                " FC baixa e sensação de 'conversa fácil', inserindo 2–3 variações de 5min Z2+/Z3 para"
-                " quebrar a monotonia. Hidrate a cada 10–15min e consuma carbo a cada 30–40min."
+                " Estrutura completa: 15min de aquecimento progressivo (inclua 3×30s a 100rpm), bloco"
+                " principal contínuo em 85–95rpm mantendo FC baixa e conversa fácil, com 2–3 variações"
+                " de 5min em Z2+/Z3 para acordar as pernas. No final faça 10min de soltura bem leve."
+                " Nutrição: 500–700ml de líquido/h + 30–60g de carbo/h; cheque posição aerodinâmica"
+                " a cada 20min para aliviar ombros e lombar."
             )
         if tipo == "Intervalado":
             blocos = max(4, min(6, int(vol / 5)))
             alvo = f"{bk:g} km/h" if bk else "ritmo de Z4"
             return (
                 f"{blocos}×(6min Z4) rec 3min — alvo {alvo}."
-                " Aqueça 15min progressivo incluindo 3 acelerações de 20s, faça as séries sentado com"
-                " cadência 90–95rpm buscando potência constante e recupere girando leve. Feche com"
-                " 10min soltando em Z1/Z2."
+                " Aquecimento: 15min progressivo + 3×20s fortes/40s fáceis. Série: blocos em 90–95rpm"
+                " sentado mantendo potência estável, percepção 8/10; recuperação girando leve em 85rpm."
+                " Desaqueça com 10–12min Z1/Z2 e alongamento rápido de quadríceps e glúteo."
             )
         if tipo == "Cadência":
             return (
                 "5×(3min 100–110rpm) rec 2min em Z2/Z3."  # estrutura
-                " Aqueça 12min, execute os blocos focando pedalada redonda e estabilidade de tronco"
-                " (sem balançar o quadril), respiração nasal e sensação de leve queimação controlada."
-                " Termine com 8–10min soltando."
+                " Início: 12min fácil com 4×15s a 110rpm. Main set: mantenha tronco estável, joelhos"
+                " apontando para frente e respiração nasal; ajuste marchas para não passar de Z3."
+                " Volta à calma: 8–10min bem leve + 5min de mobilidade de quadril."
             )
         if tipo == "Força/Subida":
             return (
                 "6×(4min 60–70rpm Z3/Z4) rec 3min."  # estrutura
-                " Aqueça 15min, faça as séries em subida/rolo pesado sentado, cuidando de manter joelhos"
-                " alinhados e core firme; respire fundo para suportar o torque. Solte 10min bem leve ao final."
+                " Aquecimento: 15min progressivo com 3×30s em pé. Séries: suba ou simule torque pesado"
+                " sentado, cadência 60–70rpm, core firme e joelhos alinhados; mantenha tronco parado."
+                " Recuperação: 3min girando solto. Finalize com 10–12min Z1 e alongamento rápido de glúteo e lombar."
             )
 
     if mod == "Natação":
         if tipo == "Técnica":
             return (
                 "300–500m aquecendo (25m respiração bilateral + 25m costas), depois 3–4 blocos de drills"
-                " (polo, skulling, 6-3-6) e 8×50m educativos focando posição de corpo e pegada forte;"
-                " finalize com 200m soltos mantendo rolagem suave."
+                " (polo, skulling, 6-3-6), seguidos de 8×50m educativos focando posição de corpo, entrada"
+                " de mão limpa e pegada firme. Entre blocos, 15–20s de descanso. Finalize com 200m soltos"
+                " reforçando rolagem e alinhamento de quadril."
             )
         if tipo == "Ritmo":
             reps = max(6, min(10, int(vol / 200)))
             return (
                 f"{reps}×200m em ritmo de prova curta (Z3)."  # estrutura
-                " Aqueça 400m (incluindo 4×50m progressivos), nade os 200m em respiração controlada"
-                " com saída a cada 3–3min30 focando braçada firme e rotação de quadril; 100m soltos para"
-                " recuperar entre séries e ao final."
+                " Aquecimento: 400m (200 fácil + 4×50m progressivos). Série: 200m com saída a cada"
+                " 3–3min30 focando braçada firme, cotovelo alto e rotação estável; respiração a cada 3"
+                " braçadas sempre que possível. Use 100m soltos entre repetições e feche com 200m fáceis."
             )
         if tipo == "Intervalado":
             reps = max(12, min(20, int(vol / 50)))
             alvo = f"{(sp and int(sp)) or '—'} s/100m"
             return (
                 f"{reps}×50m forte (Z4/Z5). Alvo ~{alvo}."  # alvo
-                " Estrutura: 300m fácil + 6×25m técnica, séries de 50m com 20–30s descanso mantendo"
-                " braçada curta e alta frequência de puxada; controle saída para não perder ritmo."
-                " Feche com 200m educativos e mais 100–200m soltando."
+                " Sequência completa: 300m fácil + 6×25m técnica, depois as séries de 50m com"
+                " 20–30s de descanso mantendo frequência alta e saídas consistentes. Priorize deslize curto"
+                " e puxada potente. Finalize com 200m de educativos variados + 100–200m soltando."
             )
         if tipo == "Contínuo":
             km = vol / 1000.0
             return (
                 f"{km:.1f} km contínuos Z2/Z3."  # volume
-                " Aqueça 300m variando estilos, entre em ritmo sustentável mirando respiração bilateral"
-                " e stroke count estável; a cada 400m faça mini-checks de técnica (olhar neutro, cotovelo"
-                " alto, core firme). Finalize com 200m soltos."
+                " Aquecimento 300m variando estilos; bloco contínuo em ritmo sustentável focando"
+                " respiração bilateral e contagem de braçadas estável. A cada 400m, cheque postura de"
+                " cabeça, cotovelo alto e core firme. Termine com 200m soltos e alongamento de ombro."
             )
 
     if mod == "Força/Calistenia":
@@ -2684,13 +2689,14 @@ def default_week_df(week_start: date, user_id: str) -> pd.DataFrame:
                 "RPE": 0,
                 "Detalhamento": "Dia de descanso. Foco em recuperação.",
                 "TempoEstimadoMin": 0.0,
-                "Observações": "",
-                "Status": "Planejado",
+            "Observações": "",
+            "Status": "Planejado",
             "adj": 0.0,
             "AdjAppliedAt": "",
             "ChangeLog": "[]",
             "LastEditedAt": "",
             "WeekStart": week_start,
+            "Fase": "",
         })
     return pd.DataFrame(recs, columns=SCHEMA_COLS)
 
@@ -2704,6 +2710,7 @@ def distribute_week_by_targets(
     user_id: str,
     off_days: list[int] | None = None,
     planned_sessions: dict | None = None,
+    phase_name: str | None = None,
 ) -> pd.DataFrame:
     days = week_range(week_start)
     rows = []
@@ -2883,6 +2890,7 @@ def distribute_week_by_targets(
                 "ChangeLog": "[]",
                 "LastEditedAt": "",
                 "WeekStart": week_start,
+                "Fase": phase_name or "",
             })
         else:
             for mod, spec in sessions:
@@ -2922,6 +2930,7 @@ def distribute_week_by_targets(
                     "ChangeLog": "[]",
                     "LastEditedAt": "",
                     "WeekStart": week_start,
+                    "Fase": phase_name or "",
                 })
 
     return pd.DataFrame(rows, columns=SCHEMA_COLS)
@@ -3396,6 +3405,11 @@ def _render_week_into_pdf(pdf: PDF, df: pd.DataFrame, week_start: date):
 
     df = df.copy()
     df = df.sort_values(["Data", "StartDT"]).reset_index(drop=True)
+    phase_label = ""
+    if "Fase" in df.columns:
+        unique_phases = [p for p in df["Fase"].dropna().unique() if str(p).strip()]
+        if unique_phases:
+            phase_label = str(unique_phases[0])
 
     pdf.add_page(orientation="L")
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -3411,6 +3425,9 @@ def _render_week_into_pdf(pdf: PDF, df: pd.DataFrame, week_start: date):
         0,
         1,
     )
+    if phase_label:
+        pdf.set_font("Arial", "B", 9)
+        pdf.cell(0, 6, pdf_safe(f"Fase: {phase_label}"), 0, 1)
     pdf.ln(5)
 
     # Página 1: tabela com horários (AGORA EM PAISAGEM) + coluna de Notas do Atleta
@@ -3972,6 +3989,7 @@ def generate_cycle(
             user_preferred_days,
             user_id,
             off_days=(user_preferences or {}).get("off_days"),
+            phase_name=phase.name,
         )
         week_df, _, _ = assign_times_to_week(
             week_df,
@@ -4137,6 +4155,7 @@ def cycle_plan_to_trainings(
             user_id,
             off_days=off_days,
             planned_sessions=planned_sessions_by_mod,
+            phase_name=week_data.get("fase"),
         )
         week_df, _, _ = assign_times_to_week(
             week_df,
