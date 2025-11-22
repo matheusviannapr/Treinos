@@ -4040,6 +4040,52 @@ def _key_sessions_from_state() -> dict:
     return {mod: st.session_state.get(f"key_sess_{mod}", "") for mod in MODALIDADES}
 
 
+def _planned_sessions_from_week_payload(week_data: dict) -> dict[str, list[dict]]:
+    """Extract planned session metadata grouped by modalidade from planner payload.
+
+    The planner today sends running "treinos" for corrida/triathlon, but we also
+    accept an explicit "modalidade" field to future-proof bike/swim payloads.
+    """
+
+    planned_sessions_by_mod: dict[str, list[dict]] = {}
+    treinos = week_data.get("treinos") if isinstance(week_data, dict) else None
+    if not treinos or not isinstance(treinos, list):
+        return planned_sessions_by_mod
+
+    for sess in treinos:
+        if not isinstance(sess, dict):
+            continue
+        volume = sess.get("volume_km")
+        if volume is None:
+            volume = sess.get("volume")
+        try:
+            volume = float(volume)
+        except (TypeError, ValueError):
+            volume = None
+        if volume is None or volume <= 0:
+            continue
+
+        tipo_slug = sess.get("tipo") or sess.get("slug")
+        tipo_nome = sess.get("tipo_nome") or sess.get("nome") or tipo_slug or "Treino"
+        modalidade = sess.get("modalidade")
+        if not modalidade:
+            modalidade = "Corrida"
+
+        planned_sessions_by_mod.setdefault(modalidade, []).append(
+            {
+                "volume": round(volume, 1),
+                "tipo_nome": tipo_nome,
+                "tipo_slug": tipo_slug or tipo_nome,
+                "zona": sess.get("zona"),
+                "descricao": sess.get("descricao"),
+                "duracao_estimada_min": sess.get("duracao_estimada_min"),
+                "ritmo": sess.get("ritmo"),
+            }
+        )
+
+    return planned_sessions_by_mod
+
+
 def cycle_plan_to_trainings(
     plan: dict,
     sessions_per_mod: dict,
@@ -4079,37 +4125,7 @@ def cycle_plan_to_trainings(
         for key, value in week_paces.items():
             pace_ctx.setdefault(key, value)
 
-        planned_sessions_by_mod = {}
-        treinos = week_data.get("treinos") if isinstance(week_data, dict) else None
-        if treinos and isinstance(treinos, list):
-            planned = []
-            for sess in treinos:
-                if not isinstance(sess, dict):
-                    continue
-                volume = sess.get("volume_km")
-                if volume is None:
-                    volume = sess.get("volume")
-                try:
-                    volume = float(volume)
-                except (TypeError, ValueError):
-                    volume = None
-                if volume is None or volume <= 0:
-                    continue
-                tipo_slug = sess.get("tipo") or sess.get("slug")
-                tipo_nome = sess.get("tipo_nome") or sess.get("nome") or tipo_slug or "Treino"
-                planned.append(
-                    {
-                        "volume": round(volume, 1),
-                        "tipo_nome": tipo_nome,
-                        "tipo_slug": tipo_slug or tipo_nome,
-                        "zona": sess.get("zona"),
-                        "descricao": sess.get("descricao"),
-                        "duracao_estimada_min": sess.get("duracao_estimada_min"),
-                        "ritmo": sess.get("ritmo"),
-                    }
-                )
-            if planned:
-                planned_sessions_by_mod["Corrida"] = planned
+        planned_sessions_by_mod = _planned_sessions_from_week_payload(week_data)
 
         week_df = distribute_week_by_targets(
             ws,
@@ -4326,6 +4342,9 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
         pattern = load_timepattern_for_user(user_id) if use_time_pattern_cycle_plan else None
         if pattern:
             new_cycle_df = apply_time_pattern_to_cycle(new_cycle_df, pattern)
+
+        # Garantir que mudanças de tipo/horário retenham o detalhamento completo
+        new_cycle_df = enrich_detalhamento_for_export(new_cycle_df, paces)
 
         cycle_end = start_date + timedelta(weeks=cycle_weeks)
         existing_df = st.session_state["df"].copy()
