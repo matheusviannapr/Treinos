@@ -3187,6 +3187,12 @@ def _duration_from_session_spec(
         )
         if duration:
             return duration
+        if unit == "km" and pace_min_km and spec.get("volume"):
+            duration_calc = float(spec.get("volume") or 0.0) * float(pace_min_km)
+            return max(int(round(duration_calc)), 5)
+        if mod == "Natação" and unit == "m" and pace_swim_sec and spec.get("volume"):
+            duration_calc = (float(spec.get("volume") or 0.0) / 100.0) * (float(pace_swim_sec) / 60.0)
+            return max(int(round(duration_calc)), 5)
     payload = {
         "Modalidade": mod,
         "Tipo de Treino": tipo_label,
