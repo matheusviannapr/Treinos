@@ -1424,9 +1424,20 @@ def build_triplanner_plan(
     cycle_weeks = int(cycle_weeks)
     unit = _volume_unit(modality_norm)
     method = _resolve_method(modality_norm, distance)
+    run_distance_for_tri = {
+        "sprint": "5k",
+        "olímpico": "10k",
+        "olimpico": "10k",
+        "70.3": "21k",
+        "ironman": "42k",
+    }.get(str(distance).strip().lower())
     running_paces = (
-        _running_reference_paces(tempo_recente, distance, pace_medio)
-        if modality_norm == "corrida"
+        _running_reference_paces(
+            tempo_recente,
+            distance if modality_norm == "corrida" else run_distance_for_tri,
+            pace_medio,
+        )
+        if modality_norm in {"corrida", "triathlon"}
         else {}
     )
     vol_min, vol_max = _volume_range(modality_norm, distance, goal_norm, nivel)
@@ -1449,6 +1460,27 @@ def build_triplanner_plan(
         if modality_norm == "corrida"
         else []
     )
+    tri_run_week_volumes: list[float] = []
+    tri_long_runs: list[float | None] = []
+    if modality_norm == "triathlon" and run_distance_for_tri:
+        for idx, week_volume in enumerate(week_volumes):
+            volume_modalidades = plan_week_targets_in_distance(
+                modality_norm,
+                distance,
+                goal_norm,
+                vol_min,
+                vol_max,
+                week_volume,
+            ) or _volume_split(modality_norm, distance, week_volume)
+            tri_run_week_volumes.append(volume_modalidades.get("Corrida", 0.0))
+
+        tri_long_runs = _running_long_run_plan(
+            run_distance_for_tri,
+            nivel,
+            tri_run_week_volumes,
+            phases,
+            taper_weeks,
+        )
 
     weeks_payload = []
     for idx in range(cycle_weeks):
@@ -1504,6 +1536,33 @@ def build_triplanner_plan(
             intensity = _intensity_for_week(method, is_recovery, phase.name)
             focus = _week_focus(modality_norm, method, is_recovery, idx + 1)
             sessions = []
+            if modality_norm == "triathlon" and run_distance_for_tri:
+                run_volume = volume_modalidades.get("Corrida", 0.0)
+                tri_long = tri_long_runs[idx] if idx < len(tri_long_runs) else None
+                sessions = _running_week_sessions(
+                    run_volume,
+                    tri_long,
+                    phase.name,
+                    run_distance_for_tri,
+                    goal_norm,
+                    nivel,
+                    dias_treino,
+                    is_recovery,
+                    running_paces,
+                    is_final_week,
+                )
+                if sessions:
+                    derived: list[str] = []
+                    for s in sessions:
+                        if s.get("tipo") == "longao":
+                            continue
+                        nome = s.get("tipo_nome") or _training_type_name(s.get("tipo", ""))
+                        if nome and nome not in derived:
+                            derived.append(nome)
+                        if len(derived) == 4:
+                            break
+                    if derived:
+                        focus = derived + [f for f in focus if f not in derived]
         focus = focus[:4]
         volume_total = round(week_volumes[idx] + race_distance, 2)
         volume_modalidades = plan_week_targets_in_distance(
@@ -1514,6 +1573,8 @@ def build_triplanner_plan(
             vol_max,
             volume_total,
         ) or _volume_split(modality_norm, distance, volume_total)
+        zone_payload = intensity if modality_norm in {"corrida", "triathlon"} else {}
+        pace_payload = running_paces if modality_norm in {"corrida", "triathlon"} else {}
         weeks_payload.append(
             {
                 "semana": idx + 1,
@@ -1526,9 +1587,9 @@ def build_triplanner_plan(
                 "volume_por_modalidade": volume_modalidades,
                 "intensidade": intensity,
                 "focos_da_semana": focus,
-                "distribuicao_zonas": intensity if modality_norm == "corrida" else {},
+                "distribuicao_zonas": zone_payload,
                 "treinos": sessions,
-                "ritmos_referencia": running_paces if modality_norm == "corrida" else {},
+                "ritmos_referencia": pace_payload,
             }
         )
 
