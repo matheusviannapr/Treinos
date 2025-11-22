@@ -4042,6 +4042,11 @@ def cycle_plan_to_trainings(
 
         weekly_targets = _ensure_support_work(weekly_targets, sessions_per_mod)
 
+        pace_ctx = dict(paces or {})
+        week_paces = week_data.get("ritmos_referencia") or {}
+        for key, value in week_paces.items():
+            pace_ctx.setdefault(key, value)
+
         planned_sessions_by_mod = {}
         treinos = week_data.get("treinos") if isinstance(week_data, dict) else None
         if treinos and isinstance(treinos, list):
@@ -4079,7 +4084,7 @@ def cycle_plan_to_trainings(
             weekly_targets,
             sessions_per_mod,
             key_sessions,
-            paces,
+            pace_ctx,
             preferred_days,
             user_id,
             off_days=off_days,
@@ -4090,7 +4095,7 @@ def cycle_plan_to_trainings(
             [],
             use_availability=False,
             preferences=user_preferences,
-            pace_context=paces,
+            pace_context=pace_ctx,
         )
         all_weeks.append(week_df)
 

@@ -1573,6 +1573,8 @@ def build_triplanner_plan(
             vol_max,
             volume_total,
         ) or _volume_split(modality_norm, distance, volume_total)
+        zone_payload = intensity if modality_norm in {"corrida", "triathlon"} else {}
+        pace_payload = running_paces if modality_norm in {"corrida", "triathlon"} else {}
         weeks_payload.append(
             {
                 "semana": idx + 1,
@@ -1585,9 +1587,9 @@ def build_triplanner_plan(
                 "volume_por_modalidade": volume_modalidades,
                 "intensidade": intensity,
                 "focos_da_semana": focus,
-                "distribuicao_zonas": intensity if modality_norm == "corrida" else {},
+                "distribuicao_zonas": zone_payload,
                 "treinos": sessions,
-                "ritmos_referencia": running_paces if modality_norm == "corrida" else {},
+                "ritmos_referencia": pace_payload,
             }
         )
 
