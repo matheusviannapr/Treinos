@@ -2549,57 +2549,65 @@ def prescribe_detail(mod, tipo, volume, unit, paces, duration_override=None):
             vel = bk if bk > 0 else 28
             dur_h = vol / vel if vel > 0 else 0
             return (
-                f"Endurance {vol:g} km (~{dur_h:.1f}h) em Z2."  # tempo estimado
-                " Aqueça 15min, mantenha 85–95rpm estáveis, faça microvariações de 5min entre Z2/Z3 para"
-                " quebrar a monotonia e reforce nutrição a cada 30–40min."
+                f"Endurance {vol:g} km (~{dur_h:.1f}h) em Z2 controlado."  # tempo estimado
+                " Sequência: 15min aquecendo com giros fáceis, bloco contínuo em 85–95rpm mantendo"
+                " FC baixa e sensação de 'conversa fácil', inserindo 2–3 variações de 5min Z2+/Z3 para"
+                " quebrar a monotonia. Hidrate a cada 10–15min e consuma carbo a cada 30–40min."
             )
         if tipo == "Intervalado":
             blocos = max(4, min(6, int(vol / 5)))
+            alvo = f"{bk:g} km/h" if bk else "ritmo de Z4"
             return (
-                f"{blocos}×(6min Z4) rec 3min."  # estrutura
-                " Faça 15min de aquecimento progressivo com 3 acelerações curtas, execute as séries em"
-                " posição aerodinâmica estável e recupere girando leve, terminando com 10min em Z1/Z2."
+                f"{blocos}×(6min Z4) rec 3min — alvo {alvo}."
+                " Aqueça 15min progressivo incluindo 3 acelerações de 20s, faça as séries sentado com"
+                " cadência 90–95rpm buscando potência constante e recupere girando leve. Feche com"
+                " 10min soltando em Z1/Z2."
             )
         if tipo == "Cadência":
             return (
                 "5×(3min 100–110rpm) rec 2min em Z2/Z3."  # estrutura
-                " Aqueça 12min, encaixe as séries concentrando em pedalada redonda e tronco firme,"
-                " mantenha respiração controlada e finalize soltando 8–10min."
+                " Aqueça 12min, execute os blocos focando pedalada redonda e estabilidade de tronco"
+                " (sem balançar o quadril), respiração nasal e sensação de leve queimação controlada."
+                " Termine com 8–10min soltando."
             )
         if tipo == "Força/Subida":
             return (
                 "6×(4min 60–70rpm Z3/Z4) rec 3min."  # estrutura
-                " Após 15min de aquecimento, escolha subida ou rolo com resistência alta, mantenha core"
-                " ativo, segure potência constante e recupere girando solto antes de encerrar com 10min leves."
+                " Aqueça 15min, faça as séries em subida/rolo pesado sentado, cuidando de manter joelhos"
+                " alinhados e core firme; respire fundo para suportar o torque. Solte 10min bem leve ao final."
             )
 
     if mod == "Natação":
         if tipo == "Técnica":
             return (
-                "300–500m aquecendo, depois drills técnicos (polo, skulling, 6-3-6) seguidos de 8×50m"
-                " educativos focando posição de corpo e pegada; finalize com 200m soltos."
+                "300–500m aquecendo (25m respiração bilateral + 25m costas), depois 3–4 blocos de drills"
+                " (polo, skulling, 6-3-6) e 8×50m educativos focando posição de corpo e pegada forte;"
+                " finalize com 200m soltos mantendo rolagem suave."
             )
         if tipo == "Ritmo":
             reps = max(6, min(10, int(vol / 200)))
             return (
                 f"{reps}×200m em ritmo de prova curta (Z3)."  # estrutura
-                " Aqueça 400m, inclua 4×50m progressivos, faça as séries com saída a cada 3'–3'30"
-                " recupere 100m soltos ao final."
+                " Aqueça 400m (incluindo 4×50m progressivos), nade os 200m em respiração controlada"
+                " com saída a cada 3–3min30 focando braçada firme e rotação de quadril; 100m soltos para"
+                " recuperar entre séries e ao final."
             )
         if tipo == "Intervalado":
             reps = max(12, min(20, int(vol / 50)))
             alvo = f"{(sp and int(sp)) or '—'} s/100m"
             return (
                 f"{reps}×50m forte (Z4/Z5). Alvo ~{alvo}."  # alvo
-                " Sequência: 300m fácil + 6×25m técnica, séries de 50m com 20–30s de descanso mantendo"
-                " braçada curta e rápida, encerrando com 200m educativos."
+                " Estrutura: 300m fácil + 6×25m técnica, séries de 50m com 20–30s descanso mantendo"
+                " braçada curta e alta frequência de puxada; controle saída para não perder ritmo."
+                " Feche com 200m educativos e mais 100–200m soltando."
             )
         if tipo == "Contínuo":
             km = vol / 1000.0
             return (
                 f"{km:.1f} km contínuos Z2/Z3."  # volume
-                " Faça 300m aquecendo, mantenha ritmo constante com respiração bilateral e inclua"
-                " mini-checks de técnica (olhar neutro, cotovelo alto) a cada 400m; 200m soltos para fechar."
+                " Aqueça 300m variando estilos, entre em ritmo sustentável mirando respiração bilateral"
+                " e stroke count estável; a cada 400m faça mini-checks de técnica (olhar neutro, cotovelo"
+                " alto, core firme). Finalize com 200m soltos."
             )
 
     if mod == "Força/Calistenia":
@@ -2723,7 +2731,9 @@ def distribute_week_by_targets(
     for mod, weekly_vol in weekly_targets.items():
         weekly_vol = float(weekly_vol or 0.0)
         planned_mod_sessions = planned_sessions.get(mod)
-        n = len(planned_mod_sessions) if planned_mod_sessions else int(sessions_per_mod.get(mod, 0))
+        n_requested = int(sessions_per_mod.get(mod, 0))
+        n_planned = len(planned_mod_sessions) if planned_mod_sessions else 0
+        n = max(n_planned, n_requested)
         if weekly_vol <= 0 or n <= 0:
             continue
 
@@ -2733,46 +2743,68 @@ def distribute_week_by_targets(
         session_specs: list[dict] = []
         has_planned = bool(planned_mod_sessions)
 
+        w_template = weights.get(mod)
+        if w_template is None:
+            w = [1.0 / n] * n
+        else:
+            w = _expand_to_n(w_template, n)
+            s = sum(w)
+            w = [1.0 / n] * n if s == 0 else [x / s for x in w]
+
+        base_volumes = [_round_to_step_sum(target_total * wi, unit) for wi in w]
+        diff = target_total - sum(base_volumes)
+        if abs(diff) > 1e-9:
+            max_idx = max(range(len(base_volumes)), key=lambda i: base_volumes[i])
+            base_volumes[max_idx] = _round_to_step_sum(base_volumes[max_idx] + diff, unit)
+
+        tipos_base = TIPOS_MODALIDADE.get(mod, ["Treino"])
+        tipos = _expand_to_n(tipos_base, n)
+        session_specs = []
+
         if planned_mod_sessions:
-            for sess in planned_mod_sessions:
-                if not isinstance(sess, dict):
-                    continue
-                sess_volume = _round_to_step_sum(float(sess.get("volume", 0.0) or 0.0), unit)
-                label = sess.get("tipo_nome") or sess.get("tipo") or sess.get("tipo_slug") or "Treino"
-                slug = sess.get("tipo_slug") or sess.get("tipo") or label
+            for idx in range(n):
+                planned = planned_mod_sessions[idx] if idx < len(planned_mod_sessions) else None
+                sess_volume = base_volumes[idx]
+                label = tipos[idx]
+                slug = tipos[idx]
+                meta = None
+                if isinstance(planned, dict):
+                    meta = planned
+                    label = planned.get("tipo_nome") or planned.get("tipo") or planned.get("tipo_slug") or label
+                    slug = planned.get("tipo_slug") or planned.get("tipo") or label
+                    planned_vol = planned.get("volume")
+                    try:
+                        planned_vol = float(planned_vol)
+                    except (TypeError, ValueError):
+                        planned_vol = None
+                    if planned_vol and planned_vol > 0:
+                        sess_volume = _round_to_step_sum(planned_vol, unit)
                 session_specs.append(
                     {
                         "volume": sess_volume,
                         "label": label,
                         "slug": slug,
-                        "meta": sess,
+                        "meta": meta,
                     }
                 )
+
+            current_total = sum(spec.get("volume", 0.0) for spec in session_specs)
+            remaining = target_total - current_total
+            if abs(remaining) > 1e-9:
+                max_idx = max(range(len(session_specs)), key=lambda i: session_specs[i].get("volume", 0.0))
+                session_specs[max_idx]["volume"] = _round_to_step_sum(
+                    session_specs[max_idx].get("volume", 0.0) + remaining,
+                    unit,
+                )
         else:
-            w_template = weights.get(mod)
-            if w_template is None:
-                w = [1.0 / n] * n
-            else:
-                w = _expand_to_n(w_template, n)
-                s = sum(w)
-                w = [1.0 / n] * n if s == 0 else [x / s for x in w]
-
-            volumes = [_round_to_step_sum(target_total * wi, unit) for wi in w]
-            diff = target_total - sum(volumes)
-            if abs(diff) > 1e-9:
-                max_idx = max(range(len(volumes)), key=lambda i: volumes[i])
-                volumes[max_idx] = _round_to_step_sum(volumes[max_idx] + diff, unit)
-
-            tipos_base = TIPOS_MODALIDADE.get(mod, ["Treino"])
-            tipos = _expand_to_n(tipos_base, n)
             session_specs = [
                 {
-                    "volume": volumes[i],
+                    "volume": base_volumes[i],
                     "label": tipos[i],
                     "slug": tipos[i],
                     "meta": None,
                 }
-                for i in range(len(volumes))
+                for i in range(len(base_volumes))
             ]
 
         mod_sessions[mod] = {"sessions": session_specs, "has_planned": has_planned}
