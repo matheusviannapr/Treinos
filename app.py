@@ -3516,7 +3516,8 @@ def _render_week_into_pdf(pdf: PDF, df: pd.DataFrame, week_start: date):
     # Página 1: tabela com horários (AGORA EM PAISAGEM) + coluna de Notas do Atleta
     # Ajustei levemente as larguras para caber em A4 paisagem
     # Mais compacto para sempre caber em uma página A4 paisagem
-    col_widths = [22, 16, 16, 28, 32, 16, 12, 64, 42]
+    # Aumenta a coluna de Detalhamento para evitar cortes no texto
+    col_widths = [22, 16, 16, 26, 30, 16, 12, 76, 40]
     headers = [
         "Data",
         "Início",
