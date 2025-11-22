@@ -3523,7 +3523,7 @@ def _render_week_into_pdf(pdf: PDF, df: pd.DataFrame, week_start: date):
     # Larguras recalibradas para forçar o conteúdo a caber em uma única página A4
     # paisagem, mantendo a coluna de Detalhamento ampla o bastante para evitar cortes
     # perceptíveis e sem quebrar a tabela.
-    col_widths = [19, 14, 14, 24, 26, 14, 10, 90, 36]
+    col_widths = [19, 14, 14, 24, 26, 14, 10, 110, 36]
     headers = [
         "Data",
         "Início",
