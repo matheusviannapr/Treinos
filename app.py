@@ -2471,66 +2471,77 @@ def prescribe_detail(mod, tipo, volume, unit, paces, duration_override=None):
         if "prova" in tipo_norm:
             return (
                 f"Prova alvo {vol:g} km{_dur_txt()}."
-                " Faça aquecimento leve, mantenha o ritmo planejado e execute a estratégia de hidratação."
+                " Aqueça 10–15min em Z1/Z2, largue controlando o ritmo de prova, hidrate-se a cada 20min"
+                " e feche forte apenas no último 10–15% do percurso."
             )
         if "rodagem" in tipo_norm and "regener" in tipo_norm:
             return (
                 f"Rodagem regenerativa Z1–Z2 {vol:g} km{_dur_txt()} para soltar as pernas."
-                " Cadência leve, respiração fácil e foco em recuperar."
+                " Aqueça caminhando/trotando 5min, corra macio mantendo respiração pelo nariz e termine"
+                " com 3–5 min de caminhada para zerar o esforço."
             )
         if "contínua" in tipo_norm and "leve" in tipo_norm:
             return (
                 f"Corrida contínua leve Z2 {vol:g} km{_dur_txt()}."
-                " Ritmo confortável, postura alta e respiração nasal sempre que possível."
+                " Inicie com 8–10min de aquecimento, mantenha o restante do tempo em ritmo conversável"
+                " e finalize com 4–6 acelerações de 10–15s para destravar a passada."
             )
         if "contínua" in tipo_norm and "moderada" in tipo_norm:
             return (
                 f"Corrida contínua moderada Z3 {vol:g} km{_dur_txt()}."
-                " Segure perto do limiar inferior, mantendo ritmo firme mas controlado."
+                " 10min aquecendo em Z1/Z2, bloco central sólido próximo ao limiar inferior e 5min leves"
+                " para baixar a frequência cardíaca."
             )
         if "tempo" in tipo_norm:
             pace = paces.get("tempo_run", rp)
             return (
                 f"Tempo Run em limiar {vol:g} km{_dur_txt(pace)}."
-                " Faça blocos contínuos de 20–30 min sentindo esforço 7/10."
+                " Estrutura: 12–15min Z2 aquecendo, bloco único de 20–30min em esforço 7/10 (Z3/Z4)"
+                " e 8–10min soltando. Foque em postura alta e cadência."
             )
         if "fartlek" in tipo_norm:
             return (
                 f"Fartlek {vol:g} km{_dur_txt()} em Z3–Z4."
-                " Alterne blocos forte/leve (ex.: 1' forte/1' leve) mantendo técnica sólida."
+                " Aqueça 10min, faça 6–10 repetições de 1' forte / 1' leve ou 2' forte / 2' leve conforme"
+                " o volume e termine com 8min bem leve."
             )
         if "vo" in tipo_norm or "interval" in tipo_norm:
             reps = max(4, min(8, int(max(vol, 1))))
             return (
                 f"Intervalado VO₂máx {vol:g} km."
-                f" Execute ~{reps} repetições curtas em Z4–Z5 com recuperação igual ao esforço."
+                f" Aqueça 12–15min, depois faça ~{reps}×400–800m em Z4/Z5 com trote leve do mesmo tempo"
+                " para recuperar, fechando com 10min de soltura."
             )
         if "long" in tipo_norm:
             return (
                 f"Longão contínuo {vol:g} km{_dur_txt()} em Z2 controlado."
-                " Trabalhe hidratação/nutrição e conclua forte porém confortável."
+                " Use 15–20min para aquecer, mantenha ritmo estável com alimentação a cada 30–40min e"
+                " inclua 10–15min finais levemente mais firmes para simular fim de prova."
             )
         if "educativo" in tipo_norm:
             return (
                 f"Educativos técnicos por {vol:g} km (ou ~{max(10, int(vol * 5))} min)."
-                " Inclua skipping, dribling, elevação de joelhos e saltitos para coordenação."
+                " Monte blocos de 60–80m alternando skipping, dribling, elevação de joelhos, retro e"
+                " saltitos, caminhando de volta para recuperar."
             )
         if tipo == "Regenerativo":
             return (
                 f"Rodagem regenerativa Z1/Z2 {vol:g} km{_dur_txt()} para acelerar recuperação."
-                " Respiração confortável e cadência solta."
+                " Aqueça 5–8min, mantenha passadas curtas e cadência relaxada e finalize com mobilidade leve."
             )
         if tipo == "Longão":
             return (
                 f"Longão {vol:g} km (Z2/Z3){_dur_txt()}"
-                " Objetivo: construir resistência aeróbia. Hidrate-se a cada 15–20min."
+                " Objetivo: construir resistência aeróbia. Inclua 10min de progressão final e hidrate-se"
+                " a cada 15–20min."
             )
         if tipo == "Tempo Run":
             bloco = max(20, min(40, int(vol * 6)))
             return (
                 f"Tempo Run {bloco}min em Z3/Z4."
-                " Objetivo: elevar limiar e tolerância ao ritmo de prova."
-                " Divida em 2× metade se precisar, com transições curtas."
+                " Objetivo: elevar limiar e tolerância ao ritmo de prova. Faça 12min de aquecimento,"
+                " bloco contínuo no esforço 7/10 e 8min soltando; pode dividir em 2×{bloco//2}min com"
+                " trote de 3min se necessário."
             )
 
     if mod == "Ciclismo":
@@ -2538,93 +2549,111 @@ def prescribe_detail(mod, tipo, volume, unit, paces, duration_override=None):
             vel = bk if bk > 0 else 28
             dur_h = vol / vel if vel > 0 else 0
             return (
-                f"Endurance {vol:g} km (~{dur_h:.1f}h) em Z2."  # tempo estimado
-                " Objetivo: base aeróbia e eficiência de cadência."  # objetivo
-                " Pedale entre 85–95rpm e reforce nutrição a cada 30–40min."  # instrução
+                f"Endurance {vol:g} km (~{dur_h:.1f}h) em Z2 controlado."  # tempo estimado
+                " Sequência: 15min aquecendo com giros fáceis, bloco contínuo em 85–95rpm mantendo"
+                " FC baixa e sensação de 'conversa fácil', inserindo 2–3 variações de 5min Z2+/Z3 para"
+                " quebrar a monotonia. Hidrate a cada 10–15min e consuma carbo a cada 30–40min."
             )
         if tipo == "Intervalado":
             blocos = max(4, min(6, int(vol / 5)))
+            alvo = f"{bk:g} km/h" if bk else "ritmo de Z4"
             return (
-                f"{blocos}×(6min Z4) rec 3min."  # estrutura
-                " Objetivo: aumentar VO2 e potência sustentada."  # objetivo
-                " Foque em posição aerodinâmica estável nas séries."  # instrução
+                f"{blocos}×(6min Z4) rec 3min — alvo {alvo}."
+                " Aqueça 15min progressivo incluindo 3 acelerações de 20s, faça as séries sentado com"
+                " cadência 90–95rpm buscando potência constante e recupere girando leve. Feche com"
+                " 10min soltando em Z1/Z2."
             )
         if tipo == "Cadência":
             return (
                 "5×(3min 100–110rpm) rec 2min em Z2/Z3."  # estrutura
-                " Objetivo: coordenação neuromuscular e suavidade de pedalada."  # objetivo
+                " Aqueça 12min, execute os blocos focando pedalada redonda e estabilidade de tronco"
+                " (sem balançar o quadril), respiração nasal e sensação de leve queimação controlada."
+                " Termine com 8–10min soltando."
             )
         if tipo == "Força/Subida":
             return (
                 "6×(4min 60–70rpm Z3/Z4) rec 3min."  # estrutura
-                " Objetivo: torque e força específica para subida."  # objetivo
-                " Mantenha tronco firme e cadência controlada."  # dica
+                " Aqueça 15min, faça as séries em subida/rolo pesado sentado, cuidando de manter joelhos"
+                " alinhados e core firme; respire fundo para suportar o torque. Solte 10min bem leve ao final."
             )
 
     if mod == "Natação":
         if tipo == "Técnica":
             return (
-                "Drills técnicos + 8×50m educativos focando posição de corpo e pegada."  # detalhe
-                " Objetivo: eficiência e coordenação na água."  # objetivo
+                "300–500m aquecendo (25m respiração bilateral + 25m costas), depois 3–4 blocos de drills"
+                " (polo, skulling, 6-3-6) e 8×50m educativos focando posição de corpo e pegada forte;"
+                " finalize com 200m soltos mantendo rolagem suave."
             )
         if tipo == "Ritmo":
             reps = max(6, min(10, int(vol / 200)))
             return (
                 f"{reps}×200m em ritmo de prova curta (Z3)."  # estrutura
-                " Objetivo: consolidar ritmo constante e respiração bilateral."  # objetivo
+                " Aqueça 400m (incluindo 4×50m progressivos), nade os 200m em respiração controlada"
+                " com saída a cada 3–3min30 focando braçada firme e rotação de quadril; 100m soltos para"
+                " recuperar entre séries e ao final."
             )
         if tipo == "Intervalado":
             reps = max(12, min(20, int(vol / 50)))
             alvo = f"{(sp and int(sp)) or '—'} s/100m"
             return (
                 f"{reps}×50m forte (Z4/Z5). Alvo ~{alvo}."  # alvo
-                " Objetivo: velocidade e sensação de braçada rápida."  # objetivo
+                " Estrutura: 300m fácil + 6×25m técnica, séries de 50m com 20–30s descanso mantendo"
+                " braçada curta e alta frequência de puxada; controle saída para não perder ritmo."
+                " Feche com 200m educativos e mais 100–200m soltando."
             )
         if tipo == "Contínuo":
             km = vol / 1000.0
             return (
                 f"{km:.1f} km contínuos Z2/Z3."  # volume
-                " Objetivo: resistência e manter técnica sob fadiga."  # objetivo
+                " Aqueça 300m variando estilos, entre em ritmo sustentável mirando respiração bilateral"
+                " e stroke count estável; a cada 400m faça mini-checks de técnica (olhar neutro, cotovelo"
+                " alto, core firme). Finalize com 200m soltos."
             )
 
     if mod == "Força/Calistenia":
         if tipo == "Força máxima":
             return (
                 "5×3 básicos pesados (agachamento/terra/empurrar)."  # estrutura
-                " Objetivo: força neural e estabilidade."  # objetivo
-                " Intervalos longos (2–3min) e técnica impecável."  # dica
+                " Aqueça com mobilidade e séries leves, escolha 2–3 exercícios principais, intervalos de"
+                " 2–3min e técnica impecável; finalize com acessórios de core."
             )
         if tipo == "Resistência muscular":
             return (
                 "4×12–20 em circuito (empurrar, puxar, membros inferiores)."  # estrutura
-                " Objetivo: resistência localizada e suporte para volumes maiores."  # objetivo
+                " Monte 5–6 exercícios, controle a técnica, descanso curto (45–60s) e inclua 5min de"
+                " mobilidade ao final."
             )
         if tipo == "Core/Estabilidade":
             return (
                 "Core 15–20min: pranchas, anti-rotação e glúteo médio."  # detalhe
-                " Objetivo: proteção lombar e transferência de força."  # objetivo
+                " Faça blocos de 40–60s (prancha, dead bug, pallof press, clam shell) com 20s de descanso"
+                " e finalize com alongamento de flexores."
             )
         if tipo == "Mobilidade/Recuperação":
             return (
                 "Mobilidade 15–25min focando quadril, tornozelo e ombro."  # detalhe
-                " Objetivo: soltar e acelerar recuperação pós-sessões chave."  # objetivo
+                " Sequência sugerida: 90/90, flexão de tornozelo na parede, gato-camelo e abertura torácica"
+                " com respiração nasal lenta."
             )
 
     if mod == "Mobilidade":
         if tipo == "Soltura":
             return (
                 "Soltura dinâmica 15–25min (fluxos leves)."  # detalhe
-                " Objetivo: melhorar amplitude e preparar para treinos seguintes."  # objetivo
+                " Inclua movimentos articulares controlados (pescoço, ombro, quadril, tornozelo) e"
+                " sequências de alongamentos balísticos curtos para ganhar amplitude."
             )
         if tipo == "Recuperação":
             return (
                 "Alongamentos leves 10–20min + respiração nasal."  # detalhe
-                " Objetivo: baixar tensão muscular e sistema nervoso."  # objetivo
+                " Utilize 60–90s por postura (posterior de coxa, glúteo, peitoral) e feche com 5min de"
+                " respiração diafragmática deitada."
             )
         if tipo == "Prevenção":
             return (
                 "Mobilidade ombro/quadril 15–20min com foco em estabilidade/controle."  # detalhe
-                " Objetivo: prevenir compensações e melhorar técnica."  # objetivo
+                " Combine mobilidade ativa (prone Y/T/W, car stretch) com exercícios de controle motor"
+                " (single-leg RDL, ponte unilateral) em séries de 8–12 repetições."
             )
 
     return ""
@@ -2702,7 +2731,9 @@ def distribute_week_by_targets(
     for mod, weekly_vol in weekly_targets.items():
         weekly_vol = float(weekly_vol or 0.0)
         planned_mod_sessions = planned_sessions.get(mod)
-        n = len(planned_mod_sessions) if planned_mod_sessions else int(sessions_per_mod.get(mod, 0))
+        n_requested = int(sessions_per_mod.get(mod, 0))
+        n_planned = len(planned_mod_sessions) if planned_mod_sessions else 0
+        n = max(n_planned, n_requested)
         if weekly_vol <= 0 or n <= 0:
             continue
 
@@ -2712,46 +2743,68 @@ def distribute_week_by_targets(
         session_specs: list[dict] = []
         has_planned = bool(planned_mod_sessions)
 
+        w_template = weights.get(mod)
+        if w_template is None:
+            w = [1.0 / n] * n
+        else:
+            w = _expand_to_n(w_template, n)
+            s = sum(w)
+            w = [1.0 / n] * n if s == 0 else [x / s for x in w]
+
+        base_volumes = [_round_to_step_sum(target_total * wi, unit) for wi in w]
+        diff = target_total - sum(base_volumes)
+        if abs(diff) > 1e-9:
+            max_idx = max(range(len(base_volumes)), key=lambda i: base_volumes[i])
+            base_volumes[max_idx] = _round_to_step_sum(base_volumes[max_idx] + diff, unit)
+
+        tipos_base = TIPOS_MODALIDADE.get(mod, ["Treino"])
+        tipos = _expand_to_n(tipos_base, n)
+        session_specs = []
+
         if planned_mod_sessions:
-            for sess in planned_mod_sessions:
-                if not isinstance(sess, dict):
-                    continue
-                sess_volume = _round_to_step_sum(float(sess.get("volume", 0.0) or 0.0), unit)
-                label = sess.get("tipo_nome") or sess.get("tipo") or sess.get("tipo_slug") or "Treino"
-                slug = sess.get("tipo_slug") or sess.get("tipo") or label
+            for idx in range(n):
+                planned = planned_mod_sessions[idx] if idx < len(planned_mod_sessions) else None
+                sess_volume = base_volumes[idx]
+                label = tipos[idx]
+                slug = tipos[idx]
+                meta = None
+                if isinstance(planned, dict):
+                    meta = planned
+                    label = planned.get("tipo_nome") or planned.get("tipo") or planned.get("tipo_slug") or label
+                    slug = planned.get("tipo_slug") or planned.get("tipo") or label
+                    planned_vol = planned.get("volume")
+                    try:
+                        planned_vol = float(planned_vol)
+                    except (TypeError, ValueError):
+                        planned_vol = None
+                    if planned_vol and planned_vol > 0:
+                        sess_volume = _round_to_step_sum(planned_vol, unit)
                 session_specs.append(
                     {
                         "volume": sess_volume,
                         "label": label,
                         "slug": slug,
-                        "meta": sess,
+                        "meta": meta,
                     }
                 )
+
+            current_total = sum(spec.get("volume", 0.0) for spec in session_specs)
+            remaining = target_total - current_total
+            if abs(remaining) > 1e-9:
+                max_idx = max(range(len(session_specs)), key=lambda i: session_specs[i].get("volume", 0.0))
+                session_specs[max_idx]["volume"] = _round_to_step_sum(
+                    session_specs[max_idx].get("volume", 0.0) + remaining,
+                    unit,
+                )
         else:
-            w_template = weights.get(mod)
-            if w_template is None:
-                w = [1.0 / n] * n
-            else:
-                w = _expand_to_n(w_template, n)
-                s = sum(w)
-                w = [1.0 / n] * n if s == 0 else [x / s for x in w]
-
-            volumes = [_round_to_step_sum(target_total * wi, unit) for wi in w]
-            diff = target_total - sum(volumes)
-            if abs(diff) > 1e-9:
-                max_idx = max(range(len(volumes)), key=lambda i: volumes[i])
-                volumes[max_idx] = _round_to_step_sum(volumes[max_idx] + diff, unit)
-
-            tipos_base = TIPOS_MODALIDADE.get(mod, ["Treino"])
-            tipos = _expand_to_n(tipos_base, n)
             session_specs = [
                 {
-                    "volume": volumes[i],
+                    "volume": base_volumes[i],
                     "label": tipos[i],
                     "slug": tipos[i],
                     "meta": None,
                 }
-                for i in range(len(volumes))
+                for i in range(len(base_volumes))
             ]
 
         mod_sessions[mod] = {"sessions": session_specs, "has_planned": has_planned}
@@ -3255,6 +3308,7 @@ def update_availability_from_current_week(user_id: str, week_start: date):
 # ----------------------------------------------------------------------------
 
 def generate_ics(df: pd.DataFrame) -> str:
+    df = enrich_detalhamento_for_export(df)
     ics = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//TriPlano//Planner//EN\n"
     for _, row in df.iterrows():
         start = row["StartDT"]
@@ -3277,6 +3331,39 @@ def generate_ics(df: pd.DataFrame) -> str:
         ics += "END:VEVENT\n"
     ics += "END:VCALENDAR\n"
     return ics
+
+
+def enrich_detalhamento_for_export(
+    df: pd.DataFrame, pace_context: dict | None = None
+) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    pace_ctx = pace_context
+    if pace_ctx is None:
+        try:
+            pace_ctx = _pace_defaults_from_state()
+        except Exception:
+            pace_ctx = None
+
+    enriched = df.copy()
+    for idx, row in enriched.iterrows():
+        detail_raw = str(row.get("Detalhamento", ""))
+        if detail_raw and detail_raw.lower() != "nan":
+            continue
+
+        mod = row.get("Modalidade")
+        tipo = row.get("Tipo de Treino")
+        try:
+            vol = float(row.get("Volume") or 0.0)
+        except (TypeError, ValueError):
+            vol = 0.0
+        unit = row.get("Unidade") or UNITS_ALLOWED.get(mod, "")
+        prescribed = prescribe_detail(mod, tipo, vol, unit, pace_ctx)
+        if prescribed:
+            enriched.at[idx, "Detalhamento"] = prescribed
+
+    return enriched
 
 class PDF(FPDF):
     def header(self):
@@ -3516,6 +3603,7 @@ def _render_week_into_pdf(pdf: PDF, df: pd.DataFrame, week_start: date):
 def generate_pdf(df: pd.DataFrame, week_start: date) -> bytes:
     pdf = PDF(orientation="L")  # já em paisagem
     pdf.alias_nb_pages()
+    df = enrich_detalhamento_for_export(df)
     _render_week_into_pdf(pdf, df, week_start)
     return pdf.output(dest="S").encode("latin-1")
 
@@ -3533,6 +3621,7 @@ def generate_cycle_pdf(user_id: str, week_starts: list[date]) -> bytes:
 
     for week_start in week_starts:
         week_df = canonical_week_df(user_id, week_start)
+        week_df = enrich_detalhamento_for_export(week_df)
         _render_week_into_pdf(pdf, week_df, week_start)
 
     return pdf.output(dest="S").encode("latin-1")
@@ -3895,7 +3984,8 @@ def generate_cycle(
 
     if not all_weeks:
         return pd.DataFrame(columns=SCHEMA_COLS)
-    return pd.concat(all_weeks, ignore_index=True)[SCHEMA_COLS]
+    df_cycle = pd.concat(all_weeks, ignore_index=True)[SCHEMA_COLS]
+    return enrich_detalhamento_for_export(df_cycle, paces)
 
 
 def _pace_defaults_from_state() -> dict:
@@ -3950,6 +4040,52 @@ def _key_sessions_from_state() -> dict:
     return {mod: st.session_state.get(f"key_sess_{mod}", "") for mod in MODALIDADES}
 
 
+def _planned_sessions_from_week_payload(week_data: dict) -> dict[str, list[dict]]:
+    """Extract planned session metadata grouped by modalidade from planner payload.
+
+    The planner today sends running "treinos" for corrida/triathlon, but we also
+    accept an explicit "modalidade" field to future-proof bike/swim payloads.
+    """
+
+    planned_sessions_by_mod: dict[str, list[dict]] = {}
+    treinos = week_data.get("treinos") if isinstance(week_data, dict) else None
+    if not treinos or not isinstance(treinos, list):
+        return planned_sessions_by_mod
+
+    for sess in treinos:
+        if not isinstance(sess, dict):
+            continue
+        volume = sess.get("volume_km")
+        if volume is None:
+            volume = sess.get("volume")
+        try:
+            volume = float(volume)
+        except (TypeError, ValueError):
+            volume = None
+        if volume is None or volume <= 0:
+            continue
+
+        tipo_slug = sess.get("tipo") or sess.get("slug")
+        tipo_nome = sess.get("tipo_nome") or sess.get("nome") or tipo_slug or "Treino"
+        modalidade = sess.get("modalidade")
+        if not modalidade:
+            modalidade = "Corrida"
+
+        planned_sessions_by_mod.setdefault(modalidade, []).append(
+            {
+                "volume": round(volume, 1),
+                "tipo_nome": tipo_nome,
+                "tipo_slug": tipo_slug or tipo_nome,
+                "zona": sess.get("zona"),
+                "descricao": sess.get("descricao"),
+                "duracao_estimada_min": sess.get("duracao_estimada_min"),
+                "ritmo": sess.get("ritmo"),
+            }
+        )
+
+    return planned_sessions_by_mod
+
+
 def cycle_plan_to_trainings(
     plan: dict,
     sessions_per_mod: dict,
@@ -3984,44 +4120,19 @@ def cycle_plan_to_trainings(
 
         weekly_targets = _ensure_support_work(weekly_targets, sessions_per_mod)
 
-        planned_sessions_by_mod = {}
-        treinos = week_data.get("treinos") if isinstance(week_data, dict) else None
-        if treinos and isinstance(treinos, list):
-            planned = []
-            for sess in treinos:
-                if not isinstance(sess, dict):
-                    continue
-                volume = sess.get("volume_km")
-                if volume is None:
-                    volume = sess.get("volume")
-                try:
-                    volume = float(volume)
-                except (TypeError, ValueError):
-                    volume = None
-                if volume is None or volume <= 0:
-                    continue
-                tipo_slug = sess.get("tipo") or sess.get("slug")
-                tipo_nome = sess.get("tipo_nome") or sess.get("nome") or tipo_slug or "Treino"
-                planned.append(
-                    {
-                        "volume": round(volume, 1),
-                        "tipo_nome": tipo_nome,
-                        "tipo_slug": tipo_slug or tipo_nome,
-                        "zona": sess.get("zona"),
-                        "descricao": sess.get("descricao"),
-                        "duracao_estimada_min": sess.get("duracao_estimada_min"),
-                        "ritmo": sess.get("ritmo"),
-                    }
-                )
-            if planned:
-                planned_sessions_by_mod["Corrida"] = planned
+        pace_ctx = dict(paces or {})
+        week_paces = week_data.get("ritmos_referencia") or {}
+        for key, value in week_paces.items():
+            pace_ctx.setdefault(key, value)
+
+        planned_sessions_by_mod = _planned_sessions_from_week_payload(week_data)
 
         week_df = distribute_week_by_targets(
             ws,
             weekly_targets,
             sessions_per_mod,
             key_sessions,
-            paces,
+            pace_ctx,
             preferred_days,
             user_id,
             off_days=off_days,
@@ -4032,13 +4143,14 @@ def cycle_plan_to_trainings(
             [],
             use_availability=False,
             preferences=user_preferences,
-            pace_context=paces,
+            pace_context=pace_ctx,
         )
         all_weeks.append(week_df)
 
     if not all_weeks:
         return pd.DataFrame(columns=SCHEMA_COLS)
-    return pd.concat(all_weeks, ignore_index=True)[SCHEMA_COLS]
+    df_cycle = pd.concat(all_weeks, ignore_index=True)[SCHEMA_COLS]
+    return enrich_detalhamento_for_export(df_cycle, paces)
 
 # ----------------------------------------------------------------------------
 # UI Principal
@@ -4069,6 +4181,16 @@ def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
         week_df["Data"] = pd.to_datetime(week_df["Data"]).dt.date
 
     week_df["Volume"] = pd.to_numeric(week_df["Volume"], errors="coerce").fillna(0.0)
+
+    # Preenche detalhamento ausente no DF canônico e persiste no base_df
+    pace_ctx = _pace_defaults_from_state()
+    enriched = enrich_detalhamento_for_export(week_df, pace_ctx)
+    if not enriched["Detalhamento"].fillna("").equals(week_df["Detalhamento"].fillna("")):
+        week_df = enriched
+        for idx in week_df.index:
+            base_df.at[idx, "Detalhamento"] = week_df.at[idx, "Detalhamento"]
+        save_user_df(user_id, base_df)
+        st.session_state["df"] = base_df
 
     # Garante UID estável: qualquer UID vazio ganha um novo e isso é salvo no base_df
     if "UID" not in week_df.columns:
@@ -4220,6 +4342,9 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
         pattern = load_timepattern_for_user(user_id) if use_time_pattern_cycle_plan else None
         if pattern:
             new_cycle_df = apply_time_pattern_to_cycle(new_cycle_df, pattern)
+
+        # Garantir que mudanças de tipo/horário retenham o detalhamento completo
+        new_cycle_df = enrich_detalhamento_for_export(new_cycle_df, paces)
 
         cycle_end = start_date + timedelta(weeks=cycle_weeks)
         existing_df = st.session_state["df"].copy()
