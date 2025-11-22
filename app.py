@@ -2487,12 +2487,12 @@ def _detail_from_planned_session(
     pace_min_km, pace_swim_sec = _parse_pace_strings(rit_txt)
 
     computed_duration: float | None = None
-    if duration:
-        computed_duration = float(duration)
-    elif volume and unit == "km" and pace_min_km:
+    if volume and unit == "km" and pace_min_km:
         computed_duration = volume * pace_min_km
     elif mod == "Natação" and volume and unit == "m" and pace_swim_sec:
         computed_duration = (volume / 100.0) * (pace_swim_sec / 60.0)
+    elif duration:
+        computed_duration = float(duration)
 
     tempo_txt = f" (~{int(round(computed_duration))} min)" if computed_duration else ""
     parts = [f"{label or 'Treino'} de {volume:g} {unit}{tempo_txt}."]
@@ -3176,6 +3176,12 @@ def _duration_from_session_spec(
         (meta or {}).get("ritmo") or spec.get("ritmo")
     )
     if meta:
+        if unit == "km" and pace_min_km and spec.get("volume"):
+            duration_calc = float(spec.get("volume") or 0.0) * float(pace_min_km)
+            return max(int(round(duration_calc)), 5)
+        if mod == "Natação" and unit == "m" and pace_swim_sec and spec.get("volume"):
+            duration_calc = (float(spec.get("volume") or 0.0) / 100.0) * (float(pace_swim_sec) / 60.0)
+            return max(int(round(duration_calc)), 5)
         duration = _coerce_duration_minutes(
             meta.get("duracao_estimada_min") or meta.get("tempo_estimado_min")
         )
@@ -3514,10 +3520,10 @@ def _render_week_into_pdf(pdf: PDF, df: pd.DataFrame, week_start: date):
     pdf.ln(5)
 
     # Página 1: tabela com horários (AGORA EM PAISAGEM) + coluna de Notas do Atleta
-    # Ajustei levemente as larguras para caber em A4 paisagem
-    # Mais compacto para sempre caber em uma página A4 paisagem
-    # Aumenta a coluna de Detalhamento para evitar cortes no texto
-    col_widths = [22, 16, 16, 26, 30, 16, 12, 76, 40]
+    # Larguras recalibradas para forçar o conteúdo a caber em uma única página A4
+    # paisagem, mantendo a coluna de Detalhamento ampla o bastante para evitar cortes
+    # perceptíveis e sem quebrar a tabela.
+    col_widths = [19, 14, 14, 24, 26, 14, 10, 90, 36]
     headers = [
         "Data",
         "Início",
