@@ -2428,7 +2428,50 @@ def _ensure_support_work(weekly_targets: dict, sessions_per_mod: dict) -> dict:
             targets[mod] = default_volume
     return targets
 
-def _detail_from_planned_session(mod: str, session_spec: dict, unit: str) -> str | None:
+def _parse_pace_strings(pace_str: str | None) -> tuple[float | None, float | None]:
+    """Return (minutes_per_km, seconds_per_100m) parsed from a pace string.
+
+    Accepts formats like "05:15", "5:15/km", "1:35/100m" or decimal minutes.
+    """
+
+    if not pace_str:
+        return None, None
+
+    raw = str(pace_str).strip().lower()
+    if not raw:
+        return None, None
+
+    # Normalize separators
+    raw = raw.replace(",", ":").replace(";", ":")
+
+    minutes_per_km: float | None = None
+    sec_per_100m: float | None = None
+
+    match = re.search(r"(\d+)[.:](\d{1,2})", raw)
+    if match:
+        mins = int(match.group(1))
+        secs = int(match.group(2))
+        total_minutes = mins + secs / 60.0
+        total_seconds = mins * 60 + secs
+        if "100" in raw:
+            sec_per_100m = total_seconds
+        else:
+            minutes_per_km = total_minutes
+
+    if minutes_per_km is None:
+        try:
+            val = float(raw)
+            if val > 0:
+                minutes_per_km = val
+        except (TypeError, ValueError):
+            pass
+
+    return minutes_per_km, sec_per_100m
+
+
+def _detail_from_planned_session(
+    mod: str, session_spec: dict, unit: str, paces: dict | None
+) -> str | None:
     if not isinstance(session_spec, dict):
         return None
     meta = session_spec.get("meta") or {}
@@ -2440,7 +2483,18 @@ def _detail_from_planned_session(mod: str, session_spec: dict, unit: str) -> str
     duration = meta.get("duracao_estimada_min") or meta.get("tempo_estimado_min")
     descricao = meta.get("descricao")
     ritmo = meta.get("ritmo")
-    tempo_txt = f" (~{int(round(duration))} min)" if duration else ""
+    rit_txt = meta.get("ritmo") or session_spec.get("ritmo")
+    pace_min_km, pace_swim_sec = _parse_pace_strings(rit_txt)
+
+    computed_duration: float | None = None
+    if duration:
+        computed_duration = float(duration)
+    elif volume and unit == "km" and pace_min_km:
+        computed_duration = volume * pace_min_km
+    elif mod == "Natação" and volume and unit == "m" and pace_swim_sec:
+        computed_duration = (volume / 100.0) * (pace_swim_sec / 60.0)
+
+    tempo_txt = f" (~{int(round(computed_duration))} min)" if computed_duration else ""
     parts = [f"{label or 'Treino'} de {volume:g} {unit}{tempo_txt}."]
     if zone:
         parts.append(f"Zona-alvo: {zone}.")
@@ -2448,7 +2502,24 @@ def _detail_from_planned_session(mod: str, session_spec: dict, unit: str) -> str
         parts.append(f"Ritmo sugerido: {ritmo}.")
     if descricao:
         parts.append(str(descricao))
-    return " ".join(parts)
+
+    base_detail = " ".join(parts)
+
+    if mod in {"Ciclismo", "Natação"}:
+        library_detail = prescribe_detail(
+            mod,
+            label,
+            volume,
+            unit,
+            paces or {},
+            duration_override=computed_duration,
+        )
+        if library_detail:
+            if base_detail:
+                return f"{base_detail} {library_detail}"
+            return library_detail
+
+    return base_detail if base_detail else None
 
 
 def prescribe_detail(mod, tipo, volume, unit, paces, duration_override=None):
@@ -2740,9 +2811,12 @@ def distribute_week_by_targets(
         planned_mod_sessions = planned_sessions.get(mod)
         n_requested = int(sessions_per_mod.get(mod, 0))
         n_planned = len(planned_mod_sessions) if planned_mod_sessions else 0
-        n = max(n_planned, n_requested)
+        n = n_requested if n_requested > 0 else n_planned
         if weekly_vol <= 0 or n <= 0:
             continue
+
+        if planned_mod_sessions and n < n_planned:
+            planned_mod_sessions = planned_mod_sessions[:n]
 
         unit = UNITS_ALLOWED[mod]
         target_total = _round_to_step_sum(weekly_vol, unit)
@@ -2900,7 +2974,7 @@ def distribute_week_by_targets(
                 tempo_estimado = _duration_from_session_spec(
                     mod, spec, unit, tipo_label, paces
                 )
-                detail = _detail_from_planned_session(mod, spec, unit)
+                detail = _detail_from_planned_session(mod, spec, unit, paces)
                 if not detail:
                     detail = prescribe_detail(
                         mod,
@@ -3098,12 +3172,21 @@ def _duration_from_session_spec(
     paces: dict | None,
 ) -> int:
     meta = spec.get("meta") if isinstance(spec.get("meta"), dict) else None
+    pace_min_km, pace_swim_sec = _parse_pace_strings(
+        (meta or {}).get("ritmo") or spec.get("ritmo")
+    )
     if meta:
         duration = _coerce_duration_minutes(
             meta.get("duracao_estimada_min") or meta.get("tempo_estimado_min")
         )
         if duration:
             return duration
+        if unit == "km" and pace_min_km and spec.get("volume"):
+            duration_calc = float(spec.get("volume") or 0.0) * float(pace_min_km)
+            return max(int(round(duration_calc)), 5)
+        if mod == "Natação" and unit == "m" and pace_swim_sec and spec.get("volume"):
+            duration_calc = (float(spec.get("volume") or 0.0) / 100.0) * (float(pace_swim_sec) / 60.0)
+            return max(int(round(duration_calc)), 5)
     payload = {
         "Modalidade": mod,
         "Tipo de Treino": tipo_label,
