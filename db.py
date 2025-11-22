@@ -121,7 +121,8 @@ def init_db() -> None:
                     "StravaID" TEXT,
                     "StravaURL" TEXT,
                     "DuracaoRealMin" NUMERIC,
-                    "DistanciaReal" NUMERIC
+                    "DistanciaReal" NUMERIC,
+                    "Fase" TEXT
                 )
                 """
             )
@@ -141,8 +142,11 @@ def init_db() -> None:
             "StravaURL",
             "DuracaoRealMin",
             "DistanciaReal",
+            "Fase",
         ]:
             col_type = "TEXT" if extra_col in ["StravaID", "StravaURL"] else "NUMERIC"
+            if extra_col == "Fase":
+                col_type = "TEXT"
             conn.execute(
                 text(
                     f'ALTER TABLE treinos ADD COLUMN IF NOT EXISTS "{extra_col}" {col_type}'
