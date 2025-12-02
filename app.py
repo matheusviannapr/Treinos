@@ -71,6 +71,7 @@ def safe_rerun():
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
+ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 EXPORT_DIR = os.path.join(BASE_DIR, "exports")
 CSV_PATH = os.path.join(DATA_DIR, "treinos.csv")
 USERS_CSV_PATH = os.path.join(DATA_DIR, "usuarios.csv")
@@ -78,6 +79,7 @@ AVAIL_CSV_PATH = os.path.join(DATA_DIR, "availability.csv")
 TIMEPATTERN_CSV_PATH = os.path.join(DATA_DIR, "time_patterns.csv")
 PREFERENCES_CSV_PATH = os.path.join(DATA_DIR, "preferences.csv")
 DAILY_NOTES_CSV_PATH = os.path.join(DATA_DIR, "daily_notes.csv")
+LOGO_PATH = os.path.join(ASSETS_DIR, "triplanner_logo.png")
 
 SCHEMA_COLS = [
     "UserID",
@@ -227,15 +229,17 @@ OFF_DAY_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
 
 def ensure_dirs():
     os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(ASSETS_DIR, exist_ok=True)
     os.makedirs(EXPORT_DIR, exist_ok=True)
 
 
 def load_css():
     """Inject a global CSS theme to modernize the UI."""
-    primary = "#6C63FF"
-    secondary = "#00C9A7"
-    background = "#0f172a"
-    surface = "#111827"
+    primary = "#225E2F"  # deep green from the logo
+    secondary = "#C4A02D"  # golden accent from the logo
+    accent = "#ED5C41"  # warm highlight for hovers
+    background = "#FCFAE8"  # soft off-white base from the logo background
+    surface = "#F2F6EC"  # light surface for cards/inputs
     st.markdown(
         f"""
         <style>
@@ -246,59 +250,86 @@ def load_css():
             padding-bottom: 4rem;
         }}
         body {{
-            background: linear-gradient(180deg, {background} 0%, #0b1220 40%, #0a0f1a 100%);
-            color: #e5e7eb;
+            background: radial-gradient(circle at 10% 20%, rgba(196,160,45,0.12), transparent 25%),
+                        radial-gradient(circle at 80% 10%, rgba(34,94,47,0.10), transparent 20%),
+                        linear-gradient(180deg, {background} 0%, #edf5e7 50%, #e6f1e0 100%);
+            color: #1f2a24;
             font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
         }}
         h1, h2, h3, h4 {{
-            color: #f8fafc;
+            color: #1b3a2a;
             font-weight: 800;
-            letter-spacing: -0.02em;
+            letter-spacing: -0.015em;
         }}
-        h1 {{ font-size: 2.2rem; }}
-        h2 {{ font-size: 1.7rem; margin-top: 1rem; }}
-        h3 {{ font-size: 1.2rem; color: #cbd5e1; }}
+        h1 {{ font-size: 2.3rem; }}
+        h2 {{ font-size: 1.75rem; margin-top: 1rem; }}
+        h3 {{ font-size: 1.2rem; color: #355c3f; }}
 
         /* Buttons */
         .stButton button {{
             background: linear-gradient(135deg, {primary}, {secondary});
-            color: #0b0f1a;
+            color: #0f1c15;
             border-radius: 14px;
             padding: 0.65rem 1.2rem;
-            border: none;
+            border: 1px solid rgba(34,94,47,0.15);
             font-weight: 700;
-            box-shadow: 0 15px 30px rgba(108, 99, 255, 0.25);
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            box-shadow: 0 12px 28px rgba(34, 94, 47, 0.20);
+            transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
         }}
         .stButton button:hover {{
             transform: translateY(-2px);
-            box-shadow: 0 18px 36px rgba(0, 201, 167, 0.3);
+            box-shadow: 0 18px 36px rgba(196, 160, 45, 0.28);
+            filter: brightness(1.03);
         }}
         .stButton button:active {{
             transform: translateY(0);
+            box-shadow: 0 10px 18px rgba(34, 94, 47, 0.22);
         }}
 
         /* Inputs */
         .stTextInput input, .stSelectbox div[data-baseweb="select"], .stNumberInput input, textarea {{
             border-radius: 12px !important;
-            border: 1px solid #1f2937 !important;
+            border: 1px solid rgba(34,94,47,0.18) !important;
             background: {surface} !important;
-            color: #e5e7eb !important;
+            color: #1f2a24 !important;
+        }}
+        .stTextInput input:focus, .stSelectbox div[data-baseweb="select"]:focus-within, .stNumberInput input:focus, textarea:focus {{
+            box-shadow: 0 0 0 3px rgba(196,160,45,0.25) !important;
+            border-color: rgba(196,160,45,0.6) !important;
         }}
 
         /* Cards */
         .tri-card {{
-            background: #111827;
-            border: 1px solid rgba(255,255,255,0.04);
+            background: #ffffffee;
+            border: 1px solid rgba(34,94,47,0.08);
             border-radius: 18px;
             padding: 1.1rem 1.2rem;
-            box-shadow: 0 14px 40px rgba(0,0,0,0.25);
+            box-shadow: 0 18px 45px rgba(34,94,47,0.10);
+        }}
+        .tri-brand {{
+            display: flex;
+            align-items: center;
+            gap: 0.9rem;
+            background: linear-gradient(90deg, rgba(252,250,232,0.9), rgba(214,235,207,0.9));
+            border: 1px solid rgba(34,94,47,0.14);
+            border-radius: 14px;
+            padding: 0.75rem 1rem;
+            margin-bottom: 0.35rem;
+        }}
+        .tri-brand h4 {{
+            margin: 0;
+            color: #1f2a24;
+            font-weight: 800;
+        }}
+        .tri-brand p {{
+            margin: 0;
+            color: #3f5d46;
         }}
         .tri-pill {{
-            background: rgba(255,255,255,0.06);
+            background: rgba(34,94,47,0.12);
             padding: 0.35rem 0.75rem;
             border-radius: 999px;
-            color: #cbd5e1;
+            color: #1f2a24;
             font-size: 0.9rem;
         }}
 
@@ -306,36 +337,79 @@ def load_css():
         .stDataFrame, .stDataEditor {{
             background: {surface} !important;
             border-radius: 14px !important;
+            border: 1px solid rgba(34,94,47,0.10) !important;
         }}
         .stDataEditor tbody tr {{
             background: {surface} !important;
         }}
         .stDataEditor thead tr th {{
-            background: #0b1324 !important;
+            background: #eef4e7 !important;
         }}
         .stTabs [data-baseweb="tab"] {{
-            background: rgba(255,255,255,0.06);
-            color: #cbd5e1;
+            background: rgba(34,94,47,0.08);
+            color: #1f2a24;
             border-radius: 10px;
             padding: 0.35rem 0.9rem;
             margin-right: 0.4rem;
         }}
         .stTabs [data-baseweb="tab"]:hover {{
-            background: rgba(0,201,167,0.2);
-            color: #e5e7eb;
+            background: rgba(196,160,45,0.18);
+            color: #0f1c15;
         }}
 
         /* Sidebar */
         section[data-testid="stSidebar"] {{
-            background: #0b1220;
+            background: linear-gradient(180deg, rgba(34,94,47,0.12), rgba(252,250,232,0.6));
         }}
         section[data-testid="stSidebar"] .css-1d391kg, section[data-testid="stSidebar"] .css-1d391kg p {{
-            color: #e2e8f0;
+            color: #1f2a24;
+        }}
+
+        /* Subtle floating effects */
+        .stMarkdown, .stTextInput, .stSelectbox, .stDataEditor, .stDataFrame {{
+            position: relative;
+        }}
+        .tri-card:hover {{
+            transform: translateY(-2px);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            box-shadow: 0 24px 50px rgba(34,94,47,0.14);
+        }}
+        .stSelectbox div[data-baseweb="select"]:hover {{
+            box-shadow: 0 0 0 3px rgba(237,92,65,0.18) !important;
+        }}
+        .st-bb {{
+            color: #1f2a24;
+        }}
+        .st-emotion-cache-1kyxreq p {{
+            color: #2d4635;
         }}
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_brand_strip(subtitle: str = "Treino inteligente para endurance e força"):
+    """Display the TriPlanner logo in a compact banner to keep branding visible."""
+    if not os.path.exists(LOGO_PATH):
+        return
+
+    with st.container():
+        col_logo, col_text = st.columns([1, 5])
+        with col_logo:
+            st.image(LOGO_PATH, width=110)
+        with col_text:
+            st.markdown(
+                f"""
+                <div class="tri-brand">
+                    <div>
+                        <h4>TriPlanner</h4>
+                        <p>{subtitle}</p>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 
 def initialize_schema():
@@ -4603,6 +4677,8 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
 
 
 def render_home_page(user_name: str):
+    if os.path.exists(LOGO_PATH):
+        st.image(LOGO_PATH, width=220)
     st.title("TriPlanner: seu treinador de bolso, com métodos consagrados")
     st.markdown(
         """
@@ -4850,8 +4926,13 @@ def render_settings_page(user_id: str, user_name: str):
 
 
 def main():
-    st.set_page_config(page_title="TriPlano", layout="wide")
+    st.set_page_config(
+        page_title="TriPlano",
+        page_icon=LOGO_PATH if os.path.exists(LOGO_PATH) else None,
+        layout="wide",
+    )
     load_css()
+    render_brand_strip("Planeje endurance e força lado a lado")
 
     # LOGIN
     if "user_id" not in st.session_state:
@@ -4927,6 +5008,8 @@ def main():
 
     # SIDEBAR
     st.sidebar.title("TriPlano 🌀")
+    if os.path.exists(LOGO_PATH):
+        st.sidebar.image(LOGO_PATH, use_column_width=True)
     st.sidebar.markdown(f"👤 **{user_name}**  \n`{user_id}`")
     if st.sidebar.button("Sair"):
         logout()
