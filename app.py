@@ -53,6 +53,7 @@ from streamlit_calendar import calendar as st_calendar  # pip install streamlit-
 
 import db
 import triplanner_engine
+import strength
 
 # ----------------------------------------------------------------------------
 # Utilitários básicos
@@ -227,6 +228,114 @@ OFF_DAY_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
 def ensure_dirs():
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(EXPORT_DIR, exist_ok=True)
+
+
+def load_css():
+    """Inject a global CSS theme to modernize the UI."""
+    primary = "#6C63FF"
+    secondary = "#00C9A7"
+    background = "#0f172a"
+    surface = "#111827"
+    st.markdown(
+        f"""
+        <style>
+        /* Layout */
+        .block-container {{
+            max-width: 1200px;
+            padding-top: 1.5rem;
+            padding-bottom: 4rem;
+        }}
+        body {{
+            background: linear-gradient(180deg, {background} 0%, #0b1220 40%, #0a0f1a 100%);
+            color: #e5e7eb;
+            font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+        }}
+        h1, h2, h3, h4 {{
+            color: #f8fafc;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }}
+        h1 {{ font-size: 2.2rem; }}
+        h2 {{ font-size: 1.7rem; margin-top: 1rem; }}
+        h3 {{ font-size: 1.2rem; color: #cbd5e1; }}
+
+        /* Buttons */
+        .stButton button {{
+            background: linear-gradient(135deg, {primary}, {secondary});
+            color: #0b0f1a;
+            border-radius: 14px;
+            padding: 0.65rem 1.2rem;
+            border: none;
+            font-weight: 700;
+            box-shadow: 0 15px 30px rgba(108, 99, 255, 0.25);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }}
+        .stButton button:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 18px 36px rgba(0, 201, 167, 0.3);
+        }}
+        .stButton button:active {{
+            transform: translateY(0);
+        }}
+
+        /* Inputs */
+        .stTextInput input, .stSelectbox div[data-baseweb="select"], .stNumberInput input, textarea {{
+            border-radius: 12px !important;
+            border: 1px solid #1f2937 !important;
+            background: {surface} !important;
+            color: #e5e7eb !important;
+        }}
+
+        /* Cards */
+        .tri-card {{
+            background: #111827;
+            border: 1px solid rgba(255,255,255,0.04);
+            border-radius: 18px;
+            padding: 1.1rem 1.2rem;
+            box-shadow: 0 14px 40px rgba(0,0,0,0.25);
+        }}
+        .tri-pill {{
+            background: rgba(255,255,255,0.06);
+            padding: 0.35rem 0.75rem;
+            border-radius: 999px;
+            color: #cbd5e1;
+            font-size: 0.9rem;
+        }}
+
+        /* Tables */
+        .stDataFrame, .stDataEditor {{
+            background: {surface} !important;
+            border-radius: 14px !important;
+        }}
+        .stDataEditor tbody tr {{
+            background: {surface} !important;
+        }}
+        .stDataEditor thead tr th {{
+            background: #0b1324 !important;
+        }}
+        .stTabs [data-baseweb="tab"] {{
+            background: rgba(255,255,255,0.06);
+            color: #cbd5e1;
+            border-radius: 10px;
+            padding: 0.35rem 0.9rem;
+            margin-right: 0.4rem;
+        }}
+        .stTabs [data-baseweb="tab"]:hover {{
+            background: rgba(0,201,167,0.2);
+            color: #e5e7eb;
+        }}
+
+        /* Sidebar */
+        section[data-testid="stSidebar"] {{
+            background: #0b1220;
+        }}
+        section[data-testid="stSidebar"] .css-1d391kg, section[data-testid="stSidebar"] .css-1d391kg p {{
+            color: #e2e8f0;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def initialize_schema():
@@ -4493,8 +4602,256 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
     )
 
 
+def render_home_page(user_name: str):
+    st.title("TriPlanner: seu treinador de bolso, com métodos consagrados")
+    st.markdown(
+        """
+        <div class="tri-card">
+            <p class="tri-pill">Planejamento inteligente para triathlon e endurance</p>
+            <h2>Construa semanas sólidas, visualize seu calendário e acompanhe a evolução.</h2>
+            <p>Automatize sua periodização, personalize treinos e agora também organize fichas de força.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col_left, col_right = st.columns([1.2, 1])
+    with col_left:
+        st.subheader("🚀 Comece em 3 passos")
+        steps = [
+            "1) Escolha seu objetivo e parâmetros principais",
+            "2) Gere seu plano semanal/ciclo com poucos cliques",
+            "3) Ajuste treinos, exporte PDF/ICS e acompanhe métricas",
+        ]
+        for s in steps:
+            st.markdown(f"- {s}")
+        st.markdown("\n✨ Novo: fichas de força com splits A/B/C e exercícios personalizados.")
+    with col_right:
+        st.markdown(
+            """
+            <div class="tri-card">
+                <h3>Pronto para acelerar, {user}?</h3>
+                <p>Continue de onde parou, defina uma ficha ativa de força e preencha sua semana.</p>
+                <ul>
+                    <li>Calendário arrasta-e-solta</li>
+                    <li>Exportação profissional em PDF e ICS</li>
+                    <li>Integração Strava para suas atividades</li>
+                </ul>
+            </div>
+            """.format(user=user_name),
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("### Benefícios do TriPlanner")
+    col1, col2, col3 = st.columns(3)
+    for col, (title, desc) in zip(
+        [col1, col2, col3],
+        [
+            ("Métodos consagrados", "Planos baseados em periodização real, não em achismos."),
+            ("Visual limpo", "Sua semana em cards e calendário editável, sem bagunça."),
+            ("Ficha de academia", "Monte treinos A/B/C/D com exercícios e cargas."),
+        ],
+    ):
+        with col:
+            st.markdown(
+                f"""
+                <div class="tri-card">
+                    <h3>{title}</h3>
+                    <p>{desc}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("### Como funciona")
+    how1, how2, how3 = st.columns(3)
+    how1.markdown("""<div class=\"tri-card\"><h3>1) Objetivo</h3><p>Defina volume, sessões e preferências.</p></div>""", unsafe_allow_html=True)
+    how2.markdown("""<div class=\"tri-card\"><h3>2) Gere</h3><p>Use o motor para criar semana/ciclo automaticamente.</p></div>""", unsafe_allow_html=True)
+    how3.markdown("""<div class=\"tri-card\"><h3>3) Acompanhe</h3><p>Faça ajustes, registre status e exporte.</p></div>""", unsafe_allow_html=True)
+
+    st.markdown("### Prova social")
+    st.info("Depoimentos e prints vão entrar aqui. Use este espaço para mostrar resultados da sua comunidade.")
+
+
+def render_strength_page(user_id: str):
+    st.header("🏋️ Treino de Academia / Força")
+    st.caption(
+        "Monte fichas A/B/C/D, cadastre exercícios com séries, repetições e cargas, e mantenha uma ficha ativa para acompanhar.")
+
+    splits_df = strength.list_splits(user_id)
+    active_split = strength.get_active_split(user_id)
+    active_id = active_split.get("id") if active_split else None
+
+    col_left, col_right = st.columns([1, 2], gap="large")
+
+    with col_left:
+        st.subheader("Fichas do usuário")
+        split_ids = splits_df["id"].tolist()
+        split_labels = {row["id"]: row["nome_split"] or f"Ficha {row['id']}" for _, row in splits_df.iterrows()}
+        selected_split_id = None
+        if split_ids:
+            default_idx = 0
+            if active_id in split_ids:
+                default_idx = split_ids.index(active_id)
+            selected_split_id = st.selectbox(
+                "Escolha uma ficha",
+                options=split_ids,
+                format_func=lambda x: split_labels.get(x, f"Ficha {x}"),
+                index=default_idx,
+                key="strength_split_select",
+            )
+            chosen = splits_df[splits_df["id"] == selected_split_id].iloc[0]
+            new_name = st.text_input("Nome da ficha", value=chosen.get("nome_split", ""), key="split_name")
+            new_desc = st.text_area("Descrição", value=chosen.get("descricao", ""), key="split_desc")
+            col_btn1, col_btn2 = st.columns(2)
+            if col_btn1.button("Salvar ficha", key="save_split"):
+                strength.update_split(user_id, int(selected_split_id), new_name, new_desc)
+                st.success("Ficha atualizada!")
+                safe_rerun()
+            if col_btn2.button("Definir como ativa", key="set_active_split"):
+                strength.set_active_split(user_id, int(selected_split_id))
+                st.success("Ficha ativada para uso imediato.")
+                safe_rerun()
+
+            with st.expander("Remover ficha", expanded=False):
+                st.warning("Esta ação remove o split e todos os exercícios associados.")
+                if st.button("Excluir ficha", key="delete_split"):
+                    strength.delete_split(user_id, int(selected_split_id))
+                    st.success("Ficha removida.")
+                    safe_rerun()
+        else:
+            st.info("Crie sua primeira ficha para começar.")
+
+        st.markdown("---")
+        st.subheader("Criar nova ficha")
+        new_split_name = st.text_input("Nome da nova ficha", key="new_split_name")
+        new_split_desc = st.text_area("Descrição", key="new_split_desc")
+        if st.button("Criar ficha", key="create_split"):
+            new_id = strength.create_split(user_id, new_split_name or "Minha ficha", new_split_desc)
+            if new_id:
+                st.success("Ficha criada e definida como ativa!")
+                safe_rerun()
+            else:
+                st.error("Não foi possível criar a ficha.")
+
+    with col_right:
+        st.subheader("Splits e exercícios")
+        if not selected_split_id:
+            st.info("Selecione ou crie uma ficha para configurar os treinos.")
+            return
+
+        workouts_df = strength.list_workouts(user_id, int(selected_split_id))
+        if workouts_df.empty:
+            workouts_df = pd.DataFrame(
+                [{"id": None, "nome_treino_letra": "A", "ordem": 0}]
+            )
+        edited_workouts = st.data_editor(
+            workouts_df,
+            num_rows="dynamic",
+            hide_index=True,
+            key="workout_editor",
+            column_config={
+                "id": st.column_config.Column("ID", help="Gerado automaticamente", disabled=True),
+                "nome_treino_letra": st.column_config.TextColumn("Treino (A, B, C...)"),
+                "ordem": st.column_config.NumberColumn("Ordem", help="Ordene o dia da semana"),
+            },
+        )
+        if st.button("Salvar splits", key="save_workouts"):
+            strength.save_workouts(user_id, int(selected_split_id), edited_workouts.to_dict("records"))
+            st.success("Splits salvos!")
+            safe_rerun()
+
+        saved_workouts = strength.list_workouts(user_id, int(selected_split_id))
+        if saved_workouts.empty:
+            st.info("Salve ao menos um treino para adicionar exercícios.")
+            return
+
+        workout_options = saved_workouts["id"].tolist()
+        workout_labels = {
+            row["id"]: row.get("nome_treino_letra", "Treino") for _, row in saved_workouts.iterrows()
+        }
+        selected_workout_id = st.selectbox(
+            "Selecione o treino (A/B/C...)",
+            options=workout_options,
+            format_func=lambda x: workout_labels.get(x, f"Treino {x}"),
+            key="selected_workout",
+        )
+
+        exercises_df = strength.list_exercises(user_id, int(selected_workout_id))
+        if exercises_df.empty:
+            exercises_df = pd.DataFrame(
+                [
+                    {
+                        "id": None,
+                        "grupo_muscular": "Peito",
+                        "nome_exercicio": "Supino reto",
+                        "series": "3",
+                        "repeticoes": "8-10",
+                        "carga": "",
+                        "intervalo": "90s",
+                        "observacoes": "",
+                        "ordem": 0,
+                    }
+                ]
+            )
+        edited_exercises = st.data_editor(
+            exercises_df,
+            num_rows="dynamic",
+            hide_index=True,
+            key=f"exercise_editor_{selected_workout_id}",
+            column_config={
+                "id": st.column_config.Column("ID", disabled=True, help="Gerado pelo app"),
+                "grupo_muscular": st.column_config.SelectboxColumn(
+                    "Grupo muscular", options=strength.DEFAULT_MUSCLE_GROUPS
+                ),
+                "nome_exercicio": st.column_config.TextColumn("Exercício"),
+                "series": st.column_config.TextColumn("Séries"),
+                "repeticoes": st.column_config.TextColumn("Repetições"),
+                "carga": st.column_config.TextColumn("Carga (kg)", help="Use kg ou texto"),
+                "intervalo": st.column_config.TextColumn("Intervalo", help="Ex.: 60s"),
+                "observacoes": st.column_config.TextColumn("Observações"),
+                "ordem": st.column_config.NumberColumn("Ordem"),
+            },
+        )
+        if st.button("Salvar exercícios", key=f"save_exercises_{selected_workout_id}"):
+            strength.save_exercises(user_id, int(selected_workout_id), edited_exercises.to_dict("records"))
+            st.success("Treino salvo!")
+            safe_rerun()
+
+
+def render_support_page():
+    st.header("💬 Suporte e contato")
+    st.markdown("Tem alguma dúvida? Fale conosco e receba ajuda personalizada.")
+    st.markdown(
+        """
+        <div class="tri-card">
+            <p>📧 E-mail: suporte@triplanner.app</p>
+            <p>🤝 Comunidade: compartilhe prints e dúvidas diretamente no app.</p>
+            <p>💡 Sugestões: envie feedbacks sobre treinos de força, calendário ou visual.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_settings_page(user_id: str, user_name: str):
+    st.header("⚙️ Configurações")
+    st.markdown("Personalize detalhes da sua conta e preferências visuais.")
+    st.markdown(
+        f"""
+        <div class="tri-card">
+            <p><strong>Usuário:</strong> {user_name}</p>
+            <p><strong>ID:</strong> {user_id}</p>
+            <p>Use o menu lateral para navegar entre plano, ficha de força e dashboard.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def main():
     st.set_page_config(page_title="TriPlano", layout="wide")
+    load_css()
 
     # LOGIN
     if "user_id" not in st.session_state:
@@ -4576,14 +4933,26 @@ def main():
 
     menu = st.sidebar.radio(
         "Navegação",
-        ["📅 Planejamento Semanal", "🗓️ Resumo do Dia", "📈 Dashboard", "🚴 Strava"],
+        [
+            "🏠 Home",
+            "📅 Meu Plano",
+            "📋 Treino de Academia",
+            "🗓️ Resumo do Dia",
+            "📈 Dashboard",
+            "🚴 Strava",
+            "⚙️ Configurações",
+            "💬 Suporte/Contato",
+        ],
         index=0,
     )
     st.sidebar.markdown("---")
     st.sidebar.markdown("Desenvolvido por **Matheus Vianna**")
 
+    if menu == "🏠 Home":
+        render_home_page(user_name)
+
     # ---------------- PLANEJAMENTO SEMANAL ----------------
-    if menu == "📅 Planejamento Semanal":
+    elif menu == "📅 Meu Plano":
         st.header("📅 Planejamento Semanal")
         tab_semana, tab_ciclo = st.tabs(["Planeje sua semana", "Plano semanal do ciclo"])
         with tab_semana:
@@ -5608,6 +5977,15 @@ def main():
                                         st.markdown(f"- {change}")
                                 else:
                                     st.caption("Alteração sem detalhes adicionais.")
+
+    elif menu == "📋 Treino de Academia":
+        render_strength_page(user_id)
+
+    elif menu == "⚙️ Configurações":
+        render_settings_page(user_id, user_name)
+
+    elif menu == "💬 Suporte/Contato":
+        render_support_page()
 
     elif menu == "🚴 Strava":
         render_strava_tab(user_id)
