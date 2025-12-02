@@ -235,11 +235,11 @@ def ensure_dirs():
 
 def load_css():
     """Inject a global CSS theme to modernize the UI."""
-    primary = "#225E2F"  # deep green from the logo
-    secondary = "#C4A02D"  # golden accent from the logo
-    accent = "#ED5C41"  # warm highlight for hovers
-    background = "#FCFAE8"  # soft off-white base from the logo background
-    surface = "#F2F6EC"  # light surface for cards/inputs
+    primary = "#8BCFA8"  # pastel green inspired by the logo
+    secondary = "#E7DFA3"  # soft gold accent
+    accent = "#F6BE9A"  # warm highlight for hovers
+    background = "#FCFBF4"  # soft off-white base from the logo background
+    surface = "#F7FAF5"  # light surface for cards/inputs
     st.markdown(
         f"""
         <style>
@@ -267,23 +267,24 @@ def load_css():
 
         /* Buttons */
         .stButton button {{
-            background: linear-gradient(135deg, {primary}, {secondary});
+            background: linear-gradient(135deg, {primary} 0%, {secondary} 95%);
             color: #0f1c15;
             border-radius: 14px;
             padding: 0.65rem 1.2rem;
-            border: 1px solid rgba(34,94,47,0.15);
+            border: 1px solid rgba(34,94,47,0.08);
             font-weight: 700;
-            box-shadow: 0 12px 28px rgba(34, 94, 47, 0.20);
-            transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+            box-shadow: 0 10px 24px rgba(139, 207, 168, 0.22);
+            transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.2s ease;
+            filter: saturate(0.82);
         }}
         .stButton button:hover {{
             transform: translateY(-2px);
-            box-shadow: 0 18px 36px rgba(196, 160, 45, 0.28);
-            filter: brightness(1.03);
+            box-shadow: 0 18px 38px rgba(139, 207, 168, 0.28);
+            filter: brightness(1.03) saturate(1.02);
         }}
         .stButton button:active {{
             transform: translateY(0);
-            box-shadow: 0 10px 18px rgba(34, 94, 47, 0.22);
+            box-shadow: 0 8px 16px rgba(139, 207, 168, 0.22);
         }}
 
         /* Inputs */
@@ -4752,33 +4753,48 @@ def render_home_page(user_name: str):
 def render_strength_page(user_id: str):
     st.header("🏋️ Treino de Academia / Força")
     st.caption(
-        "Monte fichas A/B/C/D, cadastre exercícios com séries, repetições e cargas, e mantenha uma ficha ativa para acompanhar.")
+        "Monte fichas A/B/C/D, cadastre exercícios com séries, repetições e cargas, e mantenha uma ficha ativa para acompanhar."
+    )
 
     splits_df = strength.list_splits(user_id)
     active_split = strength.get_active_split(user_id)
     active_id = active_split.get("id") if active_split else None
+    if "strength_selected_split" not in st.session_state:
+        st.session_state.strength_selected_split = active_id
+
+    split_ids = splits_df["id"].tolist()
+    selected_split_id = st.session_state.get("strength_selected_split") or active_id
+    if split_ids:
+        if selected_split_id not in split_ids:
+            selected_split_id = active_id if active_id in split_ids else split_ids[0]
+        st.session_state.strength_selected_split = selected_split_id
 
     col_left, col_right = st.columns([1, 2], gap="large")
 
     with col_left:
         st.subheader("Fichas do usuário")
-        split_ids = splits_df["id"].tolist()
         split_labels = {row["id"]: row["nome_split"] or f"Ficha {row['id']}" for _, row in splits_df.iterrows()}
-        selected_split_id = None
         if split_ids:
-            default_idx = 0
-            if active_id in split_ids:
-                default_idx = split_ids.index(active_id)
             selected_split_id = st.selectbox(
                 "Escolha uma ficha",
                 options=split_ids,
                 format_func=lambda x: split_labels.get(x, f"Ficha {x}"),
-                index=default_idx,
+                index=split_ids.index(selected_split_id) if selected_split_id in split_ids else 0,
                 key="strength_split_select",
             )
+            st.session_state.strength_selected_split = selected_split_id
             chosen = splits_df[splits_df["id"] == selected_split_id].iloc[0]
-            new_name = st.text_input("Nome da ficha", value=chosen.get("nome_split", ""), key="split_name")
-            new_desc = st.text_area("Descrição", value=chosen.get("descricao", ""), key="split_desc")
+            split_key = f"split_{selected_split_id}"
+            new_name = st.text_input(
+                "Nome da ficha",
+                value=chosen.get("nome_split", ""),
+                key=f"split_name_{split_key}",
+            )
+            new_desc = st.text_area(
+                "Descrição",
+                value=chosen.get("descricao", ""),
+                key=f"split_desc_{split_key}",
+            )
             col_btn1, col_btn2 = st.columns(2)
             if col_btn1.button("Salvar ficha", key="save_split"):
                 strength.update_split(user_id, int(selected_split_id), new_name, new_desc)
@@ -4793,6 +4809,7 @@ def render_strength_page(user_id: str):
                 st.warning("Esta ação remove o split e todos os exercícios associados.")
                 if st.button("Excluir ficha", key="delete_split"):
                     strength.delete_split(user_id, int(selected_split_id))
+                    st.session_state.strength_selected_split = None
                     st.success("Ficha removida.")
                     safe_rerun()
         else:
@@ -4805,6 +4822,7 @@ def render_strength_page(user_id: str):
         if st.button("Criar ficha", key="create_split"):
             new_id = strength.create_split(user_id, new_split_name or "Minha ficha", new_split_desc)
             if new_id:
+                st.session_state.strength_selected_split = new_id
                 st.success("Ficha criada e definida como ativa!")
                 safe_rerun()
             else:
@@ -4825,7 +4843,7 @@ def render_strength_page(user_id: str):
             workouts_df,
             num_rows="dynamic",
             hide_index=True,
-            key="workout_editor",
+            key=f"workout_editor_{selected_split_id}",
             column_config={
                 "id": st.column_config.Column("ID", help="Gerado automaticamente", disabled=True),
                 "nome_treino_letra": st.column_config.TextColumn("Treino (A, B, C...)"),
@@ -4850,7 +4868,7 @@ def render_strength_page(user_id: str):
             "Selecione o treino (A/B/C...)",
             options=workout_options,
             format_func=lambda x: workout_labels.get(x, f"Treino {x}"),
-            key="selected_workout",
+            key=f"selected_workout_{selected_split_id}",
         )
 
         exercises_df = strength.list_exercises(user_id, int(selected_workout_id))
@@ -4893,7 +4911,6 @@ def render_strength_page(user_id: str):
             strength.save_exercises(user_id, int(selected_workout_id), edited_exercises.to_dict("records"))
             st.success("Treino salvo!")
             safe_rerun()
-
 
 def render_support_page():
     st.header("💬 Suporte e contato")
