@@ -199,6 +199,72 @@ def init_db() -> None:
             )
         )
 
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS strength_splits (
+                    id SERIAL PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    nome_split TEXT,
+                    descricao TEXT,
+                    data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    data_atualizacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    ativo BOOLEAN DEFAULT FALSE
+                )
+                """
+            )
+        )
+
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS strength_workouts (
+                    id SERIAL PRIMARY KEY,
+                    split_id INTEGER NOT NULL REFERENCES strength_splits(id) ON DELETE CASCADE,
+                    nome_treino_letra TEXT,
+                    ordem INTEGER DEFAULT 0
+                )
+                """
+            )
+        )
+
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS strength_exercises (
+                    id SERIAL PRIMARY KEY,
+                    workout_id INTEGER NOT NULL REFERENCES strength_workouts(id) ON DELETE CASCADE,
+                    grupo_muscular TEXT,
+                    nome_exercicio TEXT,
+                    series TEXT,
+                    repeticoes TEXT,
+                    carga TEXT,
+                    intervalo TEXT,
+                    observacoes TEXT,
+                    ordem INTEGER DEFAULT 0
+                )
+                """
+            )
+        )
+
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_strength_splits_user ON strength_splits(user_id)"))
+        conn.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_strength_workouts_split
+                ON strength_workouts(split_id)
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_strength_exercises_workout
+                ON strength_exercises(workout_id)
+                """
+            )
+        )
+
 
 def execute(sql: str, params: dict | None = None) -> None:
     statement = text(sql)
