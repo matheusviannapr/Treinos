@@ -36,6 +36,7 @@ import re
 import calendar as py_calendar
 import urllib.parse
 from datetime import datetime, date, timedelta, time, timezone
+from io import BytesIO
 from typing import Optional
 
 import pandas as pd
@@ -161,6 +162,48 @@ def pdf_safe(s: str) -> str:
         return ""
     t = str(s).translate(PDF_REPLACE)
     return unicodedata.normalize("NFKD", t).encode("latin-1", "ignore").decode("latin-1")
+
+
+def strength_pdf_bytes(split_name: str, workout_name: str, exercises_df: pd.DataFrame) -> bytes:
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, pdf_safe(f"Ficha de Força – {split_name}"), ln=True)
+    pdf.set_font("Arial", "", 13)
+    pdf.cell(0, 8, pdf_safe(f"Treino: {workout_name}"), ln=True)
+    pdf.ln(2)
+
+    headers = [
+        ("Ordem", 15),
+        ("Grupo", 35),
+        ("Exercício", 60),
+        ("Séries", 16),
+        ("Reps", 18),
+        ("Carga/Obs", 35),
+    ]
+    pdf.set_font("Arial", "B", 11)
+    for title, width in headers:
+        pdf.cell(width, 8, pdf_safe(title), border=1)
+    pdf.ln()
+
+    pdf.set_font("Arial", "", 10)
+    for _, row in exercises_df.sort_values("ordem", na_position="last").iterrows():
+        cells = [
+            str(row.get("ordem", "")),
+            row.get("grupo_muscular", ""),
+            row.get("nome_exercicio", ""),
+            row.get("series", ""),
+            row.get("repeticoes", ""),
+            row.get("carga", "") or row.get("observacoes", ""),
+        ]
+        for (title, width), value in zip(headers, cells):
+            pdf.cell(width, 8, pdf_safe(value), border=1)
+        pdf.ln()
+
+    buffer = BytesIO()
+    buffer.write(pdf.output(dest="S").encode("latin-1"))
+    buffer.seek(0)
+    return buffer.read()
 
 
 def modality_label(mod: str | None) -> str:
@@ -4770,6 +4813,7 @@ def render_strength_page(user_id: str):
         st.session_state.strength_selected_split = selected_split_id
 
     col_left, col_right = st.columns([1, 2], gap="large")
+    selected_split_name = None
 
     with col_left:
         st.subheader("Fichas do usuário")
@@ -4784,6 +4828,7 @@ def render_strength_page(user_id: str):
             )
             st.session_state.strength_selected_split = selected_split_id
             chosen = splits_df[splits_df["id"] == selected_split_id].iloc[0]
+            selected_split_name = chosen.get("nome_split") or f"Ficha {selected_split_id}"
             split_key = f"split_{selected_split_id}"
             new_name = st.text_input(
                 "Nome da ficha",
@@ -4870,6 +4915,7 @@ def render_strength_page(user_id: str):
             format_func=lambda x: workout_labels.get(x, f"Treino {x}"),
             key=f"selected_workout_{selected_split_id}",
         )
+        selected_workout_name = workout_labels.get(selected_workout_id, f"Treino {selected_workout_id}")
 
         exercises_df = strength.list_exercises(user_id, int(selected_workout_id))
         if exercises_df.empty:
@@ -4911,6 +4957,19 @@ def render_strength_page(user_id: str):
             strength.save_exercises(user_id, int(selected_workout_id), edited_exercises.to_dict("records"))
             st.success("Treino salvo!")
             safe_rerun()
+
+        pdf_data = strength_pdf_bytes(
+            selected_split_name or split_labels.get(selected_split_id, "Ficha"),
+            selected_workout_name,
+            edited_exercises,
+        )
+        st.download_button(
+            "Exportar treino em PDF",
+            data=pdf_data,
+            file_name=f"ficha_{selected_workout_name}.pdf",
+            mime="application/pdf",
+            key=f"download_pdf_{selected_workout_id}",
+        )
 
 def render_support_page():
     st.header("💬 Suporte e contato")
