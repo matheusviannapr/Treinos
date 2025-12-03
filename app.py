@@ -2304,8 +2304,8 @@ def save_daily_note_for_user(user_id: str, target_date: date, note: str):
 
 TRAINING_SHEET_COLUMNS = [
     "ordem",
-    "grupo_muscular",
     "exercicio",
+    "grupo_muscular",
     "series",
     "repeticoes",
     "carga_observacao",
@@ -2428,8 +2428,8 @@ def training_sheet_pdf_bytes(sheet_name: str, df_sheet: pd.DataFrame) -> bytes:
     pdf.ln(4)
     headers = [
         ("Ordem", 14),
-        ("Grupo", 32),
         ("Exercício", 58),
+        ("Grupo", 32),
         ("Séries", 16),
         ("Reps", 18),
         ("Carga/Obs", 32),
@@ -2443,8 +2443,8 @@ def training_sheet_pdf_bytes(sheet_name: str, df_sheet: pd.DataFrame) -> bytes:
     for _, row in df_sheet.sort_values("ordem", na_position="last").iterrows():
         values = [
             row.get("ordem", ""),
-            row.get("grupo_muscular", ""),
             row.get("exercicio", ""),
+            row.get("grupo_muscular", ""),
             row.get("series", ""),
             row.get("repeticoes", ""),
             row.get("carga_observacao", ""),
@@ -5482,26 +5482,33 @@ def render_training_sheets_page(user_id: str):
     exercise_suggestions = sorted({ex for lst in EXERCICIOS_CLASSICOS.values() for ex in lst})
     exercise_to_group = {ex: group for group, exercises in EXERCICIOS_CLASSICOS.items() for ex in exercises}
 
+    editor_df = (
+        st.session_state["df_training_sheet"].reindex(columns=TRAINING_SHEET_COLUMNS).copy()
+    )
+    editor_df = editor_df.reset_index(drop=True)
+    if not editor_df.empty:
+        editor_df["ordem"] = range(1, len(editor_df) + 1)
+
     edited_df = st.data_editor(
-        st.session_state["df_training_sheet"],
+        editor_df,
         num_rows="dynamic",
         use_container_width=True,
         key="training_sheet_editor",
         column_config={
-            "ordem": st.column_config.NumberColumn("Ordem", step=1, min_value=0),
-            "grupo_muscular": st.column_config.TextColumn("Grupo muscular"),
+            "ordem": st.column_config.NumberColumn("Ordem", step=1, min_value=1, disabled=True),
             "exercicio": st.column_config.SelectboxColumn(
                 "Exercício", options=exercise_suggestions + ["Outro exercício"]
             ),
+            "grupo_muscular": st.column_config.TextColumn("Grupo muscular"),
             "series": st.column_config.NumberColumn("Séries", step=1, min_value=0),
             "repeticoes": st.column_config.TextColumn("Repetições"),
             "carga_observacao": st.column_config.TextColumn("Carga/Observação"),
             "descanso_s": st.column_config.NumberColumn("Descanso (s)", step=10, min_value=0),
         },
     )
-    edited_df = edited_df.copy()
-    mapped_groups = edited_df["exercicio"].map(exercise_to_group)
-    edited_df.loc[mapped_groups.notna(), "grupo_muscular"] = mapped_groups[mapped_groups.notna()]
+    edited_df = edited_df.reindex(columns=TRAINING_SHEET_COLUMNS).reset_index(drop=True)
+    if not edited_df.empty:
+        edited_df["ordem"] = range(1, len(edited_df) + 1)
     st.session_state["df_training_sheet"] = edited_df
 
     col_save, col_pdf = st.columns([1, 1])
@@ -5509,9 +5516,21 @@ def render_training_sheets_page(user_id: str):
         if not current_sheet.strip():
             st.error("A ficha precisa ter um nome.")
         else:
-            save_training_sheet(user_id, current_sheet.strip(), edited_df)
+            df_to_save = edited_df.copy()
+            mapped_groups = df_to_save["exercicio"].map(exercise_to_group)
+            df_to_save.loc[mapped_groups.notna(), "grupo_muscular"] = mapped_groups[
+                mapped_groups.notna()
+            ]
+            st.session_state["df_training_sheet"] = df_to_save
+            save_training_sheet(user_id, current_sheet.strip(), df_to_save)
             st.success("Ficha salva com sucesso!")
-            st.session_state["df_training_sheet"] = load_training_sheet(user_id, current_sheet.strip())
+            st.session_state["df_training_sheet"] = load_training_sheet(
+                user_id, current_sheet.strip()
+            )
+
+    edited_df = st.session_state["df_training_sheet"].reindex(
+        columns=TRAINING_SHEET_COLUMNS
+    )
 
     pdf_data = training_sheet_pdf_bytes(current_sheet, edited_df)
     col_pdf.download_button(
