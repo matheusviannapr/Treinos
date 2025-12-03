@@ -36,6 +36,7 @@ import re
 import calendar as py_calendar
 import urllib.parse
 from datetime import datetime, date, timedelta, time, timezone
+from io import BytesIO
 from typing import Optional
 
 import pandas as pd
@@ -156,11 +157,180 @@ PDF_REPLACE = str.maketrans({
     "•": "-",
 })
 
+EXERCICIOS_CLASSICOS = {
+    "Peito": [
+        "Supino reto com barra",
+        "Supino reto com halteres",
+        "Supino inclinado com barra",
+        "Supino inclinado com halteres",
+        "Crucifixo reto com halteres",
+        "Crucifixo inclinado com halteres",
+        "Peck deck",
+        "Flexão de braço no solo",
+    ],
+    "Costas": [
+        "Puxada frente na barra fixa (pegada pronada)",
+        "Puxada frente na barra fixa (pegada supinada)",
+        "Puxada frente na polia",
+        "Remada curvada com barra",
+        "Remada unilateral com halter",
+        "Remada baixa na polia",
+        "Levantamento terra clássico",
+    ],
+    "Ombros": [
+        "Desenvolvimento militar com barra",
+        "Desenvolvimento com halteres",
+        "Elevação lateral com halteres",
+        "Elevação frontal com halteres",
+        "Remada alta com barra",
+        "Crucifixo invertido (voador inverso)",
+    ],
+    "Bíceps": [
+        "Rosca direta com barra",
+        "Rosca alternada com halteres",
+        "Rosca martelo com halteres",
+        "Rosca concentrada",
+        "Rosca na barra fixa (pegada supinada)",
+    ],
+    "Tríceps": [
+        "Tríceps testa com barra",
+        "Tríceps na polia (barra ou corda)",
+        "Mergulho em paralelas",
+        "Tríceps banco",
+        "Tríceps francês com halter",
+    ],
+    "Pernas": [
+        "Agachamento livre com barra",
+        "Agachamento no smith",
+        "Leg press 45°",
+        "Cadeira extensora",
+        "Mesa flexora",
+        "Cadeira flexora",
+        "Afundo com halteres",
+        "Passada (lunge) com halteres",
+    ],
+    "Glúteos": [
+        "Levantamento terra romeno",
+        "Elevação pélvica com barra (hip thrust)",
+        "Avanço (lunge) para trás",
+        "Agachamento búlgaro",
+        "Subida no banco com halteres",
+    ],
+    "Core": [
+        "Prancha isométrica",
+        "Prancha lateral",
+        "Abdominal crunch no solo",
+        "Elevação de pernas pendurado",
+        "Abdominal infra no banco",
+        "Abdominal na máquina",
+    ],
+    "Aeróbico": [
+        "Esteira",
+        "Bicicleta ergométrica",
+        "Elíptico",
+        "Escada",
+        "Corda de pular",
+    ],
+}
+
 def pdf_safe(s: str) -> str:
     if s is None:
         return ""
     t = str(s).translate(PDF_REPLACE)
     return unicodedata.normalize("NFKD", t).encode("latin-1", "ignore").decode("latin-1")
+
+
+def strength_pdf_bytes(split_name: str, workout_name: str, exercises_df: pd.DataFrame) -> bytes:
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, pdf_safe(f"Ficha de Força – {split_name}"), ln=True)
+    pdf.set_font("Arial", "", 13)
+    pdf.cell(0, 8, pdf_safe(f"Treino: {workout_name}"), ln=True)
+    pdf.ln(2)
+
+    headers = [
+        ("Ordem", 15),
+        ("Grupo", 35),
+        ("Exercício", 60),
+        ("Séries", 16),
+        ("Reps", 18),
+        ("Carga/Obs", 35),
+    ]
+    pdf.set_font("Arial", "B", 11)
+    for title, width in headers:
+        pdf.cell(width, 8, pdf_safe(title), border=1)
+    pdf.ln()
+
+    pdf.set_font("Arial", "", 10)
+    for _, row in exercises_df.sort_values("ordem", na_position="last").iterrows():
+        cells = [
+            str(row.get("ordem", "")),
+            row.get("grupo_muscular", ""),
+            row.get("nome_exercicio", ""),
+            row.get("series", ""),
+            row.get("repeticoes", ""),
+            row.get("carga", "") or row.get("observacoes", ""),
+        ]
+        for (title, width), value in zip(headers, cells):
+            pdf.cell(width, 8, pdf_safe(value), border=1)
+
+    return pdf.output(dest="S").encode("latin-1")
+
+
+def _strength_pdf_table(pdf: FPDF, exercises_df: pd.DataFrame) -> None:
+    headers = [
+        ("Ordem", 12),
+        ("Grupo", 30),
+        ("Exercício", 56),
+        ("Séries", 14),
+        ("Reps", 16),
+        ("Carga/Obs", 40),
+        ("Descanso", 20),
+    ]
+    pdf.set_font("Arial", "B", 10)
+    for title, width in headers:
+        pdf.cell(width, 8, pdf_safe(title), border=1)
+    pdf.ln()
+
+    pdf.set_font("Arial", "", 9)
+    for _, row in exercises_df.sort_values("ordem", na_position="last").iterrows():
+        values = [
+            row.get("ordem", ""),
+            row.get("grupo_muscular", ""),
+            row.get("nome_exercicio", ""),
+            row.get("series", ""),
+            row.get("repeticoes", ""),
+            row.get("carga", "") or row.get("observacoes", ""),
+            row.get("intervalo", ""),
+        ]
+        for (title, width), value in zip(headers, values):
+            pdf.cell(width, 8, pdf_safe(value), border=1)
+        pdf.ln()
+
+
+def strength_cycle_pdf(split_name: str, workouts: pd.DataFrame, exercises_map: dict[int, pd.DataFrame]) -> bytes:
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 12, pdf_safe(f"Ciclo de Treino – {split_name}"), ln=True)
+    pdf.set_font("Arial", "", 12)
+    labels = [w.get("nome_treino_letra") or f"Treino {w.get('id')}" for _, w in workouts.iterrows()]
+    pdf.multi_cell(0, 8, pdf_safe("Inclui: " + ", ".join(labels)))
+
+    for _, workout in workouts.sort_values("ordem", na_position="last").iterrows():
+        pdf.add_page()
+        nome = workout.get("nome_treino_letra") or f"Treino {workout.get('id')}"
+        pdf.set_font("Arial", "B", 14)
+        pdf.cell(0, 10, pdf_safe(f"Ficha – {nome}"), ln=True)
+        exercises_df = exercises_map.get(int(workout.get("id")), pd.DataFrame())
+        if exercises_df is None or exercises_df.empty:
+            pdf.set_font("Arial", "I", 11)
+            pdf.cell(0, 8, pdf_safe("Nenhum exercício cadastrado."), ln=True)
+            continue
+        _strength_pdf_table(pdf, exercises_df)
+
+    return pdf.output(dest="S").encode("latin-1")
 
 
 def modality_label(mod: str | None) -> str:
@@ -4770,6 +4940,7 @@ def render_strength_page(user_id: str):
         st.session_state.strength_selected_split = selected_split_id
 
     col_left, col_right = st.columns([1, 2], gap="large")
+    selected_split_name = None
 
     with col_left:
         st.subheader("Fichas do usuário")
@@ -4784,6 +4955,7 @@ def render_strength_page(user_id: str):
             )
             st.session_state.strength_selected_split = selected_split_id
             chosen = splits_df[splits_df["id"] == selected_split_id].iloc[0]
+            selected_split_name = chosen.get("nome_split") or f"Ficha {selected_split_id}"
             split_key = f"split_{selected_split_id}"
             new_name = st.text_input(
                 "Nome da ficha",
@@ -4870,6 +5042,7 @@ def render_strength_page(user_id: str):
             format_func=lambda x: workout_labels.get(x, f"Treino {x}"),
             key=f"selected_workout_{selected_split_id}",
         )
+        selected_workout_name = workout_labels.get(selected_workout_id, f"Treino {selected_workout_id}")
 
         exercises_df = strength.list_exercises(user_id, int(selected_workout_id))
         if exercises_df.empty:
@@ -4878,39 +5051,129 @@ def render_strength_page(user_id: str):
                     {
                         "id": None,
                         "grupo_muscular": "Peito",
-                        "nome_exercicio": "Supino reto",
+                        "nome_exercicio": "Supino reto com barra",
                         "series": "3",
                         "repeticoes": "8-10",
-                        "carga": "",
-                        "intervalo": "90s",
-                        "observacoes": "",
-                        "ordem": 0,
+                        "carga": "", 
+                        "intervalo": "90",
+                        "observacoes": "Começar leve, ajustar carga",
+                        "ordem": 1,
                     }
                 ]
             )
+
+        exercise_state_key = f"exercise_editor_state_{selected_workout_id}"
+        if exercise_state_key not in st.session_state:
+            st.session_state[exercise_state_key] = exercises_df
+
+        exercise_suggestions = sorted({ex for lst in EXERCICIOS_CLASSICOS.values() for ex in lst})
+
+        st.markdown("#### Monte sua tabela de exercícios")
+        st.caption("Use sugestões clássicas ou personalize cada linha. Linhas são editáveis como planilha.")
+
+        with st.expander("Adicionar exercício clássico rapidamente", expanded=False):
+            col_muscle, col_ex, col_add = st.columns([1, 1.2, 0.8])
+            selected_group = col_muscle.selectbox(
+                "Grupo muscular",
+                options=list(EXERCICIOS_CLASSICOS.keys()),
+                key=f"classic_group_{selected_workout_id}",
+            )
+            selected_exercise = col_ex.selectbox(
+                "Exercício sugerido",
+                options=EXERCICIOS_CLASSICOS.get(selected_group, []),
+                key=f"classic_exercise_{selected_workout_id}",
+            )
+            base_df = pd.DataFrame(st.session_state[exercise_state_key])
+            if base_df.empty:
+                default_order = 1
+            else:
+                default_order = (
+                    pd.to_numeric(base_df.get("ordem", 0), errors="coerce").fillna(0).max()
+                    + 1
+                )
+            if col_add.button("Adicionar à tabela", key=f"add_classic_{selected_workout_id}"):
+                base_df = pd.DataFrame(st.session_state[exercise_state_key])
+                new_row = {
+                    "id": None,
+                    "grupo_muscular": selected_group,
+                    "nome_exercicio": selected_exercise,
+                    "series": "3",
+                    "repeticoes": "8-12",
+                    "carga": "",
+                    "intervalo": "90",
+                    "observacoes": "",
+                    "ordem": default_order,
+                }
+                st.session_state[exercise_state_key] = pd.concat(
+                    [base_df, pd.DataFrame([new_row])], ignore_index=True
+                )
+                st.success("Exercício inserido na ficha.")
+                safe_rerun()
+
         edited_exercises = st.data_editor(
-            exercises_df,
+            pd.DataFrame(st.session_state[exercise_state_key]),
             num_rows="dynamic",
             hide_index=True,
             key=f"exercise_editor_{selected_workout_id}",
             column_config={
                 "id": st.column_config.Column("ID", disabled=True, help="Gerado pelo app"),
                 "grupo_muscular": st.column_config.SelectboxColumn(
-                    "Grupo muscular", options=strength.DEFAULT_MUSCLE_GROUPS
+                    "Grupo muscular", options=list(EXERCICIOS_CLASSICOS.keys())
                 ),
-                "nome_exercicio": st.column_config.TextColumn("Exercício"),
+                "nome_exercicio": st.column_config.SelectboxColumn(
+                    "Exercício", options=exercise_suggestions + ["Outro exercício"]
+                ),
                 "series": st.column_config.TextColumn("Séries"),
                 "repeticoes": st.column_config.TextColumn("Repetições"),
-                "carga": st.column_config.TextColumn("Carga (kg)", help="Use kg ou texto"),
-                "intervalo": st.column_config.TextColumn("Intervalo", help="Ex.: 60s"),
-                "observacoes": st.column_config.TextColumn("Observações"),
-                "ordem": st.column_config.NumberColumn("Ordem"),
+                "carga": st.column_config.TextColumn("Carga/Obs", help="kg ou texto livre"),
+                "intervalo": st.column_config.NumberColumn("Descanso (s)", step=10, min_value=0),
+                "observacoes": st.column_config.TextColumn("Anotações"),
+                "ordem": st.column_config.NumberColumn("Ordem", step=1, min_value=0),
             },
         )
-        if st.button("Salvar exercícios", key=f"save_exercises_{selected_workout_id}"):
+        st.session_state[exercise_state_key] = edited_exercises
+
+        col_save, col_export = st.columns(2)
+        if col_save.button("Salvar exercícios", key=f"save_exercises_{selected_workout_id}"):
             strength.save_exercises(user_id, int(selected_workout_id), edited_exercises.to_dict("records"))
-            st.success("Treino salvo!")
+            st.success("Treino salvo e pronto para exportar!")
             safe_rerun()
+
+        pdf_data = strength_pdf_bytes(
+            selected_split_name or split_labels.get(selected_split_id, "Ficha"),
+            selected_workout_name,
+            edited_exercises,
+        )
+        col_export.download_button(
+            "Exportar treino em PDF",
+            data=pdf_data,
+            file_name=f"ficha_{selected_workout_name}.pdf",
+            mime="application/pdf",
+            key=f"download_pdf_{selected_workout_id}",
+        )
+
+        saved_workouts = strength.list_workouts(user_id, int(selected_split_id))
+        if not saved_workouts.empty:
+            exercises_map = {
+                int(w_id): strength.list_exercises(user_id, int(w_id))
+                for w_id in saved_workouts["id"].tolist()
+            }
+            cycle_pdf = strength_cycle_pdf(
+                selected_split_name or split_labels.get(selected_split_id, "Ficha"),
+                saved_workouts,
+                exercises_map,
+            )
+            st.download_button(
+                "📕 Exportar ciclo (A/B/C) em PDF",
+                data=cycle_pdf,
+                file_name=f"ciclo_{selected_split_name or 'ficha'}.pdf",
+                mime="application/pdf",
+                key=f"download_cycle_pdf_{selected_split_id}",
+            )
+
+        with st.expander("Ver dicionário clássico de exercícios"):
+            for grupo, exercicios in EXERCICIOS_CLASSICOS.items():
+                st.markdown(f"**{grupo}:** " + ", ".join(exercicios))
 
 def render_support_page():
     st.header("💬 Suporte e contato")
