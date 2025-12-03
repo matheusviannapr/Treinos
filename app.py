@@ -5001,143 +5001,242 @@ def render_strength_page(user_id: str):
                 st.error("Não foi possível criar a ficha.")
 
     with col_right:
-        st.subheader("Splits e exercícios")
+        st.subheader("Cards de treino e exercícios")
         if not selected_split_id:
             st.info("Selecione ou crie uma ficha para configurar os treinos.")
             return
 
-        workouts_df = strength.list_workouts(user_id, int(selected_split_id))
-        if workouts_df.empty:
-            workouts_df = pd.DataFrame(
-                [{"id": None, "nome_treino_letra": "A", "ordem": 0}]
-            )
-        edited_workouts = st.data_editor(
-            workouts_df,
-            num_rows="dynamic",
-            hide_index=True,
-            key=f"workout_editor_{selected_split_id}",
-            column_config={
-                "id": st.column_config.Column("ID", help="Gerado automaticamente", disabled=True),
-                "nome_treino_letra": st.column_config.TextColumn("Treino (A, B, C...)"),
-                "ordem": st.column_config.NumberColumn("Ordem", help="Ordene o dia da semana"),
-            },
-        )
-        if st.button("Salvar splits", key="save_workouts"):
-            strength.save_workouts(user_id, int(selected_split_id), edited_workouts.to_dict("records"))
-            st.success("Splits salvos!")
-            safe_rerun()
-
         saved_workouts = strength.list_workouts(user_id, int(selected_split_id))
-        if saved_workouts.empty:
-            st.info("Salve ao menos um treino para adicionar exercícios.")
-            return
 
-        workout_options = saved_workouts["id"].tolist()
-        workout_labels = {
-            row["id"]: row.get("nome_treino_letra", "Treino") for _, row in saved_workouts.iterrows()
-        }
-        selected_workout_id = st.selectbox(
-            "Selecione o treino (A/B/C...)",
-            options=workout_options,
-            format_func=lambda x: workout_labels.get(x, f"Treino {x}"),
-            key=f"selected_workout_{selected_split_id}",
-        )
-        selected_workout_name = workout_labels.get(selected_workout_id, f"Treino {selected_workout_id}")
-
-        exercises_df = strength.list_exercises(user_id, int(selected_workout_id))
-        if exercises_df.empty:
-            exercises_df = pd.DataFrame(
-                [
-                    {
-                        "id": None,
-                        "grupo_muscular": "Peito",
-                        "nome_exercicio": "Supino reto com barra",
-                        "series": "3",
-                        "repeticoes": "8-10",
-                        "carga": "", 
-                        "intervalo": "90",
-                        "observacoes": "Começar leve, ajustar carga",
-                        "ordem": 1,
-                    }
-                ]
-            )
-
-        exercise_state_key = f"exercise_editor_state_{selected_workout_id}"
-        if exercise_state_key not in st.session_state:
-            st.session_state[exercise_state_key] = exercises_df
-
-        exercise_suggestions = sorted({ex for lst in EXERCICIOS_CLASSICOS.values() for ex in lst})
-
-        st.markdown("#### Monte sua tabela de exercícios")
-        st.caption("Use sugestões clássicas ou personalize cada linha. Linhas são editáveis como planilha.")
-
-        with st.expander("Adicionar exercício clássico rapidamente", expanded=False):
-            col_muscle, col_ex, col_add = st.columns([1, 1.2, 0.8])
-            selected_group = col_muscle.selectbox(
-                "Grupo muscular",
-                options=list(EXERCICIOS_CLASSICOS.keys()),
-                key=f"classic_group_{selected_workout_id}",
-            )
-            selected_exercise = col_ex.selectbox(
-                "Exercício sugerido",
-                options=EXERCICIOS_CLASSICOS.get(selected_group, []),
-                key=f"classic_exercise_{selected_workout_id}",
-            )
-            base_df = pd.DataFrame(st.session_state[exercise_state_key])
-            if base_df.empty:
-                default_order = 1
-            else:
-                default_order = (
-                    pd.to_numeric(base_df.get("ordem", 0), errors="coerce").fillna(0).max()
-                    + 1
+        with st.expander("Gerenciar lista de treinos (ordem e nome)", expanded=False):
+            base_workouts = saved_workouts
+            if base_workouts.empty:
+                base_workouts = pd.DataFrame(
+                    [{"id": None, "nome_treino_letra": "A", "ordem": 0}]
                 )
-            if col_add.button("Adicionar à tabela", key=f"add_classic_{selected_workout_id}"):
-                base_df = pd.DataFrame(st.session_state[exercise_state_key])
-                new_row = {
-                    "id": None,
-                    "grupo_muscular": selected_group,
-                    "nome_exercicio": selected_exercise,
-                    "series": "3",
-                    "repeticoes": "8-12",
-                    "carga": "",
-                    "intervalo": "90",
-                    "observacoes": "",
-                    "ordem": default_order,
-                }
-                st.session_state[exercise_state_key] = pd.concat(
-                    [base_df, pd.DataFrame([new_row])], ignore_index=True
+            edited_workouts = st.data_editor(
+                base_workouts,
+                num_rows="dynamic",
+                hide_index=True,
+                key=f"workout_editor_{selected_split_id}",
+                column_config={
+                    "id": st.column_config.Column(
+                        "ID", help="Gerado automaticamente", disabled=True
+                    ),
+                    "nome_treino_letra": st.column_config.TextColumn(
+                        "Treino (A, B, C...)"
+                    ),
+                    "ordem": st.column_config.NumberColumn(
+                        "Ordem", help="Ordene o dia da semana"
+                    ),
+                },
+            )
+            if st.button("Salvar treinos", key="save_workouts"):
+                strength.save_workouts(
+                    user_id, int(selected_split_id), edited_workouts.to_dict("records")
                 )
-                st.success("Exercício inserido na ficha.")
+                st.success("Treinos salvos!")
                 safe_rerun()
 
-        edited_exercises = st.data_editor(
-            pd.DataFrame(st.session_state[exercise_state_key]),
-            num_rows="dynamic",
-            hide_index=True,
-            key=f"exercise_editor_{selected_workout_id}",
-            column_config={
-                "id": st.column_config.Column("ID", disabled=True, help="Gerado pelo app"),
-                "grupo_muscular": st.column_config.SelectboxColumn(
-                    "Grupo muscular", options=list(EXERCICIOS_CLASSICOS.keys())
-                ),
-                "nome_exercicio": st.column_config.SelectboxColumn(
-                    "Exercício", options=exercise_suggestions + ["Outro exercício"]
-                ),
-                "series": st.column_config.TextColumn("Séries"),
-                "repeticoes": st.column_config.TextColumn("Repetições"),
-                "carga": st.column_config.TextColumn("Carga/Obs", help="kg ou texto livre"),
-                "intervalo": st.column_config.NumberColumn("Descanso (s)", step=10, min_value=0),
-                "observacoes": st.column_config.TextColumn("Anotações"),
-                "ordem": st.column_config.NumberColumn("Ordem", step=1, min_value=0),
-            },
-        )
-        st.session_state[exercise_state_key] = edited_exercises
+        st.markdown("---")
+        st.markdown("### Seus treinos como cards")
+        if saved_workouts.empty:
+            st.info("Cadastre um treino A/B/C para começar.")
+        cols_cards = st.columns(3)
+        for idx, row in saved_workouts.reset_index().iterrows():
+            col = cols_cards[idx % 3]
+            with col:
+                exercises_df = strength.list_exercises(user_id, int(row["id"]))
+                exercise_count = len(exercises_df) if not exercises_df.empty else 0
+                st.markdown(
+                    f"""
+                    <div class="tri-card" style="min-height:180px">
+                        <h4>{row.get('nome_treino_letra', 'Treino')}</h4>
+                        <p>Ordem: {row.get('ordem', 0)}</p>
+                        <p>{exercise_count} exercícios cadastrados</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                if st.button(
+                    "✏️ Montar/editar treino",
+                    key=f"open_modal_{row['id']}",
+                    use_container_width=True,
+                ):
+                    st.session_state["strength_open_modal"] = int(row["id"])
 
-        col_save, col_export = st.columns(2)
-        if col_save.button("Salvar exercícios", key=f"save_exercises_{selected_workout_id}"):
-            strength.save_exercises(user_id, int(selected_workout_id), edited_exercises.to_dict("records"))
-            st.success("Treino salvo e pronto para exportar!")
-            safe_rerun()
+        with st.form(f"new_workout_form_{selected_split_id}"):
+            st.markdown("#### Adicionar novo treino")
+            new_name = st.text_input("Nome do treino (ex.: A, B, C)")
+            new_order = st.number_input("Ordem", min_value=0, step=1, value=0)
+            if st.form_submit_button("Criar treino"):
+                records = saved_workouts.to_dict("records") if not saved_workouts.empty else []
+                records.append(
+                    {"id": None, "nome_treino_letra": new_name or "Treino", "ordem": new_order}
+                )
+                strength.save_workouts(user_id, int(selected_split_id), records)
+                st.success("Treino criado!")
+                safe_rerun()
+
+        modal_workout_id = st.session_state.get("strength_open_modal")
+        if modal_workout_id:
+            current_workouts = strength.list_workouts(user_id, int(selected_split_id))
+            if current_workouts.empty or modal_workout_id not in current_workouts["id"].values:
+                st.session_state["strength_open_modal"] = None
+                safe_rerun()
+                return
+            current_row = current_workouts[current_workouts["id"] == modal_workout_id].iloc[0]
+            current_name = current_row.get("nome_treino_letra", "Treino")
+            current_order = current_row.get("ordem", 0)
+            exercise_state_key = f"exercise_editor_state_{modal_workout_id}"
+            exercises_df = strength.list_exercises(user_id, int(modal_workout_id))
+            if exercises_df.empty:
+                exercises_df = pd.DataFrame(
+                    [
+                        {
+                            "id": None,
+                            "grupo_muscular": "Peito",
+                            "nome_exercicio": "Supino reto com barra",
+                            "series": "3",
+                            "repeticoes": "8-10",
+                            "carga": "",
+                            "intervalo": "90",
+                            "observacoes": "Começar leve, ajustar carga",
+                            "ordem": 1,
+                        }
+                    ]
+                )
+
+            if exercise_state_key not in st.session_state:
+                st.session_state[exercise_state_key] = exercises_df
+
+            exercise_suggestions = sorted({ex for lst in EXERCICIOS_CLASSICOS.values() for ex in lst})
+
+            with st.modal(f"Montar treino {current_name}", key=f"modal_{modal_workout_id}"):
+                new_name_value = st.text_input(
+                    "Nome do treino", value=current_name, key=f"modal_name_{modal_workout_id}"
+                )
+                new_order_value = st.number_input(
+                    "Ordem", min_value=0, step=1, value=int(current_order), key=f"modal_order_{modal_workout_id}"
+                )
+                st.caption("Edite abaixo os exercícios deste treino.")
+
+                with st.expander("Adicionar exercício clássico rapidamente", expanded=False):
+                    col_muscle, col_ex, col_add = st.columns([1, 1.2, 0.8])
+                    selected_group = col_muscle.selectbox(
+                        "Grupo muscular",
+                        options=list(EXERCICIOS_CLASSICOS.keys()),
+                        key=f"classic_group_{modal_workout_id}",
+                    )
+                    selected_exercise = col_ex.selectbox(
+                        "Exercício sugerido",
+                        options=EXERCICIOS_CLASSICOS.get(selected_group, []),
+                        key=f"classic_exercise_{modal_workout_id}",
+                    )
+                    base_df = pd.DataFrame(st.session_state[exercise_state_key])
+                    if base_df.empty:
+                        default_order = 1
+                    else:
+                        default_order = (
+                            pd.to_numeric(base_df.get("ordem", 0), errors="coerce").fillna(0).max()
+                            + 1
+                        )
+                    if col_add.button("Adicionar à tabela", key=f"add_classic_{modal_workout_id}"):
+                        base_df = pd.DataFrame(st.session_state[exercise_state_key])
+                        new_row = {
+                            "id": None,
+                            "grupo_muscular": selected_group,
+                            "nome_exercicio": selected_exercise,
+                            "series": "3",
+                            "repeticoes": "8-12",
+                            "carga": "",
+                            "intervalo": "90",
+                            "observacoes": "",
+                            "ordem": default_order,
+                        }
+                        st.session_state[exercise_state_key] = pd.concat(
+                            [base_df, pd.DataFrame([new_row])], ignore_index=True
+                        )
+                        st.success("Exercício inserido na ficha.")
+                        safe_rerun()
+
+                edited_exercises = st.data_editor(
+                    pd.DataFrame(st.session_state[exercise_state_key]),
+                    num_rows="dynamic",
+                    hide_index=True,
+                    key=f"exercise_editor_{modal_workout_id}",
+                    column_config={
+                        "id": st.column_config.Column("ID", disabled=True, help="Gerado pelo app"),
+                        "grupo_muscular": st.column_config.SelectboxColumn(
+                            "Grupo muscular", options=list(EXERCICIOS_CLASSICOS.keys())
+                        ),
+                        "nome_exercicio": st.column_config.SelectboxColumn(
+                            "Exercício", options=exercise_suggestions + ["Outro exercício"]
+                        ),
+                        "series": st.column_config.TextColumn("Séries"),
+                        "repeticoes": st.column_config.TextColumn("Repetições"),
+                        "carga": st.column_config.TextColumn("Carga/Obs", help="kg ou texto livre"),
+                        "intervalo": st.column_config.NumberColumn("Descanso (s)", step=10, min_value=0),
+                        "observacoes": st.column_config.TextColumn("Anotações"),
+                        "ordem": st.column_config.NumberColumn("Ordem", step=1, min_value=0),
+                    },
+                )
+                st.session_state[exercise_state_key] = edited_exercises
+
+                col_save, col_export, col_close = st.columns(3)
+                if col_save.button("Salvar treino", key=f"save_exercises_{modal_workout_id}"):
+                    updated_workouts = current_workouts.to_dict("records")
+                    for w in updated_workouts:
+                        if w.get("id") == modal_workout_id:
+                            w["nome_treino_letra"] = new_name_value
+                            w["ordem"] = new_order_value
+                    strength.save_workouts(user_id, int(selected_split_id), updated_workouts)
+                    strength.save_exercises(
+                        user_id, int(modal_workout_id), edited_exercises.to_dict("records")
+                    )
+                    st.success("Treino salvo e pronto para exportar!")
+                    st.session_state["strength_open_modal"] = None
+                    safe_rerun()
+
+                pdf_data = strength_pdf_bytes(
+                    selected_split_name or split_labels.get(selected_split_id, "Ficha"),
+                    new_name_value,
+                    edited_exercises,
+                )
+                col_export.download_button(
+                    "Exportar treino em PDF",
+                    data=pdf_data,
+                    file_name=f"ficha_{new_name_value}.pdf",
+                    mime="application/pdf",
+                    key=f"download_pdf_{modal_workout_id}",
+                )
+
+                if col_close.button("Fechar", key=f"close_modal_{modal_workout_id}"):
+                    st.session_state["strength_open_modal"] = None
+                    safe_rerun()
+
+        saved_workouts = strength.list_workouts(user_id, int(selected_split_id))
+        if not saved_workouts.empty:
+            exercises_map = {
+                int(w_id): strength.list_exercises(user_id, int(w_id))
+                for w_id in saved_workouts["id"].tolist()
+            }
+            cycle_pdf = strength_cycle_pdf(
+                selected_split_name or split_labels.get(selected_split_id, "Ficha"),
+                saved_workouts,
+                exercises_map,
+            )
+            st.download_button(
+                "📕 Exportar ciclo (A/B/C) em PDF",
+                data=cycle_pdf,
+                file_name=f"ciclo_{selected_split_name or 'ficha'}.pdf",
+                mime="application/pdf",
+                key=f"download_cycle_pdf_{selected_split_id}",
+            )
+
+        with st.expander("Ver dicionário clássico de exercícios"):
+            for grupo, exercicios in EXERCICIOS_CLASSICOS.items():
+                st.markdown(f"**{grupo}:** " + ", ".join(exercicios))
 
         pdf_data = strength_pdf_bytes(
             selected_split_name or split_labels.get(selected_split_id, "Ficha"),
