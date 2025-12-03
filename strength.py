@@ -235,7 +235,7 @@ def save_exercises(user_id: str, workout_id: int, exercises: Iterable[dict]) -> 
             "series": (ex.get("series") or "").strip(),
             "repeticoes": (ex.get("repeticoes") or "").strip(),
             "carga": (ex.get("carga") or "").strip(),
-            "intervalo": (ex.get("intervalo") or "").strip(),
+            "intervalo": str(ex.get("intervalo") or "").strip(),
             "observacoes": (ex.get("observacoes") or "").strip(),
             "ordem": order,
         }
