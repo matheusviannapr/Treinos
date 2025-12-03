@@ -2313,9 +2313,30 @@ TRAINING_SHEET_COLUMNS = [
 ]
 
 
+def ensure_training_sheets_table() -> None:
+    """Create the training_sheets table if it doesn't exist (idempotent)."""
+    init_database()
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS training_sheets (
+            user_id TEXT NOT NULL,
+            sheet_name TEXT NOT NULL,
+            ordem INTEGER,
+            grupo_muscular TEXT,
+            exercicio TEXT,
+            series INTEGER,
+            repeticoes TEXT,
+            carga_observacao TEXT,
+            descanso_s INTEGER,
+            PRIMARY KEY (user_id, sheet_name, ordem, exercicio)
+        )
+        """
+    )
+
+
 @st.cache_data(show_spinner=False)
 def load_all_training_sheets(user_id: str) -> pd.DataFrame:
-    init_database()
+    ensure_training_sheets_table()
     df = db.fetch_dataframe(
         """
         SELECT
@@ -2354,7 +2375,7 @@ def load_training_sheet(user_id: str, sheet_name: str) -> pd.DataFrame:
 
 
 def save_training_sheet(user_id: str, sheet_name: str, sheet_df: pd.DataFrame) -> None:
-    init_database()
+    ensure_training_sheets_table()
     df_out = sheet_df.copy()
     for col in TRAINING_SHEET_COLUMNS:
         if col not in df_out.columns:
