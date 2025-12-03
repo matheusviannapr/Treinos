@@ -2302,6 +2302,175 @@ def save_daily_note_for_user(user_id: str, target_date: date, note: str):
     load_all_daily_notes.clear()
 
 
+TRAINING_SHEET_COLUMNS = [
+    "ordem",
+    "grupo_muscular",
+    "exercicio",
+    "series",
+    "repeticoes",
+    "carga_observacao",
+    "descanso_s",
+]
+
+
+@st.cache_data(show_spinner=False)
+def load_all_training_sheets(user_id: str) -> pd.DataFrame:
+    init_database()
+    df = db.fetch_dataframe(
+        """
+        SELECT
+            user_id,
+            sheet_name,
+            ordem,
+            grupo_muscular,
+            exercicio,
+            series,
+            repeticoes,
+            carga_observacao,
+            descanso_s
+        FROM training_sheets
+        WHERE user_id = :user_id
+        ORDER BY sheet_name, ordem NULLS LAST, exercicio
+        """,
+        {"user_id": user_id},
+    )
+    if df.empty:
+        df = pd.DataFrame(columns=["user_id", "sheet_name"] + TRAINING_SHEET_COLUMNS)
+    for col in TRAINING_SHEET_COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
+    numeric_cols = ["ordem", "series", "descanso_s"]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+    return df
+
+
+def load_training_sheet(user_id: str, sheet_name: str) -> pd.DataFrame:
+    df = load_all_training_sheets(user_id)
+    sheet_df = df[df["sheet_name"] == sheet_name].copy()
+    if sheet_df.empty:
+        return pd.DataFrame(columns=TRAINING_SHEET_COLUMNS)
+    return sheet_df[TRAINING_SHEET_COLUMNS].fillna("")
+
+
+def save_training_sheet(user_id: str, sheet_name: str, sheet_df: pd.DataFrame) -> None:
+    init_database()
+    df_out = sheet_df.copy()
+    for col in TRAINING_SHEET_COLUMNS:
+        if col not in df_out.columns:
+            df_out[col] = ""
+    numeric_cols = ["ordem", "series", "descanso_s"]
+    for col in numeric_cols:
+        df_out[col] = pd.to_numeric(df_out[col], errors="coerce").fillna(0).astype(int)
+    df_out["user_id"] = user_id
+    df_out["sheet_name"] = sheet_name
+    records = df_out[["user_id", "sheet_name"] + TRAINING_SHEET_COLUMNS].to_dict("records")
+    db.execute(
+        "DELETE FROM training_sheets WHERE user_id = :user_id AND sheet_name = :sheet_name",
+        {"user_id": user_id, "sheet_name": sheet_name},
+    )
+    if records:
+        db.execute_many(
+            """
+            INSERT INTO training_sheets (
+                user_id,
+                sheet_name,
+                ordem,
+                grupo_muscular,
+                exercicio,
+                series,
+                repeticoes,
+                carga_observacao,
+                descanso_s
+            ) VALUES (
+                :user_id,
+                :sheet_name,
+                :ordem,
+                :grupo_muscular,
+                :exercicio,
+                :series,
+                :repeticoes,
+                :carga_observacao,
+                :descanso_s
+            )
+            """,
+            records,
+        )
+    load_all_training_sheets.clear()
+
+
+def training_sheet_pdf_bytes(sheet_name: str, df_sheet: pd.DataFrame) -> bytes:
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, pdf_safe(f"Ficha de Treino – {sheet_name}"), ln=True)
+    pdf.ln(4)
+    headers = [
+        ("Ordem", 14),
+        ("Grupo", 32),
+        ("Exercício", 58),
+        ("Séries", 16),
+        ("Reps", 18),
+        ("Carga/Obs", 32),
+        ("Descanso", 20),
+    ]
+    pdf.set_font("Arial", "B", 10)
+    for title, width in headers:
+        pdf.cell(width, 8, pdf_safe(title), border=1)
+    pdf.ln()
+    pdf.set_font("Arial", "", 9)
+    for _, row in df_sheet.sort_values("ordem", na_position="last").iterrows():
+        values = [
+            row.get("ordem", ""),
+            row.get("grupo_muscular", ""),
+            row.get("exercicio", ""),
+            row.get("series", ""),
+            row.get("repeticoes", ""),
+            row.get("carga_observacao", ""),
+            row.get("descanso_s", ""),
+        ]
+        for (title, width), value in zip(headers, values):
+            pdf.cell(width, 8, pdf_safe(value), border=1)
+        pdf.ln()
+    return pdf.output(dest="S").encode("latin-1")
+
+
+def training_cycle_pdf(user_id: str) -> bytes | None:
+    labels = ["Ficha A", "Ficha B", "Ficha C"]
+    sheets_map = {name: load_training_sheet(user_id, name) for name in labels}
+    if any(df.empty for df in sheets_map.values()):
+        return None
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 12, pdf_safe("Ciclo de Treino – Fichas A, B, C"), ln=True)
+    pdf.set_font("Arial", "", 12)
+    pdf.multi_cell(0, 8, pdf_safe("Inclui fichas A, B e C com ordem e descanso."))
+    for name in labels:
+        pdf.add_page()
+        pdf.set_font("Arial", "B", 14)
+        pdf.cell(0, 10, pdf_safe(name), ln=True)
+        pdf.set_font("Arial", "", 9)
+        current_df = sheets_map[name]
+        if current_df.empty:
+            pdf.cell(0, 8, pdf_safe("Sem exercícios cadastrados."), ln=True)
+            continue
+        for _, row in current_df.sort_values("ordem", na_position="last").iterrows():
+            line = (
+                f"{row.get('ordem', '')}. {row.get('grupo_muscular', '')} – "
+                f"{row.get('exercicio', '')} | {row.get('series', '')}x{row.get('repeticoes', '')} "
+                f"(Descanso: {row.get('descanso_s', '')}s)"
+            )
+            obs = str(row.get("carga_observacao", "")).strip()
+            pdf.multi_cell(0, 8, pdf_safe(line))
+            if obs:
+                pdf.set_font("Arial", "I", 9)
+                pdf.multi_cell(0, 7, pdf_safe(f"Obs.: {obs}"))
+                pdf.set_font("Arial", "", 9)
+            pdf.ln(1)
+    return pdf.output(dest="S").encode("latin-1")
+
+
 def _ensure_py_datetime(value):
     if isinstance(value, pd.Timestamp):
         return value.to_pydatetime()
@@ -5241,6 +5410,121 @@ def render_strength_page(user_id: str):
 
 
 
+def render_training_sheets_page(user_id: str):
+    st.title("Montador de Fichas de Treino")
+
+    all_sheets_df = load_all_training_sheets(user_id)
+    sheet_names = sorted(all_sheets_df["sheet_name"].dropna().unique().tolist())
+    options = sheet_names + ["Criar nova ficha..."]
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Fichas de treino")
+
+    default_index = (
+        options.index(st.session_state.get("selected_training_sheet"))
+        if st.session_state.get("selected_training_sheet") in options
+        else (0 if sheet_names else len(options) - 1)
+    )
+    selected_option = st.sidebar.selectbox(
+        "Selecione uma ficha",
+        options=options,
+        index=default_index,
+        key="training_sheet_select",
+    )
+
+    if selected_option == "Criar nova ficha...":
+        new_name = st.sidebar.text_input("Nome da nova ficha", key="training_new_sheet_name")
+        if st.sidebar.button("Criar ficha", key="create_training_sheet_btn"):
+            if not new_name.strip():
+                st.sidebar.error("Informe um nome para criar a ficha.")
+            else:
+                st.session_state["selected_training_sheet"] = new_name.strip()
+                st.session_state["df_training_sheet"] = pd.DataFrame(columns=TRAINING_SHEET_COLUMNS)
+                st.success("Ficha criada. Preencha os exercícios e salve para enviar ao banco.")
+    else:
+        if st.session_state.get("selected_training_sheet") != selected_option:
+            st.session_state["selected_training_sheet"] = selected_option
+            st.session_state["df_training_sheet"] = load_training_sheet(user_id, selected_option)
+
+    current_sheet = st.session_state.get("selected_training_sheet")
+    if "df_training_sheet" not in st.session_state:
+        st.session_state["df_training_sheet"] = pd.DataFrame(columns=TRAINING_SHEET_COLUMNS)
+
+    if not current_sheet:
+        st.info("Selecione ou crie uma ficha na barra lateral.")
+        return
+
+    st.subheader(f"Ficha: {current_sheet}")
+
+    if current_sheet not in sheet_names and st.session_state["df_training_sheet"].empty:
+        st.session_state["df_training_sheet"] = pd.DataFrame(columns=TRAINING_SHEET_COLUMNS)
+
+    edited_df = st.data_editor(
+        st.session_state["df_training_sheet"],
+        num_rows="dynamic",
+        use_container_width=True,
+        key="training_sheet_editor",
+        column_config={
+            "ordem": st.column_config.NumberColumn("Ordem", step=1, min_value=0),
+            "grupo_muscular": st.column_config.TextColumn("Grupo muscular"),
+            "exercicio": st.column_config.TextColumn("Exercício"),
+            "series": st.column_config.NumberColumn("Séries", step=1, min_value=0),
+            "repeticoes": st.column_config.TextColumn("Repetições"),
+            "carga_observacao": st.column_config.TextColumn("Carga/Observação"),
+            "descanso_s": st.column_config.NumberColumn("Descanso (s)", step=10, min_value=0),
+        },
+    )
+    st.session_state["df_training_sheet"] = edited_df
+
+    col_save, col_pdf = st.columns([1, 1])
+    if col_save.button("Salvar ficha", key="save_training_sheet_btn"):
+        if not current_sheet.strip():
+            st.error("A ficha precisa ter um nome.")
+        else:
+            save_training_sheet(user_id, current_sheet.strip(), edited_df)
+            st.success("Ficha salva com sucesso!")
+            st.session_state["df_training_sheet"] = load_training_sheet(user_id, current_sheet.strip())
+
+    pdf_data = training_sheet_pdf_bytes(current_sheet, edited_df)
+    col_pdf.download_button(
+        "Baixar ficha em PDF",
+        data=pdf_data,
+        file_name=f"{current_sheet.replace(' ', '_').lower()}.pdf",
+        mime="application/pdf",
+        key="download_training_sheet_pdf",
+    )
+
+    csv_data = edited_df.to_csv(index=False)
+    st.download_button(
+        "Baixar ficha em CSV",
+        data=csv_data,
+        file_name=f"{current_sheet.replace(' ', '_').lower()}.csv",
+        mime="text/csv",
+        key="download_training_sheet_csv",
+    )
+
+    st.markdown("### Visualização da ficha")
+    st.dataframe(
+        edited_df.sort_values("ordem", na_position="last"),
+        use_container_width=True,
+    )
+
+    st.markdown("---")
+    st.subheader("Exportação do ciclo A-B-C")
+    if st.button("Exportar ciclo A-B-C em PDF", key="export_cycle_pdf"):
+        cycle_pdf = training_cycle_pdf(user_id)
+        if cycle_pdf:
+            st.download_button(
+                "Baixar ciclo A-B-C em PDF",
+                data=cycle_pdf,
+                file_name="ciclo_abc.pdf",
+                mime="application/pdf",
+                key="download_cycle_pdf_btn",
+            )
+        else:
+            st.warning("É necessário ter Ficha A, Ficha B e Ficha C para exportar o ciclo.")
+
+
 def render_support_page():
     st.header("💬 Suporte e contato")
     st.markdown("Tem alguma dúvida? Fale conosco e receba ajuda personalizada.")
@@ -5365,7 +5649,7 @@ def main():
         [
             "🏠 Home",
             "📅 Meu Plano",
-            "📋 Treino de Academia",
+            "📋 Fichas de treino",
             "🗓️ Resumo do Dia",
             "📈 Dashboard",
             "🚴 Strava",
@@ -6407,8 +6691,8 @@ def main():
                                 else:
                                     st.caption("Alteração sem detalhes adicionais.")
 
-    elif menu == "📋 Treino de Academia":
-        render_strength_page(user_id)
+    elif menu == "📋 Fichas de treino":
+        render_training_sheets_page(user_id)
 
     elif menu == "⚙️ Configurações":
         render_settings_page(user_id, user_name)

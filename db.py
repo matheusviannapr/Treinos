@@ -198,6 +198,24 @@ def init_db() -> None:
                 """
             )
         )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS training_sheets (
+                    user_id TEXT NOT NULL,
+                    sheet_name TEXT NOT NULL,
+                    ordem INTEGER,
+                    grupo_muscular TEXT,
+                    exercicio TEXT,
+                    series INTEGER,
+                    repeticoes TEXT,
+                    carga_observacao TEXT,
+                    descanso_s INTEGER,
+                    PRIMARY KEY (user_id, sheet_name, ordem, exercicio)
+                )
+                """
+            )
+        )
 
         conn.execute(
             text(
