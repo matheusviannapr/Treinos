@@ -5199,6 +5199,48 @@ def render_strength_page(user_id: str):
 
 
 
+        pdf_data = strength_pdf_bytes(
+            selected_split_name or split_labels.get(selected_split_id, "Ficha"),
+            workout_name or workout_labels.get(selected_workout_id, "Treino"),
+            edited_df.rename(
+                columns={
+                    "exercicio": "nome_exercicio",
+                    "carga_observacao": "carga",
+                    "descanso_s": "intervalo",
+                }
+            ),
+        )
+        col_pdf.download_button(
+            "Exportar treino em PDF",
+            data=pdf_data,
+            file_name=f"ficha_{workout_name or 'treino'}.pdf",
+            mime="application/pdf",
+            key=f"download_pdf_{selected_workout_id}",
+        )
+
+        exercises_map = {
+            int(w_id): strength.list_exercises(user_id, int(w_id))
+            for w_id in saved_workouts["id"].tolist()
+        }
+        cycle_pdf = strength_cycle_pdf(
+            selected_split_name or split_labels.get(selected_split_id, "Ficha"),
+            saved_workouts,
+            exercises_map,
+        )
+        col_cycle.download_button(
+            "📕 Exportar ciclo (A/B/C) em PDF",
+            data=cycle_pdf,
+            file_name=f"ciclo_{selected_split_name or 'ficha'}.pdf",
+            mime="application/pdf",
+            key=f"download_cycle_pdf_{selected_split_id}",
+        )
+
+        with st.expander("Ver dicionário clássico de exercícios"):
+            for grupo, exercicios in EXERCICIOS_CLASSICOS.items():
+                st.markdown(f"**{grupo}:** " + ", ".join(exercicios))
+
+
+
 def render_support_page():
     st.header("💬 Suporte e contato")
     st.markdown("Tem alguma dúvida? Fale conosco e receba ajuda personalizada.")
