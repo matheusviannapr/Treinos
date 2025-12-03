@@ -5438,15 +5438,14 @@ def render_training_sheets_page(user_id: str):
     sheet_names = sorted(all_sheets_df["sheet_name"].dropna().unique().tolist())
     options = sheet_names + ["Criar nova ficha..."]
 
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Fichas de treino")
+    st.markdown("### Selecione ou crie uma ficha")
 
     default_index = (
         options.index(st.session_state.get("selected_training_sheet"))
         if st.session_state.get("selected_training_sheet") in options
         else (0 if sheet_names else len(options) - 1)
     )
-    selected_option = st.sidebar.selectbox(
+    selected_option = st.selectbox(
         "Selecione uma ficha",
         options=options,
         index=default_index,
@@ -5454,10 +5453,10 @@ def render_training_sheets_page(user_id: str):
     )
 
     if selected_option == "Criar nova ficha...":
-        new_name = st.sidebar.text_input("Nome da nova ficha", key="training_new_sheet_name")
-        if st.sidebar.button("Criar ficha", key="create_training_sheet_btn"):
+        new_name = st.text_input("Nome da nova ficha", key="training_new_sheet_name")
+        if st.button("Criar ficha", key="create_training_sheet_btn"):
             if not new_name.strip():
-                st.sidebar.error("Informe um nome para criar a ficha.")
+                st.error("Informe um nome para criar a ficha.")
             else:
                 st.session_state["selected_training_sheet"] = new_name.strip()
                 st.session_state["df_training_sheet"] = pd.DataFrame(columns=TRAINING_SHEET_COLUMNS)
@@ -5472,13 +5471,16 @@ def render_training_sheets_page(user_id: str):
         st.session_state["df_training_sheet"] = pd.DataFrame(columns=TRAINING_SHEET_COLUMNS)
 
     if not current_sheet:
-        st.info("Selecione ou crie uma ficha na barra lateral.")
+        st.info("Selecione ou crie uma ficha para começar.")
         return
 
     st.subheader(f"Ficha: {current_sheet}")
 
     if current_sheet not in sheet_names and st.session_state["df_training_sheet"].empty:
         st.session_state["df_training_sheet"] = pd.DataFrame(columns=TRAINING_SHEET_COLUMNS)
+
+    exercise_suggestions = sorted({ex for lst in EXERCICIOS_CLASSICOS.values() for ex in lst})
+    exercise_to_group = {ex: group for group, exercises in EXERCICIOS_CLASSICOS.items() for ex in exercises}
 
     edited_df = st.data_editor(
         st.session_state["df_training_sheet"],
@@ -5488,13 +5490,18 @@ def render_training_sheets_page(user_id: str):
         column_config={
             "ordem": st.column_config.NumberColumn("Ordem", step=1, min_value=0),
             "grupo_muscular": st.column_config.TextColumn("Grupo muscular"),
-            "exercicio": st.column_config.TextColumn("Exercício"),
+            "exercicio": st.column_config.SelectboxColumn(
+                "Exercício", options=exercise_suggestions + ["Outro exercício"]
+            ),
             "series": st.column_config.NumberColumn("Séries", step=1, min_value=0),
             "repeticoes": st.column_config.TextColumn("Repetições"),
             "carga_observacao": st.column_config.TextColumn("Carga/Observação"),
             "descanso_s": st.column_config.NumberColumn("Descanso (s)", step=10, min_value=0),
         },
     )
+    edited_df = edited_df.copy()
+    mapped_groups = edited_df["exercicio"].map(exercise_to_group)
+    edited_df.loc[mapped_groups.notna(), "grupo_muscular"] = mapped_groups[mapped_groups.notna()]
     st.session_state["df_training_sheet"] = edited_df
 
     col_save, col_pdf = st.columns([1, 1])
@@ -5522,12 +5529,6 @@ def render_training_sheets_page(user_id: str):
         file_name=f"{current_sheet.replace(' ', '_').lower()}.csv",
         mime="text/csv",
         key="download_training_sheet_csv",
-    )
-
-    st.markdown("### Visualização da ficha")
-    st.dataframe(
-        edited_df.sort_values("ordem", na_position="last"),
-        use_container_width=True,
     )
 
     st.markdown("---")
