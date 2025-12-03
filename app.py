@@ -5040,28 +5040,28 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
 def _render_home_hero(user_name: Optional[str] = None):
     if os.path.exists(LOGO_PATH):
         st.image(LOGO_PATH, width=220)
-    st.title("TriPlanner: seu treinador de bolso, com métodos consagrados")
+    st.title("🚀 TriPlanner: seu treinador de bolso, com métodos consagrados")
     st.markdown(
         """
         <div class="tri-card">
-            <p class="tri-pill">Planejamento inteligente para triathlon e endurance</p>
-            <h2>Construa semanas sólidas, visualize seu calendário e acompanhe a evolução.</h2>
-            <p>Automatize sua periodização, personalize treinos e agora também organize fichas de força.</p>
+            <p class="tri-pill">🧭 Planejamento inteligente para triathlon e endurance</p>
+            <h2>💪 Construa semanas sólidas, visualize seu calendário e acompanhe a evolução.</h2>
+            <p>🤝 Automatize sua periodização, personalize treinos e agora também organize fichas de força.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    subtitle = "Pronto para acelerar" if not user_name else f"Pronto para acelerar, {user_name}?"
+    subtitle = "⚡️ Pronto para acelerar" if not user_name else f"⚡️ Pronto para acelerar, {user_name}?"
     return subtitle
 
 
 def _render_home_steps(target, compact: bool = False):
     target.subheader("🚀 Comece em 3 passos")
     steps = [
-        "1) Escolha seu objetivo e parâmetros principais",
-        "2) Gere seu plano semanal/ciclo com poucos cliques",
-        "3) Ajuste treinos, exporte PDF/ICS e acompanhe métricas",
+        "1) 🧠 Escolha seu objetivo e parâmetros principais",
+        "2) 📆 Gere seu plano semanal/ciclo com poucos cliques",
+        "3) 📊 Ajuste treinos, exporte PDF/ICS e acompanhe métricas",
     ]
     for s in steps:
         target.markdown(f"- {s}")
@@ -5729,7 +5729,6 @@ def main():
     menu = st.sidebar.radio(
         "Navegação",
         [
-            "🏠 Home",
             "📅 Meu Plano",
             "📋 Fichas de treino",
             "🗓️ Resumo do Dia",
@@ -5743,11 +5742,7 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.markdown("Desenvolvido por **Matheus Vianna**")
 
-    if menu == "🏠 Home":
-        render_home_page(user_name)
-
-    # ---------------- PLANEJAMENTO SEMANAL ----------------
-    elif menu == "📅 Meu Plano":
+    if menu == "📅 Meu Plano":
         st.header("📅 Planejamento Semanal")
         tab_semana, tab_ciclo = st.tabs(["Planeje sua semana", "Plano semanal do ciclo"])
         with tab_semana:
@@ -5971,26 +5966,23 @@ def main():
             # Calendário: usa df canônico (MESMO dataset do PDF/ICS)
             st.subheader("Calendário da Semana")
 
-            col_cal, col_detail = st.columns([1.8, 1], gap="large")
-            detail_placeholder = col_detail.empty()
-
-            def _update_detail_panel(uid: Optional[str]):
-                st.session_state["selected_training_uid"] = uid
-                detail_placeholder.empty()
-                if uid:
-                    render_training_detail(uid, detail_placeholder)
-                else:
-                    detail_placeholder.info(
-                        "Selecione um treino no calendário para ver detalhes lado a lado."
-                    )
-
             selected_uid = st.session_state.get("selected_training_uid")
+            detail_placeholder = None
+
             if selected_uid:
-                render_training_detail(selected_uid, detail_placeholder)
+                col_cal, col_detail = st.columns([1.8, 1], gap="large")
+                cal_target = col_cal
+                detail_placeholder = col_detail.container()
             else:
-                detail_placeholder.info(
-                    "Selecione um treino no calendário para ver detalhes lado a lado."
-                )
+                cal_target = st.container()
+
+            def _update_detail_panel(uid: Optional[str], *, rerun: bool = False):
+                st.session_state["selected_training_uid"] = uid
+                if rerun:
+                    safe_rerun()
+
+            if selected_uid and detail_placeholder is not None:
+                render_training_detail(selected_uid, detail_placeholder)
 
             week_df_can = canonical_week_df(user_id, week_start)
 
@@ -6064,7 +6056,7 @@ def main():
             }
             options["initialDate"] = week_start.isoformat()
 
-            with col_cal:
+            with cal_target:
                 cal_state = st_calendar(
                     events=events,
                     options=options,
@@ -6073,6 +6065,11 @@ def main():
             if cal_state and "eventsSet" in cal_state:
                 eventos_visuais = cal_state["eventsSet"]["events"]
                 st.session_state["calendar_snapshot"] = eventos_visuais
+
+            if not selected_uid:
+                st.caption(
+                    "💡 Clique em um treino para abrir os detalhes lado a lado e depois clique novamente para fechar."
+                )
 
             if st.session_state.get("calendar_forcar_snapshot", False):
                 eventos = []
@@ -6201,10 +6198,8 @@ def main():
             header_col, close_col = area.columns([3, 1])
             header_col.markdown("### 📝 Detalhes do treino")
             if close_col.button("Fechar", key=f"close_detail_{uid}"):
-                st.session_state["selected_training_uid"] = None
-                if hasattr(target, "empty"):
-                    target.empty()
-                safe_rerun()
+                _update_detail_panel(None, rerun=True)
+                return
 
             start_dt = parse_iso(r.get("Start", "")) or datetime.combine(r["Data"], time(6, 0))
             end_dt = parse_iso(r.get("End", "")) or (start_dt + timedelta(minutes=DEFAULT_TRAINING_DURATION_MIN))
@@ -6347,7 +6342,7 @@ def main():
                 e = parse_iso(ev.get("end"))
                 new_slots = [sl for sl in week_slots if not (to_naive(sl["start"]) == s and to_naive(sl["end"]) == e)]
                 set_week_availability(user_id, week_start, new_slots)
-                _update_detail_panel(None)
+                _update_detail_panel(None, rerun=True)
                 canonical_week_df.clear()
                 safe_rerun()
 
@@ -6362,9 +6357,9 @@ def main():
                     st.error("Evento inválido.")
                 else:
                     if st.session_state.get("selected_training_uid") == uid:
-                        _update_detail_panel(None)
+                        _update_detail_panel(None, rerun=True)
                     else:
-                        _update_detail_panel(uid)
+                        _update_detail_panel(uid, rerun=True)
     
         # Botões de persistência da semana
         col_save_week, col_clear_week = st.columns([1, 1])
