@@ -1533,7 +1533,7 @@ def render_activity_map(act: pd.Series, container, *, map_key: str | None = None
             pass
 
         map_component_key = map_key or f"activity-map-{act.get('ID') or act.get('UID') or 'unknown'}"
-        st_folium(fmap, height=420, width=None, returned_objects=[], key=map_component_key)
+        st_folium(fmap, height=420, returned_objects=[], key=map_component_key)
 
 
 def _apply_activity_to_training(user_id: str, planned_uid: str, activity_row: pd.Series):
@@ -2025,7 +2025,7 @@ def render_strava_tab(user_id: str):
             display_df = activities_view.drop(columns=cols_to_drop)
             st.dataframe(
                 display_df,
-                width=None,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "Distância (km)": st.column_config.NumberColumn(format="%.2f km"),
@@ -5303,7 +5303,7 @@ def render_strength_page(user_id: str):
         edited_df = st.data_editor(
             exercises_df,
             num_rows="dynamic",
-            width=None,
+            width="stretch",
             hide_index=True,
             key=f"exercise_editor_sheet_{selected_workout_id}",
             column_config={
@@ -5518,7 +5518,7 @@ def render_training_sheets_page(user_id: str):
     edited_df = st.data_editor(
         editor_df,
         num_rows="dynamic",
-        width=None,
+        width="stretch",
         key="training_sheet_editor",
         column_config={
             "ordem": st.column_config.NumberColumn("Ordem", step=1, min_value=1, disabled=True),
@@ -5758,7 +5758,7 @@ def main():
 
             generate_week_clicked = False
             with st.popover(
-                "⚙️ Parâmetros de prescrição e metas semanais", width=None
+                "⚙️ Parâmetros de prescrição e metas semanais", width="content"
             ):
                 st.markdown(
                     "Defina ritmos de referência, sessões e dias preferidos para gerar a semana e o ciclo já corrigidos."
@@ -5868,7 +5868,6 @@ def main():
 
                 generate_week_clicked = st.button(
                     "📆 Gerar Semana Automática",
-                    width=None,
                     key="btn_generate_week",
                 )
 
@@ -6731,7 +6730,9 @@ def main():
                 )
 
                 with st.expander("Memória de cálculo ATL/CTL/TSB (diário)", expanded=False):
-                    st.dataframe(memory_df.sort_values("Data", ascending=False), width=None)
+                    st.dataframe(
+                        memory_df.sort_values("Data", ascending=False), width="stretch"
+                    )
 
             st.markdown("---")
             st.subheader("Planilha de aderência semanal")
@@ -6739,7 +6740,7 @@ def main():
             if adherence_df.empty:
                 st.info("Sem dados suficientes para calcular aderência semanal.")
             else:
-                st.dataframe(adherence_df, width=None)
+                st.dataframe(adherence_df, width="stretch")
                 st.caption("S:% = aderência em sessões. V:% = aderência em volume.")
 
         with tab_carga:
