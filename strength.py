@@ -102,6 +102,15 @@ def delete_split(user_id: str, split_id: int) -> None:
     )
 
 
+def split_exists_for_user(user_id: str, split_id: int) -> bool:
+    """Return True when the split belongs to the user."""
+    row = db.fetch_one(
+        "SELECT 1 FROM strength_splits WHERE id = :split_id AND user_id = :user_id",
+        {"split_id": split_id, "user_id": user_id},
+    )
+    return bool(row)
+
+
 def get_active_split(user_id: str) -> Optional[dict]:
     row = db.fetch_one(
         "SELECT * FROM strength_splits WHERE user_id = :user_id AND ativo = TRUE LIMIT 1",
@@ -166,6 +175,14 @@ def _clean_id(value) -> Optional[int]:
 
 
 def save_workouts(user_id: str, split_id: int, workouts: Iterable[dict]) -> list[int]:
+    """Persist workouts for a split only when the split belongs to the user."""
+    split_row = db.fetch_one(
+        "SELECT id FROM strength_splits WHERE id = :split_id AND user_id = :user_id",
+        {"split_id": split_id, "user_id": user_id},
+    )
+    if not split_row:
+        return []
+
     existing_df = list_workouts(user_id, split_id)
     existing_ids = set(existing_df["id"].tolist()) if not existing_df.empty else set()
     saved_ids: list[int] = []
@@ -218,6 +235,19 @@ def save_workouts(user_id: str, split_id: int, workouts: Iterable[dict]) -> list
 
 
 def save_exercises(user_id: str, workout_id: int, exercises: Iterable[dict]) -> list[int]:
+    workout_row = db.fetch_one(
+        """
+        SELECT w.id
+        FROM strength_workouts w
+        JOIN strength_splits s ON s.id = w.split_id
+        WHERE w.id = :workout_id AND s.user_id = :user_id
+        LIMIT 1
+        """,
+        {"workout_id": workout_id, "user_id": user_id},
+    )
+    if not workout_row:
+        return []
+
     existing_df = list_exercises(user_id, workout_id)
     existing_ids = set(existing_df["id"].tolist()) if not existing_df.empty else set()
     saved_ids: list[int] = []

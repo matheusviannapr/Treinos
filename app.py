@@ -5012,6 +5012,9 @@ def render_strength_page(user_id: str):
             st.info("Cadastre um treino para começar a montar a ficha.")
             default_name = st.text_input("Nome do treino (ex.: Ficha A)", key="default_workout_name")
             if st.button("Criar treino inicial", key="create_first_workout"):
+                if not strength.split_exists_for_user(user_id, int(selected_split_id)):
+                    st.error("Esta ficha não existe mais. Escolha outra ou crie uma nova.")
+                    return
                 payload = [{"nome_treino_letra": default_name or "Ficha A", "ordem": 0}]
                 new_ids = strength.save_workouts(user_id, int(selected_split_id), payload)
                 if new_ids:
@@ -5137,16 +5140,64 @@ def render_strength_page(user_id: str):
 
         col_save, col_pdf, col_cycle = st.columns([1, 1, 1])
         if col_save.button("Salvar ficha", key=f"save_workout_{selected_workout_id}"):
+            if not strength.split_exists_for_user(user_id, int(selected_split_id)):
+                st.error("Esta ficha não existe mais. Selecione outra ou crie uma nova.")
+                return
             workouts_payload = saved_workouts.to_dict("records")
             for w in workouts_payload:
                 if w.get("id") == selected_workout_id:
                     w["nome_treino_letra"] = workout_name
                     w["ordem"] = workout_order
-            strength.save_workouts(user_id, int(selected_split_id), workouts_payload)
+            saved_workout_ids = strength.save_workouts(user_id, int(selected_split_id), workouts_payload)
             exercises_payload = _prepare_payload(edited_df)
-            strength.save_exercises(user_id, int(selected_workout_id), exercises_payload)
-            st.success("Ficha salva com sucesso!")
-            safe_rerun()
+            saved_exercise_ids = strength.save_exercises(user_id, int(selected_workout_id), exercises_payload)
+            if saved_workout_ids:
+                st.success("Ficha salva com sucesso!")
+                safe_rerun()
+            else:
+                st.error("Não foi possível salvar esta ficha. Verifique se ela ainda existe e tente novamente.")
+
+        pdf_data = strength_pdf_bytes(
+            selected_split_name or split_labels.get(selected_split_id, "Ficha"),
+            workout_name or workout_labels.get(selected_workout_id, "Treino"),
+            edited_df.rename(
+                columns={
+                    "exercicio": "nome_exercicio",
+                    "carga_observacao": "carga",
+                    "descanso_s": "intervalo",
+                }
+            ),
+        )
+        col_pdf.download_button(
+            "Exportar treino em PDF",
+            data=pdf_data,
+            file_name=f"ficha_{workout_name or 'treino'}.pdf",
+            mime="application/pdf",
+            key=f"download_pdf_{selected_workout_id}",
+        )
+
+        exercises_map = {
+            int(w_id): strength.list_exercises(user_id, int(w_id))
+            for w_id in saved_workouts["id"].tolist()
+        }
+        cycle_pdf = strength_cycle_pdf(
+            selected_split_name or split_labels.get(selected_split_id, "Ficha"),
+            saved_workouts,
+            exercises_map,
+        )
+        col_cycle.download_button(
+            "📕 Exportar ciclo (A/B/C) em PDF",
+            data=cycle_pdf,
+            file_name=f"ciclo_{selected_split_name or 'ficha'}.pdf",
+            mime="application/pdf",
+            key=f"download_cycle_pdf_{selected_split_id}",
+        )
+
+        with st.expander("Ver dicionário clássico de exercícios"):
+            for grupo, exercicios in EXERCICIOS_CLASSICOS.items():
+                st.markdown(f"**{grupo}:** " + ", ".join(exercicios))
+
+
 
         pdf_data = strength_pdf_bytes(
             selected_split_name or split_labels.get(selected_split_id, "Ficha"),
