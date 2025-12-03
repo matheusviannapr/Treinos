@@ -2025,7 +2025,7 @@ def render_strava_tab(user_id: str):
             display_df = activities_view.drop(columns=cols_to_drop)
             st.dataframe(
                 display_df,
-                use_container_width=True,
+                width=None,
                 hide_index=True,
                 column_config={
                     "Distância (km)": st.column_config.NumberColumn(format="%.2f km"),
@@ -5303,7 +5303,7 @@ def render_strength_page(user_id: str):
         edited_df = st.data_editor(
             exercises_df,
             num_rows="dynamic",
-            use_container_width=True,
+            width=None,
             hide_index=True,
             key=f"exercise_editor_sheet_{selected_workout_id}",
             column_config={
@@ -5518,7 +5518,7 @@ def render_training_sheets_page(user_id: str):
     edited_df = st.data_editor(
         editor_df,
         num_rows="dynamic",
-        use_container_width=True,
+        width=None,
         key="training_sheet_editor",
         column_config={
             "ordem": st.column_config.NumberColumn("Ordem", step=1, min_value=1, disabled=True),
@@ -5758,7 +5758,7 @@ def main():
 
             generate_week_clicked = False
             with st.popover(
-                "⚙️ Parâmetros de prescrição e metas semanais", use_container_width=True
+                "⚙️ Parâmetros de prescrição e metas semanais", width=None
             ):
                 st.markdown(
                     "Defina ritmos de referência, sessões e dias preferidos para gerar a semana e o ciclo já corrigidos."
@@ -5868,7 +5868,7 @@ def main():
 
                 generate_week_clicked = st.button(
                     "📆 Gerar Semana Automática",
-                    use_container_width=True,
+                    width=None,
                     key="btn_generate_week",
                 )
 
@@ -5980,9 +5980,6 @@ def main():
                 st.session_state["selected_training_uid"] = uid
                 if rerun:
                     safe_rerun()
-
-            if selected_uid and detail_placeholder is not None:
-                render_training_detail(selected_uid, detail_placeholder)
 
             week_df_can = canonical_week_df(user_id, week_start)
 
@@ -6306,6 +6303,9 @@ def main():
                 apply_update("Cancelado")
             if col_salvar.button("💾 Salvar", key=f"save_{uid}"):
                 apply_update(None)
+
+        if selected_uid and detail_placeholder is not None:
+            render_training_detail(selected_uid, detail_placeholder)
 
         # 5.2 Drag/resize treinos -> atualiza df base (logo afeta canonical e PDF/ICS)
         def handle_move_or_resize(ev_dict, action_label):
@@ -6731,7 +6731,7 @@ def main():
                 )
 
                 with st.expander("Memória de cálculo ATL/CTL/TSB (diário)", expanded=False):
-                    st.dataframe(memory_df.sort_values("Data", ascending=False), use_container_width=True)
+                    st.dataframe(memory_df.sort_values("Data", ascending=False), width=None)
 
             st.markdown("---")
             st.subheader("Planilha de aderência semanal")
@@ -6739,7 +6739,7 @@ def main():
             if adherence_df.empty:
                 st.info("Sem dados suficientes para calcular aderência semanal.")
             else:
-                st.dataframe(adherence_df, use_container_width=True)
+                st.dataframe(adherence_df, width=None)
                 st.caption("S:% = aderência em sessões. V:% = aderência em volume.")
 
         with tab_carga:
