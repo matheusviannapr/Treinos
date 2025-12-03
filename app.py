@@ -6037,6 +6037,8 @@ def main():
                     },
                 })
 
+            calendar_height = "900px" if selected_uid else "720px"
+
             options = {
                 "initialView": "timeGridWeek",
                 "locale": "pt-br",
@@ -6048,7 +6050,7 @@ def main():
                 "editable": True,
                 "eventDurationEditable": True,
                 "headerToolbar": {"left": "", "center": "", "right": ""},
-                "height": "650px",
+                "height": calendar_height,
             }
             options["initialDate"] = week_start.isoformat()
 
@@ -6191,9 +6193,9 @@ def main():
             idx = df_current[mask].index[0]
             r = df_current.loc[idx]
 
-            header_col, close_col = area.columns([3, 1])
+            header_col, close_col = area.columns([6, 1])
             header_col.markdown("### 📝 Detalhes do treino")
-            if close_col.button("Fechar", key=f"close_detail_{uid}"):
+            if close_col.button("❌", key=f"close_detail_{uid}"):
                 _update_detail_panel(None, rerun=True)
                 return
 
@@ -6360,6 +6362,8 @@ def main():
                     else:
                         _update_detail_panel(uid, rerun=True)
     
+        st.markdown("---")
+
         # Botões de persistência da semana
         col_save_week, col_clear_week = st.columns([1, 1])
         if col_save_week.button("💾 Salvar Semana Atual"):
