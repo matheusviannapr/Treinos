@@ -2406,6 +2406,16 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+st.markdown("""
+    <style>
+        /* Força a sidebar sempre aberta */
+        [data-testid="stSidebar"] {
+            transform: none !important;
+            visibility: visible !important;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 
 
 def ensure_training_sheets_table() -> None:
