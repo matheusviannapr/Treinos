@@ -246,7 +246,6 @@ EXERCICIOS_CLASSICOS = {
         "Corda de pular",
     ],
 }
-
 def pdf_safe(s: str) -> str:
     if s is None:
         return ""
@@ -2401,6 +2400,34 @@ TRAINING_SHEET_COLUMNS = [
     "carga_observacao",
     "descanso_s",
 ]
+
+st.markdown("""
+    <style>
+        /* Remove o header (barra superior do Streamlit) */
+        header[data-testid="stHeader"] {
+            display: none !important;
+        }
+
+        /* Remove o footer padrão do Streamlit */
+        footer {
+            visibility: hidden !important;
+        }
+        footer:after {
+            display: none !important;
+        }
+
+        /* Remove o menuzinho de hambúrguer */
+        [data-testid="stToolbar"] {
+            display: none !important;
+        }
+
+        /* Ajusta a página para ocupar o espaço liberado */
+        .block-container {
+            padding-top: 1rem !important;
+            padding-bottom: 0rem !important;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
 
 def ensure_training_sheets_table() -> None:
