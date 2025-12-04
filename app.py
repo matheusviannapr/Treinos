@@ -2381,7 +2381,7 @@ st.markdown("""
             display: none !important;
         }
 
-        /* Remove o footer padrão do Streamlit */
+        /* Remove o footer */
         footer {
             visibility: hidden !important;
         }
@@ -2389,18 +2389,23 @@ st.markdown("""
             display: none !important;
         }
 
-        /* Remove o menuzinho de hambúrguer */
+        /* Remove apenas o toolbar, sem afetar a sidebar */
         [data-testid="stToolbar"] {
             display: none !important;
         }
 
-        /* Ajusta a página para ocupar o espaço liberado */
+        /* Mantém a sidebar sempre visível */
+        section[data-testid="stSidebar"] {
+            display: block !important;
+        }
+
+        /* Ajusta espaçamento da página */
         .block-container {
             padding-top: 1rem !important;
-            padding-bottom: 0rem !important;
         }
     </style>
 """, unsafe_allow_html=True)
+
 
 
 def ensure_training_sheets_table() -> None:
