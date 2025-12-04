@@ -658,7 +658,7 @@ def render_brand_strip(subtitle: str = "Treino inteligente para endurance e for�
         col_logo, col_text = st.columns([1, 5])
         with col_logo:
             if LOGO_PATH and os.path.exists(LOGO_PATH):
-                st.image(LOGO_PATH, width=130)
+                st.image(LOGO_PATH, width=120)
         with col_text:
             st.markdown(
                 f"""
@@ -5809,7 +5809,7 @@ def main():
     user_preferences = st.session_state.get("user_preferences_cache", load_preferences_for_user(user_id))
 
     # SIDEBAR
-    st.sidebar.title("TriPlanner")
+    st.sidebar.title("TriPlanner 🏃‍♂️ 🚴 🏊")
     if LOGO_PATH and os.path.exists(LOGO_PATH):
         st.sidebar.image(LOGO_PATH, use_column_width=True)
     st.sidebar.markdown(f"👤 **{user_name}**  \n`{user_id}`")
@@ -6290,7 +6290,7 @@ def main():
             )
             close_slot = close_col.container()
             if close_slot.button(
-                "❌", key=f"close_detail_{uid}", width=40
+                "❌", key=f"close_detail_{uid}", width=50
             ):
                 _update_detail_panel(None, rerun=True)
                 return
