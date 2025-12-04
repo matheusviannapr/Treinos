@@ -2376,46 +2376,26 @@ TRAINING_SHEET_COLUMNS = [
 
 st.markdown("""
     <style>
-        /* Remove o header (barra superior do Streamlit) */
         header[data-testid="stHeader"] {
             display: none !important;
         }
 
-        /* Remove o footer */
         footer {
             visibility: hidden !important;
         }
+        footer:before,
         footer:after {
             display: none !important;
         }
 
-        /* Remove apenas o toolbar, sem afetar a sidebar */
-        [data-testid="stToolbar"] {
-            display: none !important;
-        }
+        /* Mantém toolbar, para o botão de sidebar continuar funcionando */
+        /* [data-testid="stToolbar"] { display: none !important; } */
 
-        /* Mantém a sidebar sempre visível */
-        section[data-testid="stSidebar"] {
-            display: block !important;
-        }
-
-        /* Ajusta espaçamento da página */
         .block-container {
             padding-top: 1rem !important;
         }
     </style>
 """, unsafe_allow_html=True)
-
-st.markdown("""
-    <style>
-        /* Força a sidebar sempre aberta */
-        [data-testid="stSidebar"] {
-            transform: none !important;
-            visibility: visible !important;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
 
 
 def ensure_training_sheets_table() -> None:
