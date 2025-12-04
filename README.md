@@ -54,3 +54,43 @@ statements so you can rerun it safely.
 
 Because all state now lives in Neon, redeploying or rebooting Streamlit Cloud no
 longer wipes user data. The local SQLite file is no longer used by the app.
+
+## UI palette (dark mode) guidance
+
+TriPlanner must run in dark mode with a consistent palette. When instructing a
+copilot or adjusting styles, avoid raw whites (`#FFFFFF`, `#F0F0F0`) or blacks
+(`#000000`) and instead map everything to the tokens below.
+
+### Surfaces and borders
+* **Background:** `#020617` (page body, behind the calendar and cards)
+* **Surface:** `#0B1120` (primary cards and panels that might currently be white)
+* **Surface-soft:** `#111827` (inner boxes and inputs that need gentle contrast)
+* **Border:** `#1F2937` (card outlines, input borders, subtle dividers)
+
+### Text
+* **Primary text:** `#F9FAFB` (titles, key labels)
+* **Secondary text:** `#9CA3AF` (subtitles, descriptions, placeholders)
+* **Muted/disabled text:** `#6B7280` (disabled states or low-emphasis notes)
+
+### Primary green (logo/buttons/highlights)
+* **Primary:** `#A3E635` (solid fill for main buttons and selected chips)
+* **Hover:** `#84CC16` (same elements on hover)
+* **Active:** `#4D7C0F` (pressed/active state)
+* **Soft accent:** `rgba(163, 230, 53, 0.12)` (badges or light highlights)
+* **Text on primary:** `#020617` (preferred for maximum contrast)
+
+### Error/attention accents (optional)
+* **Error:** `#F97373` (base) and `#FCA5A5` (lighter)
+* **Warning:** `#FACC15`
+
+### Conceptual guidance for the copilot
+* Cards should be dark (`surface`) over a darker background. Avoid light cards
+  over light backgrounds.
+* Inputs must follow the dark palette: background `#111827`, text `#F9FAFB`,
+  placeholder `#9CA3AF`, borders `#1F2937`.
+* Replace any light borders (`#dddddd`, `#e0e0e0`) with the border token.
+* Primary buttons use the solid green: normal `#A3E635`, hover `#84CC16`, active
+  `#4D7C0F`, text `#020617`. Prefer solid fills with subtle shadows over heavy
+  gradients. Disable by lowering opacity when needed.
+* The app should never render pure white components on a light background; keep
+  all surfaces within the dark palette.
