@@ -418,11 +418,17 @@ def ensure_dirs():
 
 def load_css():
     """Inject a global CSS theme to modernize the UI."""
-    primary = "#8BCFA8"  # pastel green inspired by the logo
-    secondary = "#E7DFA3"  # soft gold accent
-    accent = "#F6BE9A"  # warm highlight for hovers
-    background = "#FCFBF4"  # soft off-white base from the logo background
-    surface = "#F7FAF5"  # light surface for cards/inputs
+    background = "#020617"  # app background (dark)
+    surface = "#0B1120"  # main cards / blocks
+    surface_soft = "#111827"  # inner surfaces / inputs
+    border = "#1F2937"  # subtle borders
+    text_primary = "#F9FAFB"
+    text_secondary = "#9CA3AF"
+    text_muted = "#6B7280"
+    primary = "#A3E635"  # main brand green
+    primary_hover = "#84CC16"
+    primary_active = "#4D7C0F"
+    primary_soft = "rgba(163, 230, 53, 0.12)"
     st.markdown(
         f"""
         <style>
@@ -433,160 +439,122 @@ def load_css():
             padding-bottom: 4rem;
         }}
         body {{
-            background: radial-gradient(circle at 10% 20%, rgba(196,160,45,0.12), transparent 25%),
-                        radial-gradient(circle at 80% 10%, rgba(34,94,47,0.10), transparent 20%),
-                        linear-gradient(180deg, {background} 0%, #edf5e7 50%, #e6f1e0 100%);
-            color: #1f2a24;
+            background: {background};
+            color: {text_primary};
             font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
         }}
         h1, h2, h3, h4 {{
-            color: #1b3a2a;
+            color: {text_primary};
             font-weight: 800;
             letter-spacing: -0.015em;
         }}
         h1 {{ font-size: 2.3rem; }}
         h2 {{ font-size: 1.75rem; margin-top: 1rem; }}
-        h3 {{ font-size: 1.2rem; color: #355c3f; }}
+        h3 {{ font-size: 1.2rem; color: {text_secondary}; }}
 
         /* Buttons */
         .stButton button {{
-            background: linear-gradient(135deg, {primary} 0%, {secondary} 95%);
-            color: #0f1c15;
+            background: {primary};
+            color: {background};
             border-radius: 14px;
             padding: 0.65rem 1.2rem;
-            border: 1px solid rgba(34,94,47,0.08);
+            border: 1px solid {border};
             font-weight: 700;
-            box-shadow: 0 10px 24px rgba(139, 207, 168, 0.22);
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.32);
             transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.2s ease;
-            filter: saturate(0.82);
         }}
         .stButton button:hover {{
             transform: translateY(-2px);
-            box-shadow: 0 18px 38px rgba(139, 207, 168, 0.28);
-            filter: brightness(1.03) saturate(1.02);
+            background: {primary_hover};
+            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
         }}
         .stButton button:active {{
             transform: translateY(0);
-            box-shadow: 0 8px 16px rgba(139, 207, 168, 0.22);
+            background: {primary_active};
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.28);
+        }}
+        .stButton button:disabled {{
+            opacity: 0.55;
+            cursor: not-allowed;
+            background: {primary};
+            color: {background};
         }}
 
         /* Inputs */
         .stTextInput input, .stSelectbox div[data-baseweb="select"], .stNumberInput input, textarea {{
             border-radius: 12px !important;
-            border: 1px solid rgba(34,94,47,0.18) !important;
-            background: {surface} !important;
-            color: #1f2a24 !important;
+            border: 1px solid {border} !important;
+            background: {surface_soft} !important;
+            color: {text_primary} !important;
         }}
         .stTextInput input:focus, .stSelectbox div[data-baseweb="select"]:focus-within, .stNumberInput input:focus, textarea:focus {{
-            box-shadow: 0 0 0 3px rgba(196,160,45,0.25) !important;
-            border-color: rgba(196,160,45,0.6) !important;
-        }}
-        html[data-theme="dark"] .stTextInput input,
-        html[data-theme="dark"] .stSelectbox div[data-baseweb="select"],
-        html[data-theme="dark"] .stNumberInput input,
-        html[data-theme="dark"] textarea {{
-            background: #0f1511 !important;
-            border-color: rgba(139,207,168,0.35) !important;
-            color: #e9ede8 !important;
+            box-shadow: 0 0 0 3px {primary_soft} !important;
+            border-color: {primary} !important;
         }}
 
         /* Cards */
         .tri-card {{
-            background: #ffffffee;
-            border: 1px solid rgba(34,94,47,0.08);
+            background: {surface};
+            border: 1px solid {border};
             border-radius: 18px;
             padding: 1.1rem 1.2rem;
-            box-shadow: 0 18px 45px rgba(34,94,47,0.10);
+            box-shadow: 0 18px 45px rgba(0, 0, 0, 0.35);
         }}
         .tri-brand {{
             display: flex;
             align-items: center;
             gap: 0.9rem;
-            background: linear-gradient(90deg, rgba(252,250,232,0.9), rgba(214,235,207,0.9));
-            border: 1px solid rgba(34,94,47,0.14);
+            background: {surface_soft};
+            border: 1px solid {border};
             border-radius: 14px;
             padding: 0.75rem 1rem;
             margin-bottom: 0.35rem;
         }}
         .tri-brand h4 {{
             margin: 0;
-            color: #1f2a24;
+            color: {text_primary};
             font-weight: 800;
         }}
         .tri-brand p {{
             margin: 0;
-            color: #3f5d46;
+            color: {text_secondary};
         }}
         .tri-pill {{
-            background: rgba(34,94,47,0.12);
+            background: {primary_soft};
             padding: 0.35rem 0.75rem;
             border-radius: 999px;
-            color: #1f2a24;
+            color: {text_primary};
             font-size: 0.9rem;
-        }}
-
-        /* Dark mode support */
-        html[data-theme="dark"] body {{
-            background: radial-gradient(circle at 10% 20%, rgba(139,207,168,0.14), transparent 20%),
-                        radial-gradient(circle at 80% 10%, rgba(231,223,163,0.12), transparent 18%),
-                        linear-gradient(180deg, #0f1411 0%, #121b15 50%, #0d130f 100%);
-            color: #e9ede8;
-        }}
-        html[data-theme="dark"] h1, html[data-theme="dark"] h2, html[data-theme="dark"] h3, html[data-theme="dark"] h4 {{
-            color: #f0f6f2;
-        }}
-        html[data-theme="dark"] .tri-card {{
-            background: rgba(17, 24, 19, 0.95);
-            border: 1px solid rgba(139,207,168,0.35);
-            box-shadow: 0 18px 45px rgba(0,0,0,0.45);
-            color: #f3f6f2;
-        }}
-        html[data-theme="dark"] .tri-card h2,
-        html[data-theme="dark"] .tri-card h3,
-        html[data-theme="dark"] .tri-card p,
-        html[data-theme="dark"] .tri-card li {{
-            color: #f0f4ef;
-        }}
-        html[data-theme="dark"] .tri-pill {{
-            background: rgba(139,207,168,0.18);
-            color: #f2f6f2;
-        }}
-        html[data-theme="dark"] .tri-brand {{
-            background: linear-gradient(90deg, rgba(32,53,39,0.9), rgba(20,34,26,0.9));
-            border: 1px solid rgba(139,207,168,0.35);
-        }}
-        html[data-theme="dark"] .stMarkdown p,
-        html[data-theme="dark"] .stMarkdown li,
-        html[data-theme="dark"] .stMarkdown span {{
-            color: #e9ede8;
-        }}
-        html[data-theme="dark"] div[data-testid="stVerticalBlock"] > div[style*="border: 1px"] {{
-            background: #0f1511 !important;
-            border-color: rgba(139,207,168,0.35) !important;
         }}
 
         /* Tables */
         .stDataFrame, .stDataEditor {{
             background: {surface} !important;
             border-radius: 14px !important;
-            border: 1px solid rgba(34,94,47,0.10) !important;
+            border: 1px solid {border} !important;
         }}
         .stDataEditor tbody tr {{
             background: {surface} !important;
         }}
         .stDataEditor thead tr th {{
-            background: #eef4e7 !important;
+            background: {surface_soft} !important;
+            color: {text_secondary} !important;
         }}
         .stTabs [data-baseweb="tab"] {{
-            background: rgba(34,94,47,0.08);
-            color: #1f2a24;
+            background: {surface_soft};
+            color: {text_secondary};
             border-radius: 10px;
             padding: 0.35rem 0.9rem;
             margin-right: 0.4rem;
         }}
         .stTabs [data-baseweb="tab"]:hover {{
-            background: rgba(196,160,45,0.18);
-            color: #0f1c15;
+            background: {border};
+            color: {text_primary};
+        }}
+        .stTabs [data-baseweb="tab"][aria-selected="true"] {{
+            background: {primary_soft};
+            color: {text_primary};
+            border: 1px solid {primary};
         }}
 
         /* Popovers and overlays */
@@ -595,9 +563,9 @@ def load_css():
             max-width: 96vw;
         }}
         html[data-theme="dark"] div[data-testid="stPopoverContent"] {{
-            background: #0f1511;
-            color: #e9ede8;
-            border: 1px solid rgba(139,207,168,0.35);
+            background: {surface};
+            color: {text_primary};
+            border: 1px solid {border};
         }}
 
         /* Training detail modal tweaks */
@@ -614,14 +582,17 @@ def load_css():
             align-items: center;
             justify-content: center;
             margin-top: 4px;
+            background: {surface_soft};
+            color: {text_primary};
+            border: 1px solid {border};
         }}
 
         /* Sidebar */
         section[data-testid="stSidebar"] {{
-            background: linear-gradient(180deg, rgba(34,94,47,0.12), rgba(252,250,232,0.6));
+            background: {surface};
         }}
         section[data-testid="stSidebar"] .css-1d391kg, section[data-testid="stSidebar"] .css-1d391kg p {{
-            color: #1f2a24;
+            color: {text_primary};
         }}
 
         /* Subtle floating effects */
@@ -631,16 +602,18 @@ def load_css():
         .tri-card:hover {{
             transform: translateY(-2px);
             transition: transform 0.2s ease, box-shadow 0.2s ease;
-            box-shadow: 0 24px 50px rgba(34,94,47,0.14);
+            box-shadow: 0 24px 50px rgba(0, 0, 0, 0.4);
         }}
-        .stSelectbox div[data-baseweb="select"]:hover {{
-            box-shadow: 0 0 0 3px rgba(237,92,65,0.18) !important;
-        }}
-        .st-bb {{
-            color: #1f2a24;
-        }}
-        .st-emotion-cache-1kyxreq p {{
-            color: #2d4635;
+        .st-bb {{ color: {text_primary}; }}
+        .st-emotion-cache-1kyxreq p {{ color: {text_secondary}; }}
+        ::placeholder {{ color: {text_secondary} !important; opacity: 1; }}
+        label, .stTextInput label, .stSelectbox label, .stNumberInput label {{ color: {text_secondary}; }}
+        p, li, span {{ color: {text_secondary}; }}
+        strong {{ color: {text_primary}; }}
+        small {{ color: {text_muted}; }}
+        div[data-testid="stVerticalBlock"] > div[style*="border: 1px"] {{
+            background: {surface_soft} !important;
+            border-color: {border} !important;
         }}
         </style>
         """,
