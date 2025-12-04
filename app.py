@@ -80,7 +80,21 @@ AVAIL_CSV_PATH = os.path.join(DATA_DIR, "availability.csv")
 TIMEPATTERN_CSV_PATH = os.path.join(DATA_DIR, "time_patterns.csv")
 PREFERENCES_CSV_PATH = os.path.join(DATA_DIR, "preferences.csv")
 DAILY_NOTES_CSV_PATH = os.path.join(DATA_DIR, "daily_notes.csv")
-LOGO_PATH = os.path.join(ASSETS_DIR, "triplanner_logo.png")
+LOGO_CANDIDATES = [
+    os.path.join(ASSETS_DIR, "triplanner_logo.png"),
+    os.path.join(BASE_DIR, "Triplanner logo.png"),
+    os.path.join(BASE_DIR, "triplannerlogo.png"),
+]
+
+
+def _resolve_logo_path() -> str | None:
+    for candidate in LOGO_CANDIDATES:
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
+LOGO_PATH = _resolve_logo_path()
 
 SCHEMA_COLS = [
     "UserID",
@@ -468,6 +482,14 @@ def load_css():
             box-shadow: 0 0 0 3px rgba(196,160,45,0.25) !important;
             border-color: rgba(196,160,45,0.6) !important;
         }}
+        html[data-theme="dark"] .stTextInput input,
+        html[data-theme="dark"] .stSelectbox div[data-baseweb="select"],
+        html[data-theme="dark"] .stNumberInput input,
+        html[data-theme="dark"] textarea {{
+            background: #0f1511 !important;
+            border-color: rgba(139,207,168,0.35) !important;
+            color: #e9ede8 !important;
+        }}
 
         /* Cards */
         .tri-card {{
@@ -504,6 +526,46 @@ def load_css():
             font-size: 0.9rem;
         }}
 
+        /* Dark mode support */
+        html[data-theme="dark"] body {{
+            background: radial-gradient(circle at 10% 20%, rgba(139,207,168,0.14), transparent 20%),
+                        radial-gradient(circle at 80% 10%, rgba(231,223,163,0.12), transparent 18%),
+                        linear-gradient(180deg, #0f1411 0%, #121b15 50%, #0d130f 100%);
+            color: #e9ede8;
+        }}
+        html[data-theme="dark"] h1, html[data-theme="dark"] h2, html[data-theme="dark"] h3, html[data-theme="dark"] h4 {{
+            color: #f0f6f2;
+        }}
+        html[data-theme="dark"] .tri-card {{
+            background: rgba(17, 24, 19, 0.95);
+            border: 1px solid rgba(139,207,168,0.35);
+            box-shadow: 0 18px 45px rgba(0,0,0,0.45);
+            color: #f3f6f2;
+        }}
+        html[data-theme="dark"] .tri-card h2,
+        html[data-theme="dark"] .tri-card h3,
+        html[data-theme="dark"] .tri-card p,
+        html[data-theme="dark"] .tri-card li {{
+            color: #f0f4ef;
+        }}
+        html[data-theme="dark"] .tri-pill {{
+            background: rgba(139,207,168,0.18);
+            color: #f2f6f2;
+        }}
+        html[data-theme="dark"] .tri-brand {{
+            background: linear-gradient(90deg, rgba(32,53,39,0.9), rgba(20,34,26,0.9));
+            border: 1px solid rgba(139,207,168,0.35);
+        }}
+        html[data-theme="dark"] .stMarkdown p,
+        html[data-theme="dark"] .stMarkdown li,
+        html[data-theme="dark"] .stMarkdown span {{
+            color: #e9ede8;
+        }}
+        html[data-theme="dark"] div[data-testid="stVerticalBlock"] > div[style*="border: 1px"] {{
+            background: #0f1511 !important;
+            border-color: rgba(139,207,168,0.35) !important;
+        }}
+
         /* Tables */
         .stDataFrame, .stDataEditor {{
             background: {surface} !important;
@@ -526,6 +588,33 @@ def load_css():
         .stTabs [data-baseweb="tab"]:hover {{
             background: rgba(196,160,45,0.18);
             color: #0f1c15;
+        }}
+
+        /* Popovers and overlays */
+        div[data-testid="stPopoverContent"] {{
+            width: min(1080px, 96vw);
+            max-width: 96vw;
+        }}
+        html[data-theme="dark"] div[data-testid="stPopoverContent"] {{
+            background: #0f1511;
+            color: #e9ede8;
+            border: 1px solid rgba(139,207,168,0.35);
+        }}
+
+        /* Training detail modal tweaks */
+        .detail-title {{
+            font-size: 1.05rem;
+            margin-bottom: 0.35rem;
+            font-weight: 800;
+        }}
+        .detail-close button {{
+            width: 46px;
+            height: 46px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-top: 4px;
         }}
 
         /* Sidebar */
@@ -562,13 +651,14 @@ def load_css():
 
 def render_brand_strip(subtitle: str = "Treino inteligente para endurance e força"):
     """Display the TriPlanner logo in a compact banner to keep branding visible."""
-    if not os.path.exists(LOGO_PATH):
+    if not LOGO_PATH:
         return
 
     with st.container():
         col_logo, col_text = st.columns([1, 5])
         with col_logo:
-            st.image(LOGO_PATH, width=110)
+            if LOGO_PATH and os.path.exists(LOGO_PATH):
+                st.image(LOGO_PATH, width=110)
         with col_text:
             st.markdown(
                 f"""
@@ -5038,7 +5128,7 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
 
 
 def _render_home_hero(user_name: Optional[str] = None):
-    if os.path.exists(LOGO_PATH):
+    if LOGO_PATH:
         st.image(LOGO_PATH, width=220)
     st.title("🚀 TriPlanner: seu treinador de bolso, com métodos consagrados")
     st.markdown(
@@ -5057,7 +5147,7 @@ def _render_home_hero(user_name: Optional[str] = None):
 
 
 def _render_home_steps(target, compact: bool = False):
-    target.subheader("🚀 Comece em 3 passos")
+    target.subheader("🏃‍♂️ 🚴 🏊 Comece em 3 passos")
     steps = [
         "1) 🧠 Escolha seu objetivo e parâmetros principais",
         "2) 📆 Gere seu plano semanal/ciclo com poucos cliques",
@@ -5623,9 +5713,10 @@ def render_settings_page(user_id: str, user_name: str):
 
 
 def main():
+    logo_for_icon = LOGO_PATH if LOGO_PATH and os.path.exists(LOGO_PATH) else None
     st.set_page_config(
         page_title="TriPlano",
-        page_icon=LOGO_PATH if os.path.exists(LOGO_PATH) else None,
+        page_icon=logo_for_icon,
         layout="wide",
     )
     load_css()
@@ -5676,8 +5767,10 @@ def main():
 
         with col_info:
             _render_home_cta_card(col_info, subtitle)
-            col_info.markdown("---")
-            _render_home_steps(col_info, compact=True)
+
+        st.markdown("---")
+        steps_area = st.container()
+        _render_home_steps(steps_area, compact=True)
 
         st.markdown("---")
         _render_home_benefits()
@@ -5720,7 +5813,7 @@ def main():
 
     # SIDEBAR
     st.sidebar.title("TriPlano 🌀")
-    if os.path.exists(LOGO_PATH):
+    if LOGO_PATH and os.path.exists(LOGO_PATH):
         st.sidebar.image(LOGO_PATH, use_column_width=True)
     st.sidebar.markdown(f"👤 **{user_name}**  \n`{user_id}`")
     if st.sidebar.button("Sair"):
@@ -5765,7 +5858,7 @@ def main():
                 )
 
                 st.markdown("**Parâmetros de prescrição**")
-                col_p1, col_p2, col_p3 = st.columns(3)
+                col_p1, col_p2, col_p3 = st.columns(3, gap="medium")
                 paces = {
                     "run_pace_min_per_km": col_p1.number_input(
                         "Corrida Z2 (min/km)",
@@ -5799,8 +5892,8 @@ def main():
                 st.markdown("**Metas semanais (volume, sessões e dias preferidos)**")
                 weekly_targets = {}
                 sessions_per_mod = {}
-                cols_mod = st.columns(len(MODALIDADES))
-                cols_sess = st.columns(len(MODALIDADES))
+                cols_mod = st.columns(len(MODALIDADES), gap="medium")
+                cols_sess = st.columns(len(MODALIDADES), gap="medium")
 
                 dias_semana_options = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4, "Sáb": 5, "Dom": 6}
                 default_days = {
@@ -6193,9 +6286,15 @@ def main():
             idx = df_current[mask].index[0]
             r = df_current.loc[idx]
 
-            header_col, close_col = area.columns([6, 1])
-            header_col.markdown("### 📝 Detalhes do treino")
-            if close_col.button("❌", key=f"close_detail_{uid}"):
+            header_col, close_col = area.columns([10, 1])
+            header_col.markdown(
+                "<div class='detail-title'>📝 Detalhes do treino</div>",
+                unsafe_allow_html=True,
+            )
+            close_slot = close_col.container()
+            if close_slot.button(
+                "❌", key=f"close_detail_{uid}", use_container_width=True
+            ):
                 _update_detail_panel(None, rerun=True)
                 return
 
