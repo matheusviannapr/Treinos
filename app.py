@@ -5128,9 +5128,6 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
 
 
 def _render_home_hero(user_name: Optional[str] = None):
-    if LOGO_PATH:
-        st.image(LOGO_PATH, width=220)
-    st.title("🚀 TriPlanner: seu treinador de bolso, com métodos consagrados")
     st.markdown(
         """
         <div class="tri-card">
@@ -5715,12 +5712,12 @@ def render_settings_page(user_id: str, user_name: str):
 def main():
     logo_for_icon = LOGO_PATH if LOGO_PATH and os.path.exists(LOGO_PATH) else None
     st.set_page_config(
-        page_title="TriPlano",
+        page_title="TriPlanner🏃‍♂️ 🚴 🏊",
         page_icon=logo_for_icon,
         layout="wide",
     )
     load_css()
-    render_brand_strip("Planeje endurance e força lado a lado")
+    render_brand_strip("Seu treinador de bolso, com métodos consagrados .Planeje endurance e força lado a lado.")
 
     # LOGIN
     if "user_id" not in st.session_state:
