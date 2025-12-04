@@ -658,7 +658,7 @@ def render_brand_strip(subtitle: str = "Treino inteligente para endurance e for�
         col_logo, col_text = st.columns([1, 5])
         with col_logo:
             if LOGO_PATH and os.path.exists(LOGO_PATH):
-                st.image(LOGO_PATH, width=110)
+                st.image(LOGO_PATH, width=130)
         with col_text:
             st.markdown(
                 f"""
@@ -5809,7 +5809,7 @@ def main():
     user_preferences = st.session_state.get("user_preferences_cache", load_preferences_for_user(user_id))
 
     # SIDEBAR
-    st.sidebar.title("TriPlano 🌀")
+    st.sidebar.title("TriPlanner")
     if LOGO_PATH and os.path.exists(LOGO_PATH):
         st.sidebar.image(LOGO_PATH, use_column_width=True)
     st.sidebar.markdown(f"👤 **{user_name}**  \n`{user_id}`")
@@ -5848,7 +5848,7 @@ def main():
 
             generate_week_clicked = False
             with st.popover(
-                "⚙️ Parâmetros de prescrição e metas semanais", width="content"
+                "⚙️ Parâmetros de prescrição e metas semanais", width="stretch"
             ):
                 st.markdown(
                     "Defina ritmos de referência, sessões e dias preferidos para gerar a semana e o ciclo já corrigidos."
@@ -6290,7 +6290,7 @@ def main():
             )
             close_slot = close_col.container()
             if close_slot.button(
-                "❌", key=f"close_detail_{uid}", use_container_width=True
+                "❌", key=f"close_detail_{uid}", width=40
             ):
                 _update_detail_panel(None, rerun=True)
                 return
