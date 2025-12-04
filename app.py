@@ -2380,17 +2380,6 @@ st.markdown("""
             display: none !important;
         }
 
-        footer {
-            visibility: hidden !important;
-        }
-        footer:before,
-        footer:after {
-            display: none !important;
-        }
-
-        /* Mantém toolbar, para o botão de sidebar continuar funcionando */
-        /* [data-testid="stToolbar"] { display: none !important; } */
-
         .block-container {
             padding-top: 1rem !important;
         }
