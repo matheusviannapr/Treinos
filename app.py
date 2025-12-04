@@ -2374,18 +2374,6 @@ TRAINING_SHEET_COLUMNS = [
     "descanso_s",
 ]
 
-st.markdown("""
-    <style>
-        header[data-testid="stHeader"] {
-            display: none !important;
-        }
-
-        .block-container {
-            padding-top: 1rem !important;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
 
 def ensure_training_sheets_table() -> None:
     """Create the training_sheets table if it doesn't exist (idempotent)."""
