@@ -425,7 +425,7 @@ def load_css():
     text_primary = "#F9FAFB"
     text_secondary = "#9CA3AF"
     text_muted = "#6B7280"
-    primary = "#A3E635"  # main brand green
+    primary = "#3B5228"  # main brand green
     primary_hover = "#84CC16"
     primary_active = "#4D7C0F"
     primary_soft = "rgba(163, 230, 53, 0.12)"
