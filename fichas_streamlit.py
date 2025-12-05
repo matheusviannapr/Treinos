@@ -93,6 +93,141 @@ EXERCICIOS_CLASSICOS: Dict[str, List[str]] = {
 }
 
 
+SUGGESTED_TREINOS: List[Dict[str, Any]] = [
+    {
+        "nome": "Treino 1 – Peito e Costas (Superséries)",
+        "exercicios": [
+            {"grupo": "Peito", "exercicio": "Supino Reto com Barra", "series": 4, "reps": "8–10"},
+            {"grupo": "Costas", "exercicio": "Remada Curvada Barra", "series": 4, "reps": "8–10"},
+            {
+                "grupo": "Peito",
+                "exercicio": "Supino Inclinado com Halteres",
+                "series": 3,
+                "reps": "10–12",
+            },
+            {"grupo": "Costas", "exercicio": "Puxada Frente Aberta", "series": 3, "reps": "10–12"},
+            {"grupo": "Peito", "exercicio": "Crossover Polia Alta", "series": 3, "reps": "12–15"},
+            {"grupo": "Costas", "exercicio": "Pulldown Polia", "series": 3, "reps": "12–15"},
+        ],
+    },
+    {
+        "nome": "Treino 2 – Pernas Completo",
+        "exercicios": [
+            {"grupo": "Pernas", "exercicio": "Agachamento Livre", "series": 4, "reps": "6–8"},
+            {"grupo": "Pernas", "exercicio": "Leg Press", "series": 4, "reps": "10–12"},
+            {"grupo": "Pernas", "exercicio": "Cadeira Extensora", "series": 3, "reps": "12–15"},
+            {"grupo": "Pernas", "exercicio": "Mesa Flexora", "series": 3, "reps": "10–12"},
+            {"grupo": "Pernas", "exercicio": "Panturrilha em Pé", "series": 4, "reps": "15–20"},
+            {"grupo": "Core", "exercicio": "Abdominal Infra", "series": 3, "reps": "20–30"},
+        ],
+    },
+    {
+        "nome": "Treino 3 – Push (Peito, Ombro, Tríceps)",
+        "exercicios": [
+            {
+                "grupo": "Peito",
+                "exercicio": "Supino Reto com Halteres",
+                "series": 4,
+                "reps": "8–12",
+            },
+            {"grupo": "Peito", "exercicio": "Crucifixo no Banco", "series": 3, "reps": "10–12"},
+            {
+                "grupo": "Ombros",
+                "exercicio": "Desenvolvimento com Halteres",
+                "series": 4,
+                "reps": "8–12",
+            },
+            {"grupo": "Ombros", "exercicio": "Elevação Lateral", "series": 3, "reps": "12–15"},
+            {"grupo": "Tríceps", "exercicio": "Tríceps Polia Alta", "series": 3, "reps": "10–12"},
+            {"grupo": "Tríceps", "exercicio": "Mergulho Paralelas", "series": 3, "reps": "Falha controlada"},
+        ],
+    },
+    {
+        "nome": "Treino 4 – Pull (Costas e Bíceps)",
+        "exercicios": [
+            {"grupo": "Costas", "exercicio": "Puxada Neutra", "series": 4, "reps": "8–12"},
+            {"grupo": "Costas", "exercicio": "Remada Unilateral Halter", "series": 3, "reps": "10–12"},
+            {"grupo": "Costas", "exercicio": "Remada Baixa Máquina", "series": 3, "reps": "12–15"},
+            {"grupo": "Bíceps", "exercicio": "Rosca Direta Barra", "series": 4, "reps": "8–12"},
+            {"grupo": "Bíceps", "exercicio": "Rosca Alternada", "series": 3, "reps": "10–12"},
+            {"grupo": "Bíceps", "exercicio": "Rosca Concentrada", "series": 3, "reps": "12–15"},
+        ],
+    },
+    {
+        "nome": "Treino 5 – Full Body (três vezes por semana)",
+        "exercicios": [
+            {"grupo": "Pernas", "exercicio": "Agachamento Livre", "series": 4, "reps": "6–10"},
+            {"grupo": "Peito", "exercicio": "Supino Inclinado com Barra", "series": 4, "reps": "8–12"},
+            {"grupo": "Costas", "exercicio": "Remada Curvada Barra", "series": 4, "reps": "8–10"},
+            {"grupo": "Ombros", "exercicio": "Elevação Frontal", "series": 3, "reps": "12–15"},
+            {"grupo": "Bíceps", "exercicio": "Rosca Martelo", "series": 3, "reps": "10–12"},
+            {"grupo": "Tríceps", "exercicio": "Tríceps Testa", "series": 3, "reps": "10–12"},
+            {"grupo": "Core", "exercicio": "Prancha", "series": 3, "reps": "45–60s"},
+        ],
+    },
+    {
+        "nome": "Treino 6 – Pernas (ênfase em posterior)",
+        "exercicios": [
+            {"grupo": "Pernas", "exercicio": "Stiff", "series": 4, "reps": "8–12"},
+            {"grupo": "Pernas", "exercicio": "Agachamento Barra", "series": 4, "reps": "5–8"},
+            {"grupo": "Pernas", "exercicio": "Mesa Flexora", "series": 3, "reps": "10–12"},
+            {"grupo": "Pernas", "exercicio": "Hack Machine", "series": 3, "reps": "10–12"},
+            {"grupo": "Pernas", "exercicio": "Panturrilha Sentado", "series": 4, "reps": "12–20"},
+            {"grupo": "Core", "exercicio": "Abdominal Máquina", "series": 3, "reps": "15–20"},
+        ],
+    },
+    {
+        "nome": "Treino 7 – Ombro e Braços",
+        "exercicios": [
+            {"grupo": "Ombros", "exercicio": "Desenvolvimento com Barra", "series": 4, "reps": "6–10"},
+            {"grupo": "Ombros", "exercicio": "Elevação Lateral", "series": 3, "reps": "12–15"},
+            {"grupo": "Ombros", "exercicio": "Crucifixo Inverso", "series": 3, "reps": "12–15"},
+            {"grupo": "Bíceps", "exercicio": "Rosca Scott", "series": 4, "reps": "8–12"},
+            {"grupo": "Tríceps", "exercicio": "Tríceps Francês", "series": 4, "reps": "8–12"},
+            {"grupo": "Bíceps", "exercicio": "Rosca Concentrada", "series": 3, "reps": "12–15"},
+        ],
+    },
+    {
+        "nome": "Treino 8 – Peito com ênfase em halteres",
+        "exercicios": [
+            {"grupo": "Peito", "exercicio": "Supino Reto com Halteres", "series": 4, "reps": "8–12"},
+            {"grupo": "Peito", "exercicio": "Supino Inclinado com Halteres", "series": 4, "reps": "10–12"},
+            {
+                "grupo": "Peito",
+                "exercicio": "Crucifixo Máquina (Peck Deck)",
+                "series": 3,
+                "reps": "12–15",
+            },
+            {"grupo": "Ombros", "exercicio": "Remada Alta", "series": 3, "reps": "10–12"},
+            {"grupo": "Tríceps", "exercicio": "Tríceps Corda", "series": 3, "reps": "12–15"},
+            {"grupo": "Core", "exercicio": "Elevação de Pernas", "series": 3, "reps": "15–20"},
+        ],
+    },
+    {
+        "nome": "Treino 9 – Corpo inteiro com peso corporal (funcional)",
+        "exercicios": [
+            {"grupo": "Peito", "exercicio": "Flexão de Braço", "series": 4, "reps": "15–20"},
+            {"grupo": "Costas", "exercicio": "Barra Fixa", "series": 3, "reps": "6–10"},
+            {"grupo": "Pernas", "exercicio": "Agachamento Livre", "series": 4, "reps": "12–15"},
+            {"grupo": "Pernas", "exercicio": "Avanço (lunge)", "series": 3, "reps": "10–12 por perna"},
+            {"grupo": "Ombros", "exercicio": "Elevação Lateral com elástico", "series": 3, "reps": "15–20"},
+            {"grupo": "Core", "exercicio": "Prancha", "series": 3, "reps": "60s"},
+        ],
+    },
+    {
+        "nome": "Treino 10 – Core e Estabilidade",
+        "exercicios": [
+            {"grupo": "Core", "exercicio": "Prancha", "series": 4, "reps": "60s"},
+            {"grupo": "Core", "exercicio": "Elevação de Pernas", "series": 3, "reps": "15–20"},
+            {"grupo": "Core", "exercicio": "Abdominal Solo", "series": 4, "reps": "20–30"},
+            {"grupo": "Core", "exercicio": "Abdominal Infra", "series": 3, "reps": "15–20"},
+            {"grupo": "Core", "exercicio": "Prancha Lateral", "series": 3, "reps": "45s cada lado"},
+            {"grupo": "Core", "exercicio": "Abdominal Máquina", "series": 3, "reps": "15–20"},
+        ],
+    },
+]
+
+
 def load_fichas(path: str = DATA_PATH) -> List[Dict[str, Any]]:
     if not os.path.exists(path):
         return []
@@ -248,6 +383,51 @@ def add_empty_row(df: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
 
+def _normalize_grupo(grupo: str) -> str:
+    mapping = {"Ombro": "Ombros", "Ombros": "Ombros"}
+    return mapping.get(grupo, grupo)
+
+
+def suggestion_to_exercicios(exercicios_raw: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    exercicios: List[Dict[str, Any]] = []
+    for idx, ex in enumerate(exercicios_raw, start=1):
+        exercicios.append(
+            {
+                "ordem": idx,
+                "grupo_muscular": _normalize_grupo(ex.get("grupo", "")),
+                "exercicio": ex.get("exercicio", ""),
+                "series": ex.get("series", 0),
+                "repeticoes": ex.get("reps", ""),
+                "carga_observacao": "",
+                "descanso_s": 60,
+            }
+        )
+    return exercicios
+
+
+def apply_suggestion_to_block(
+    fichas: List[Dict[str, Any]], bloco: str, exercicios: List[Dict[str, Any]]
+) -> tuple[Dict[str, Any], bool]:
+    identificador = str(bloco).upper()
+    target = next(
+        (f for f in fichas if str(f.get("identificador", "")).upper() == identificador), None
+    )
+    created = False
+    if not target:
+        target = {
+            "id": str(uuid.uuid4()),
+            "nome_ficha": f"Ficha {identificador}",
+            "identificador": identificador,
+            "exercicios": [],
+        }
+        fichas.append(target)
+        created = True
+
+    target["exercicios"] = exercicios
+    save_fichas(fichas)
+    return target, created
+
+
 def sidebar_selection(fichas: List[Dict[str, Any]]) -> tuple[str, Optional[str], Optional[str]]:
     st.sidebar.header("Fichas de treino")
     existing_names = [f.get("nome_ficha") for f in fichas]
@@ -303,6 +483,44 @@ def main() -> None:
         st.session_state["tables"] = {}
     if table_key not in st.session_state["tables"]:
         st.session_state["tables"][table_key] = df
+
+    st.markdown("### Treinos sugeridos para blocos A, B ou C")
+    st.caption("Escolha um dos modelos prontos e envie diretamente para a ficha do bloco escolhido.")
+    sugestoes_nomes = [s.get("nome") for s in SUGGESTED_TREINOS]
+    sugestao_selecionada = st.selectbox(
+        "Veja os treinos sugeridos", sugestoes_nomes, key=f"sugestoes_select_{ficha['id']}"
+    )
+    sugestao = next((s for s in SUGGESTED_TREINOS if s.get("nome") == sugestao_selecionada), None)
+    sugestao_exercicios = suggestion_to_exercicios(sugestao.get("exercicios", [])) if sugestao else []
+    sugestao_df = pd.DataFrame(sugestao_exercicios)
+    if not sugestao_df.empty:
+        st.dataframe(
+            sugestao_df.drop(columns=["carga_observacao", "descanso_s"]), use_container_width=True
+        )
+
+    col_sug_1, col_sug_2 = st.columns(2)
+    with col_sug_1:
+        bloco_destino = st.selectbox(
+            "Enviar para qual bloco?", ["A", "B", "C"], key=f"bloco_destino_{ficha['id']}"
+        )
+    with col_sug_2:
+        if st.button("Enviar treino sugerido para o bloco", key=f"btn_enviar_sug_{ficha['id']}"):
+            if not sugestao_exercicios:
+                st.error("Escolha uma sugestão válida para enviar.")
+            else:
+                destino_ficha, created = apply_suggestion_to_block(
+                    fichas, bloco_destino, sugestao_exercicios
+                )
+                if destino_ficha.get("id") == ficha.get("id"):
+                    st.session_state["tables"][table_key] = ficha_to_dataframe(destino_ficha)
+                msg_extra = " (ficha criada automaticamente)" if created else ""
+                st.success(
+                    f"{sugestao_selecionada} adicionada à ficha do bloco {bloco_destino}{msg_extra}."
+                )
+                if destino_ficha.get("id") != ficha.get("id"):
+                    st.info(
+                        f"Selecione a ficha {destino_ficha.get('nome_ficha', f'Ficha {bloco_destino}')} na barra lateral para editar ou visualizar."
+                    )
 
     if st.button("Adicionar exercício"):
         st.session_state["tables"][table_key] = add_empty_row(st.session_state["tables"][table_key])
