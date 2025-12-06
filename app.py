@@ -590,13 +590,24 @@ def load_css():
         /* Buttons */
         .stButton button {{
             background: {primary};
-            color: #ffffff;
+            color: #ffffff !important;
             border-radius: 14px;
             padding: 0.65rem 1.2rem;
             border: 1px solid {border};
             font-weight: 700;
             box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
             transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.2s ease;
+        }}
+        .stButton button span {{
+            color: #ffffff !important;
+        }}
+        .stDownloadButton button {{
+            background: {primary};
+            color: #ffffff !important;
+            border-radius: 14px;
+            border: 1px solid {border};
+            font-weight: 700;
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
         }}
         .stButton button:hover {{
             transform: translateY(-2px);
@@ -612,7 +623,7 @@ def load_css():
             opacity: 0.55;
             cursor: not-allowed;
             background: {primary};
-            color: #ffffff;
+            color: #ffffff !important;
         }}
 
         /* Inputs */
