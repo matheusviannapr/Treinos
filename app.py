@@ -552,18 +552,18 @@ def ensure_dirs():
 
 
 def load_css():
-    """Inject a global CSS theme to modernize the UI."""
-    background = "#020617"  # app background (dark)
-    surface = "#0B1120"  # main cards / blocks
-    surface_soft = "#111827"  # inner surfaces / inputs
-    border = "#1F2937"  # subtle borders
-    text_primary = "#F9FAFB"
-    text_secondary = "#9CA3AF"
-    text_muted = "#6B7280"
+    """Inject a global CSS theme for a light, warm interface."""
+    background = "#F9F3BF"  # light base replacing pure white
+    surface = "#FFF9DA"  # main cards / blocks
+    surface_soft = "#FFF3C4"  # inner surfaces / inputs
+    border = "#E2D7A8"  # subtle borders
+    text_primary = "#1F2933"
+    text_secondary = "#3E4C59"
+    text_muted = "#52606D"
     primary = "#3B5228"  # main brand green
-    primary_hover = "#84CC16"
-    primary_active = "#4D7C0F"
-    primary_soft = "rgba(163, 230, 53, 0.12)"
+    primary_hover = "#4D7C0F"
+    primary_active = "#2F3E1F"
+    primary_soft = "rgba(59, 82, 40, 0.12)"
     st.markdown(
         f"""
         <style>
@@ -590,29 +590,40 @@ def load_css():
         /* Buttons */
         .stButton button {{
             background: {primary};
-            color: {background};
+            color: #ffffff !important;
             border-radius: 14px;
             padding: 0.65rem 1.2rem;
             border: 1px solid {border};
             font-weight: 700;
-            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.32);
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
             transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.2s ease;
+        }}
+        .stButton button span {{
+            color: #ffffff !important;
+        }}
+        .stDownloadButton button {{
+            background: {primary};
+            color: #ffffff !important;
+            border-radius: 14px;
+            border: 1px solid {border};
+            font-weight: 700;
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
         }}
         .stButton button:hover {{
             transform: translateY(-2px);
             background: {primary_hover};
-            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
+            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
         }}
         .stButton button:active {{
             transform: translateY(0);
             background: {primary_active};
-            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.28);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.18);
         }}
         .stButton button:disabled {{
             opacity: 0.55;
             cursor: not-allowed;
             background: {primary};
-            color: {background};
+            color: #ffffff !important;
         }}
 
         /* Inputs */
@@ -633,7 +644,7 @@ def load_css():
             border: 1px solid {border};
             border-radius: 18px;
             padding: 1.1rem 1.2rem;
-            box-shadow: 0 18px 45px rgba(0, 0, 0, 0.35);
+            box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
         }}
         .tri-brand {{
             display: flex;
@@ -696,8 +707,6 @@ def load_css():
         div[data-testid="stPopoverContent"] {{
             width: min(1080px, 96vw);
             max-width: 96vw;
-        }}
-        html[data-theme="dark"] div[data-testid="stPopoverContent"] {{
             background: {surface};
             color: {text_primary};
             border: 1px solid {border};
@@ -737,7 +746,7 @@ def load_css():
         .tri-card:hover {{
             transform: translateY(-2px);
             transition: transform 0.2s ease, box-shadow 0.2s ease;
-            box-shadow: 0 24px 50px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
         }}
         .st-bb {{ color: {text_primary}; }}
         .st-emotion-cache-1kyxreq p {{ color: {text_secondary}; }}
