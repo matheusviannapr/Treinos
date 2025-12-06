@@ -55,42 +55,31 @@ statements so you can rerun it safely.
 Because all state now lives in Neon, redeploying or rebooting Streamlit Cloud no
 longer wipes user data. The local SQLite file is no longer used by the app.
 
-## UI palette (dark mode) guidance
+## UI palette (light mode) guidance
 
-TriPlanner must run in dark mode with a consistent palette. When instructing a
-copilot or adjusting styles, avoid raw whites (`#FFFFFF`, `#F0F0F0`) or blacks
-(`#000000`) and instead map everything to the tokens below.
+TriPlanner now runs in a light, warm palette to avoid dark mode entirely. The
+cream tone `#F9F3BF` replaces pure white across the experience.
 
 ### Surfaces and borders
-* **Background:** `#020617` (page body, behind the calendar and cards)
-* **Surface:** `#0B1120` (primary cards and panels that might currently be white)
-* **Surface-soft:** `#111827` (inner boxes and inputs that need gentle contrast)
-* **Border:** `#1F2937` (card outlines, input borders, subtle dividers)
+* **Background:** `#F9F3BF` (page body and general background)
+* **Surface:** `#FFF9DA` (cards and main panels)
+* **Surface-soft:** `#FFF3C4` (inputs and inset areas)
+* **Border:** `#E2D7A8` (subtle outlines and separators)
 
 ### Text
-* **Primary text:** `#F9FAFB` (titles, key labels)
-* **Secondary text:** `#9CA3AF` (subtitles, descriptions, placeholders)
-* **Muted/disabled text:** `#6B7280` (disabled states or low-emphasis notes)
+* **Primary text:** `#1F2933`
+* **Secondary text:** `#3E4C59`
+* **Muted/disabled text:** `#52606D`
 
 ### Primary green (logo/buttons/highlights)
-* **Primary:** `#A3E635` (solid fill for main buttons and selected chips)
-* **Hover:** `#84CC16` (same elements on hover)
-* **Active:** `#4D7C0F` (pressed/active state)
-* **Soft accent:** `rgba(163, 230, 53, 0.12)` (badges or light highlights)
-* **Text on primary:** `#020617` (preferred for maximum contrast)
-
-### Error/attention accents (optional)
-* **Error:** `#F97373` (base) and `#FCA5A5` (lighter)
-* **Warning:** `#FACC15`
+* **Primary:** `#3B5228`
+* **Hover:** `#4D7C0F`
+* **Active:** `#2F3E1F`
+* **Soft accent:** `rgba(59, 82, 40, 0.12)`
+* **Text on primary:** `#F9F3BF`
 
 ### Conceptual guidance for the copilot
-* Cards should be dark (`surface`) over a darker background. Avoid light cards
-  over light backgrounds.
-* Inputs must follow the dark palette: background `#111827`, text `#F9FAFB`,
-  placeholder `#9CA3AF`, borders `#1F2937`.
-* Replace any light borders (`#dddddd`, `#e0e0e0`) with the border token.
-* Primary buttons use the solid green: normal `#A3E635`, hover `#84CC16`, active
-  `#4D7C0F`, text `#020617`. Prefer solid fills with subtle shadows over heavy
-  gradients. Disable by lowering opacity when needed.
-* The app should never render pure white components on a light background; keep
-  all surfaces within the dark palette.
+* Cards should be light, layered above the cream background.
+* Inputs follow the light palette with soft borders for clarity.
+* Avoid introducing any dark mode toggles or styling; stick to the warm scheme.
+* Use subtle shadows to keep the light look airy rather than heavy.
