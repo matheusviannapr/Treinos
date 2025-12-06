@@ -54,6 +54,7 @@ from streamlit_calendar import calendar as st_calendar  # pip install streamlit-
 
 import db
 import triplanner_engine
+import marathon_methods
 import strength
 
 # ----------------------------------------------------------------------------
@@ -5135,143 +5136,256 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
 
     user_preferences = user_preferences or {}
 
-    modality_labels = {
-        "triathlon": "Triathlon",
-        "corrida": "Corrida",
-        "bike": "Ciclismo",
-        "natação": "Natação",
-    }
+    tab_multi, tab_marathon = st.tabs([
+        "Plano multiesporte", "Plano de maratona (métodos)"
+    ])
 
-    modality = st.selectbox(
-        "Modalidade",
-        list(modality_labels.keys()),
-        format_func=lambda k: modality_labels.get(k, k).title(),
+    with tab_multi:
+        modality_labels = {
+            "triathlon": "Triathlon",
+            "corrida": "Corrida",
+            "bike": "Ciclismo",
+            "natação": "Natação",
+        }
+
+        modality = st.selectbox(
+            "Modalidade",
+            list(modality_labels.keys()),
+            format_func=lambda k: modality_labels.get(k, k).title(),
+        )
+
+        distance_options = {
+            "triathlon": ["Sprint", "Olímpico", "70.3", "Ironman"],
+            "corrida": ["5k", "10k", "21k", "42k"],
+            "bike": ["100k", "200k", "Longo"],
+            "natação": ["1.5k", "3k", "5k"],
+        }
+        distance = st.selectbox(
+            "Distância/Prova",
+            distance_options.get(modality, ["Livre"]),
+            key="cycle_distance_select",
+        )
+
+        goal = st.radio("Objetivo", ["Completar", "Performar"], horizontal=True)
+
+        level_options = {
+            "iniciante": "Iniciante",
+            "intermediario": "Intermediário",
+            "avancado": "Avançado",
+        }
+        level_keys = list(level_options.keys())
+        nivel = st.selectbox(
+            "Nível do atleta",
+            level_keys,
+            format_func=lambda key: level_options.get(key, key.title()),
+            index=0,
+            key="cycle_level_select",
+        )
+
+        start_date_default = monday_of_week(today())
+        start_date = st.date_input("Início do ciclo", value=start_date_default, key="cycle_start_date")
+
+        duration_mode = st.radio(
+            "Como prefere informar a duração?",
+            ["Número de semanas", "Data da prova"],
+            horizontal=True,
+            key="cycle_duration_mode",
+        )
+
+        cycle_weeks: int
+        if duration_mode == "Número de semanas":
+            cycle_weeks = int(st.number_input("Semanas de preparação", min_value=4, max_value=52, value=12, step=1))
+        else:
+            event_date = st.date_input("Data da prova", value=start_date + timedelta(weeks=12), key="cycle_event_date")
+            cycle_weeks = triplanner_engine.compute_weeks_from_date(event_date, start_date)
+            st.caption(f"Serão necessárias cerca de **{cycle_weeks} semanas** até a prova.")
+
+        notes = st.text_area("Observações", value="", key="cycle_notes")
+
+        use_time_pattern_cycle_plan = st.checkbox(
+            "Aplicar padrão de horários salvo", value=True, key="apply_time_pattern_cycle_plan"
+        )
+
+        if st.button("Gerar plano semanal do ciclo", key="cycle_generate_btn"):
+            paces = _pace_defaults_from_state()
+            pace_hint = _pace_minutes_to_str(paces.get("run_pace_min_per_km"))
+            plan = triplanner_engine.build_triplanner_plan(
+                modality=modality,
+                distance=distance,
+                goal=goal,
+                cycle_weeks=cycle_weeks,
+                start_date=start_date,
+                pace_medio=pace_hint,
+                nivel=nivel,
+                notes=notes,
+            )
+
+            off_days_cycle = set(user_preferences.get("off_days", []))
+            pref_days = _preferred_days_from_state(off_days_cycle)
+            sess_per_mod = _sessions_per_mod_from_state()
+            key_sess = _key_sessions_from_state()
+
+            new_cycle_df = cycle_plan_to_trainings(
+                plan,
+                sess_per_mod,
+                key_sess,
+                pref_days,
+                paces,
+                user_id,
+                user_preferences,
+            )
+
+            pattern = load_timepattern_for_user(user_id) if use_time_pattern_cycle_plan else None
+            if pattern:
+                new_cycle_df = apply_time_pattern_to_cycle(new_cycle_df, pattern)
+
+            # Garantir que mudanças de tipo/horário retenham o detalhamento completo
+            new_cycle_df = enrich_detalhamento_for_export(new_cycle_df, paces)
+
+            cycle_end = start_date + timedelta(weeks=cycle_weeks)
+            existing_df = st.session_state["df"].copy()
+            if not existing_df.empty and not np.issubdtype(existing_df["WeekStart"].dtype, np.datetime64):
+                existing_df["WeekStart"] = pd.to_datetime(
+                    existing_df["WeekStart"], errors="coerce"
+                ).dt.date
+
+            df_outside_cycle = existing_df[
+                (existing_df["WeekStart"] < start_date)
+                | (existing_df["WeekStart"] >= cycle_end)
+            ]
+
+            final_df = pd.concat([df_outside_cycle, new_cycle_df], ignore_index=True)
+            save_user_df(user_id, final_df)
+            canonical_week_df.clear()
+
+            st.success(
+                f"{cycle_weeks} semanas de ciclo geradas e enviadas para o calendário!"
+            )
+
+        st.markdown("---")
+        st.subheader("Exportar ciclo em PDF")
+        st.caption(
+            "O PDF reúne cada semana do ciclo usando os mesmos treinos exibidos no calendário."
+        )
+
+        week_starts = [start_date + timedelta(weeks=i) for i in range(cycle_weeks)]
+        cycle_pdf = generate_cycle_pdf(user_id, week_starts)
+
+        st.download_button(
+            "📕 Exportar PDF do ciclo",
+            data=cycle_pdf,
+            file_name=f"ciclo_{start_date.strftime('%Y%m%d')}.pdf",
+            mime="application/pdf",
+            key="cycle_export_pdf",
+        )
+
+    with tab_marathon:
+        render_marathon_methods_tab(user_id)
+
+
+def render_marathon_methods_tab(user_id: str):
+    st.subheader("Planos de maratona por método")
+    st.markdown(
+        "Escolha um dos métodos consagrados, informe data da prova e parâmetros básicos. "
+        "O TriPlanner gera o ciclo completo semana a semana, já com tipos de sessão, volume e ritmo sugeridos."
     )
 
-    distance_options = {
-        "triathlon": ["Sprint", "Olímpico", "70.3", "Ironman"],
-        "corrida": ["5k", "10k", "21k", "42k"],
-        "bike": ["100k", "200k", "Longo"],
-        "natação": ["1.5k", "3k", "5k"],
-    }
-    distance = st.selectbox(
-        "Distância/Prova",
-        distance_options.get(modality, ["Livre"]),
-        key="cycle_distance_select",
-    )
+    default_race_date = today() + timedelta(days=140)
+    method_options = ["Hansons", "Daniels", "Pfitzinger", "Canova", "Lydiard", "Higdon"]
 
-    goal = st.radio("Objetivo", ["Completar", "Performar"], horizontal=True)
+    with st.form("marathon_plan_form"):
+        col_a, col_b = st.columns(2, gap="large")
+        method_key = col_a.selectbox("Método", options=method_options, index=0, key="marathon_method_select")
+        race_date = col_b.date_input("Data da maratona", value=default_race_date, key="marathon_race_date")
 
-    level_options = {
-        "iniciante": "Iniciante",
-        "intermediario": "Intermediário",
-        "avancado": "Avançado",
-    }
-    level_keys = list(level_options.keys())
-    nivel = st.selectbox(
-        "Nível do atleta",
-        level_keys,
-        format_func=lambda key: level_options.get(key, key.title()),
-        index=0,
-        key="cycle_level_select",
-    )
+        target_pace = col_a.number_input(
+            "Pace alvo (min/km)", min_value=3.0, max_value=10.0, step=0.05, value=5.5,
+            help="Informe o ritmo desejado na prova. Ajustaremos Easy/Tempo/Interval automaticamente.",
+            key="marathon_target_pace",
+        )
+        base_weekly_km = col_b.number_input(
+            "Volume atual (km/sem)", min_value=10.0, max_value=200.0, step=1.0, value=45.0,
+            help="Use uma média recente para que o plano respeite aumentos seguros.",
+            key="marathon_base_km",
+        )
 
-    start_date_default = monday_of_week(today())
-    start_date = st.date_input("Início do ciclo", value=start_date_default, key="cycle_start_date")
+        current_long_run_km = col_a.number_input(
+            "Longão recente (km)", min_value=8.0, max_value=42.0, step=1.0, value=18.0,
+            help="Maior longão feito nas últimas semanas.",
+            key="marathon_long_run",
+        )
+        weekly_days = int(col_b.slider(
+            "Dias de corrida por semana", min_value=3, max_value=7, value=5,
+            help="Use 3-4 para agendas apertadas, 6-7 para métodos que pedem mais volume.",
+            key="marathon_weekly_days",
+        ))
 
-    duration_mode = st.radio(
-        "Como prefere informar a duração?",
-        ["Número de semanas", "Data da prova"],
-        horizontal=True,
-        key="cycle_duration_mode",
-    )
+        runner_level = col_a.selectbox(
+            "Nível", ["iniciante", "intermediário", "avançado"], index=1, key="marathon_level",
+        )
 
-    cycle_weeks: int
-    if duration_mode == "Número de semanas":
-        cycle_weeks = int(st.number_input("Semanas de preparação", min_value=4, max_value=52, value=12, step=1))
+        submit = st.form_submit_button("Gerar plano de maratona", use_container_width=True)
+
+    plan_df = st.session_state.get("marathon_last_plan")
+
+    if submit:
+        try:
+            cfg = marathon_methods.MarathonPlanConfig(
+                race_date=race_date,
+                current_long_run_km=float(current_long_run_km),
+                weekly_days=weekly_days,
+                base_weekly_km=float(base_weekly_km),
+                target_marathon_pace=float(target_pace),
+                runner_level=runner_level,
+            )
+            plan_df = marathon_methods.gerar_plano_maratona(method_key, cfg)
+            st.session_state["marathon_last_plan"] = plan_df
+            st.session_state["marathon_last_method"] = method_key
+            st.success("Plano gerado! Revise as semanas e exporte para acompanhar.")
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Erro ao gerar o plano: {exc}")
+            plan_df = None
+
+    if plan_df is not None and not plan_df.empty:
+        col_info_1, col_info_2, col_info_3 = st.columns(3)
+        start_date = plan_df["date"].min()
+        end_date = plan_df["date"].max()
+        total_km = plan_df.groupby("week")["distance_km"].sum().sum()
+        col_info_1.metric("Início do ciclo", start_date.strftime("%d/%m/%Y") if hasattr(start_date, "strftime") else start_date)
+        col_info_2.metric("Total aproximado", f"{total_km:.0f} km")
+        col_info_3.metric("Semanas", plan_df["week"].max())
+
+        st.dataframe(
+            plan_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "week": st.column_config.NumberColumn("Semana", format="%d"),
+                "date": st.column_config.DateColumn("Data"),
+                "day_name": "Dia",
+                "session_type": "Sessão",
+                "distance_km": st.column_config.NumberColumn("Distância (km)", format="%.1f"),
+                "intensity_label": "Intensidade",
+                "description": st.column_config.TextColumn("Descrição", width="large"),
+                "method": "Método",
+            },
+            height=520,
+        )
+
+        weekly_totals = plan_df.groupby("week")["distance_km"].sum().reset_index()
+        st.bar_chart(weekly_totals, x="week", y="distance_km")
+
+        csv_data = plan_df.to_csv(index=False)
+        st.download_button(
+            "📥 Baixar plano em CSV",
+            data=csv_data,
+            file_name=f"plano_{st.session_state.get('marathon_last_method', 'maratona')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_marathon_plan",
+        )
     else:
-        event_date = st.date_input("Data da prova", value=start_date + timedelta(weeks=12), key="cycle_event_date")
-        cycle_weeks = triplanner_engine.compute_weeks_from_date(event_date, start_date)
-        st.caption(f"Serão necessárias cerca de **{cycle_weeks} semanas** até a prova.")
-
-    notes = st.text_area("Observações", value="", key="cycle_notes")
-
-    use_time_pattern_cycle_plan = st.checkbox(
-        "Aplicar padrão de horários salvo", value=True, key="apply_time_pattern_cycle_plan"
-    )
-
-    if st.button("Gerar plano semanal do ciclo", key="cycle_generate_btn"):
-        paces = _pace_defaults_from_state()
-        pace_hint = _pace_minutes_to_str(paces.get("run_pace_min_per_km"))
-        plan = triplanner_engine.build_triplanner_plan(
-            modality=modality,
-            distance=distance,
-            goal=goal,
-            cycle_weeks=cycle_weeks,
-            start_date=start_date,
-            pace_medio=pace_hint,
-            nivel=nivel,
-            notes=notes,
-        )
-
-        off_days_cycle = set(user_preferences.get("off_days", []))
-        pref_days = _preferred_days_from_state(off_days_cycle)
-        sess_per_mod = _sessions_per_mod_from_state()
-        key_sess = _key_sessions_from_state()
-
-        new_cycle_df = cycle_plan_to_trainings(
-            plan,
-            sess_per_mod,
-            key_sess,
-            pref_days,
-            paces,
-            user_id,
-            user_preferences,
-        )
-
-        pattern = load_timepattern_for_user(user_id) if use_time_pattern_cycle_plan else None
-        if pattern:
-            new_cycle_df = apply_time_pattern_to_cycle(new_cycle_df, pattern)
-
-        # Garantir que mudanças de tipo/horário retenham o detalhamento completo
-        new_cycle_df = enrich_detalhamento_for_export(new_cycle_df, paces)
-
-        cycle_end = start_date + timedelta(weeks=cycle_weeks)
-        existing_df = st.session_state["df"].copy()
-        if not existing_df.empty and not np.issubdtype(existing_df["WeekStart"].dtype, np.datetime64):
-            existing_df["WeekStart"] = pd.to_datetime(
-                existing_df["WeekStart"], errors="coerce"
-            ).dt.date
-
-        df_outside_cycle = existing_df[
-            (existing_df["WeekStart"] < start_date)
-            | (existing_df["WeekStart"] >= cycle_end)
-        ]
-
-        final_df = pd.concat([df_outside_cycle, new_cycle_df], ignore_index=True)
-        save_user_df(user_id, final_df)
-        canonical_week_df.clear()
-
-        st.success(
-            f"{cycle_weeks} semanas de ciclo geradas e enviadas para o calendário!"
-        )
-
-    st.markdown("---")
-    st.subheader("Exportar ciclo em PDF")
-    st.caption(
-        "O PDF reúne cada semana do ciclo usando os mesmos treinos exibidos no calendário."
-    )
-
-    week_starts = [start_date + timedelta(weeks=i) for i in range(cycle_weeks)]
-    cycle_pdf = generate_cycle_pdf(user_id, week_starts)
-
-    st.download_button(
-        "📕 Exportar PDF do ciclo",
-        data=cycle_pdf,
-        file_name=f"ciclo_{start_date.strftime('%Y%m%d')}.pdf",
-        mime="application/pdf",
-        key="cycle_export_pdf",
-    )
+        st.info("Preencha os campos e gere o plano para visualizar aqui.")
 
 
 def _render_home_hero(user_name: Optional[str] = None):
