@@ -590,7 +590,7 @@ def load_css():
         /* Buttons */
         .stButton button {{
             background: {primary};
-            color: {background};
+            color: #ffffff;
             border-radius: 14px;
             padding: 0.65rem 1.2rem;
             border: 1px solid {border};
@@ -612,7 +612,7 @@ def load_css():
             opacity: 0.55;
             cursor: not-allowed;
             background: {primary};
-            color: {background};
+            color: #ffffff;
         }}
 
         /* Inputs */
