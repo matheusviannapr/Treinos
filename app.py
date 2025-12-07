@@ -5128,6 +5128,104 @@ def canonical_week_df(user_id: str, week_start: date) -> pd.DataFrame:
     return week_df
 
 
+def marathon_plan_to_trainings(
+    plan_df: pd.DataFrame,
+    user_id: str,
+    preferences: dict | None = None,
+    pace_context: dict | None = None,
+) -> tuple[pd.DataFrame, list[str]]:
+    if plan_df is None or plan_df.empty:
+        return pd.DataFrame(columns=SCHEMA_COLS), []
+
+    df = plan_df.copy()
+    if "date" not in df.columns:
+        return pd.DataFrame(columns=SCHEMA_COLS), []
+
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    df = df.dropna(subset=["date"])
+    if df.empty:
+        return pd.DataFrame(columns=SCHEMA_COLS), []
+
+    records = []
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    for _, row in df.iterrows():
+        distance = float(row.get("distance_km", 0.0) or 0.0)
+        modality = "Corrida" if distance > 0 else "Descanso"
+        session_type = str(row.get("session_type", "Corrida")) or "Corrida"
+        method = str(row.get("method", "Maratona"))
+        intensity = str(row.get("intensity_label", ""))
+        descr = str(row.get("description", "")).strip()
+
+        detail_parts = [f"Método {method}"]
+        if intensity:
+            detail_parts.append(f"Ritmo: {intensity}")
+        if descr:
+            detail_parts.append(descr)
+        detalhamento = " | ".join(detail_parts)
+
+        day_date = row["date"]
+        week_start = monday_of_week(day_date)
+
+        records.append(
+            {
+                "UserID": user_id,
+                "UID": "",
+                "Data": day_date,
+                "Start": "",
+                "End": "",
+                "Modalidade": modality,
+                "Tipo de Treino": session_type,
+                "Volume": round(distance, 1),
+                "Unidade": "km",
+                "RPE": 0.0,
+                "Detalhamento": detalhamento,
+                "TempoEstimadoMin": 0.0,
+                "Observações": "",
+                "Status": "Planejado",
+                "adj": 0.0,
+                "AdjAppliedAt": "",
+                "ChangeLog": "",
+                "LastEditedAt": now_iso,
+                "WeekStart": week_start,
+                "Fase": session_type,
+                "TSS": 0.0,
+                "IF": 0.0,
+                "ATL": 0.0,
+                "CTL": 0.0,
+                "TSB": 0.0,
+                "StravaID": "",
+                "StravaURL": "",
+                "DuracaoRealMin": 0.0,
+                "DistanciaReal": 0.0,
+            }
+        )
+
+    if not records:
+        return pd.DataFrame(columns=SCHEMA_COLS), []
+
+    df_out = pd.DataFrame(records)
+    warnings: list[str] = []
+    for week_start, idxs in df_out.groupby("WeekStart").groups.items():
+        week_mask = df_out.index.isin(idxs)
+        week_slots = get_week_availability(user_id, week_start)
+        use_availability = bool(week_slots)
+        week_df, remaining_slots, warn_week = assign_times_to_week(
+            df_out.loc[week_mask],
+            week_slots,
+            use_availability=use_availability,
+            preferences=preferences,
+            pace_context=pace_context,
+        )
+        df_out.loc[week_mask, ["Start", "End", "TempoEstimadoMin"]] = week_df[
+            ["Start", "End", "TempoEstimadoMin"]
+        ].values
+        if use_availability:
+            set_week_availability(user_id, week_start, remaining_slots)
+        warnings.extend(warn_week or [])
+
+    return df_out[SCHEMA_COLS], warnings
+
+
 def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None):
     st.subheader("Planejamento semanal do ciclo")
     st.markdown(
@@ -5291,6 +5389,7 @@ def render_marathon_methods_tab(user_id: str):
         "O TriPlanner gera o ciclo completo semana a semana, já com tipos de sessão, volume e ritmo sugeridos."
     )
 
+    user_preferences = load_preferences_for_user(user_id)
     default_race_date = today() + timedelta(days=140)
     method_options = ["Hansons", "Daniels", "Pfitzinger", "Canova", "Lydiard", "Higdon"]
 
@@ -5342,6 +5441,7 @@ def render_marathon_methods_tab(user_id: str):
             plan_df = marathon_methods.gerar_plano_maratona(method_key, cfg)
             st.session_state["marathon_last_plan"] = plan_df
             st.session_state["marathon_last_method"] = method_key
+            st.session_state["marathon_last_pace"] = float(target_pace)
             st.success("Plano gerado! Revise as semanas e exporte para acompanhar.")
         except Exception as exc:  # noqa: BLE001
             st.error(f"Erro ao gerar o plano: {exc}")
@@ -5375,6 +5475,35 @@ def render_marathon_methods_tab(user_id: str):
 
         weekly_totals = plan_df.groupby("week")["distance_km"].sum().reset_index()
         st.bar_chart(weekly_totals, x="week", y="distance_km")
+
+        if st.button("➕ Incluir plano no calendário", use_container_width=True, key="add_marathon_to_cal"):
+            pace_ctx = {"run_pace_min_per_km": float(st.session_state.get("marathon_last_pace", target_pace))}
+            cal_df, time_warnings = marathon_plan_to_trainings(
+                plan_df,
+                user_id,
+                preferences=user_preferences,
+                pace_context=pace_ctx,
+            )
+            if cal_df.empty:
+                st.warning("Não há sessões válidas para incluir no calendário.")
+            else:
+                df_current = st.session_state.get("df", load_all())
+                df_current = df_current.copy()
+                if not df_current.empty:
+                    df_current["Data"] = pd.to_datetime(df_current["Data"], errors="coerce").dt.date
+                start_date = cal_df["Data"].min()
+                end_date = cal_df["Data"].max()
+                mask_replace = (
+                    (df_current.get("UserID") == user_id)
+                    & pd.to_datetime(df_current.get("Data"), errors="coerce").dt.date.between(start_date, end_date)
+                )
+                df_filtered = df_current[~mask_replace].copy()
+                merged = pd.concat([df_filtered, cal_df], ignore_index=True)[SCHEMA_COLS]
+                save_user_df(user_id, merged)
+                canonical_week_df.clear()
+                st.success("Plano incluído no calendário! Ajuste horários ou detalhes se precisar.")
+                if time_warnings:
+                    st.warning("\n".join(time_warnings))
 
         csv_data = plan_df.to_csv(index=False)
         st.download_button(
