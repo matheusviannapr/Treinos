@@ -5389,9 +5389,6 @@ def render_marathon_methods_tab(user_id: str):
         "O TriPlanner gera o ciclo completo semana a semana, já com tipos de sessão, volume e ritmo sugeridos."
     )
 
-    st.subheader("📚 Escolha o estilo de método para sua maratona")
-    st.write("Selecione abaixo o método de treinamento. Veja a explicação de cada um antes de decidir:")
-
     METODO_LABELS = {
         "Hansons": "Método Hansons",
         "Daniels": "Método Jack Daniels (VDOT)",
@@ -5448,35 +5445,33 @@ Ideal se esta é sua primeira maratona, se você está voltando de pausa ou se p
 
     method_options = list(METODO_LABELS.keys())
     default_method = st.session_state.get("selected_marathon_method", method_options[0])
-    metodo_key = st.radio(
-        "Método de treinamento:",
-        options=method_options,
-        format_func=lambda k: METODO_LABELS[k],
-        index=method_options.index(default_method) if default_method in method_options else 0,
-        key="marathon_method_radio",
-    )
-    st.session_state["selected_marathon_method"] = metodo_key
 
-    info = METODO_EXPLICACAO[st.session_state["selected_marathon_method"]]
-    st.markdown(f"### {info['titulo']}")
-    st.write(info["texto"])
-
-    def _sync_method_from_generator():
-        st.session_state["selected_marathon_method"] = st.session_state.get(
-            "marathon_method_select", st.session_state.get("selected_marathon_method", method_options[0])
+    with st.popover("📚 Escolha o estilo de método para sua maratona", use_container_width=True):
+        st.write(
+            "Selecione abaixo o método de treinamento. Veja a explicação de cada um antes de decidir:"
         )
-        safe_rerun()
+        metodo_key = st.radio(
+            "Método de treinamento:",
+            options=method_options,
+            format_func=lambda k: METODO_LABELS[k],
+            index=method_options.index(default_method) if default_method in method_options else 0,
+            key="marathon_method_radio",
+        )
+        st.session_state["selected_marathon_method"] = metodo_key
+
+        info = METODO_EXPLICACAO[st.session_state["selected_marathon_method"]]
+        st.markdown(f"### {info['titulo']}")
+        st.write(info["texto"])
 
     st.markdown("#### Método para gerar o plano")
     generator_method = st.selectbox(
         "Selecione o método a ser usado na geração do plano",
         options=method_options,
         format_func=lambda k: METODO_LABELS[k],
-        index=method_options.index(st.session_state["selected_marathon_method"])
+        index=method_options.index(st.session_state.get("selected_marathon_method", default_method))
         if st.session_state.get("selected_marathon_method") in method_options
         else 0,
         key="marathon_method_select",
-        on_change=_sync_method_from_generator,
     )
     st.session_state["selected_marathon_method"] = generator_method
 
