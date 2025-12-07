@@ -5389,6 +5389,209 @@ def render_marathon_methods_tab(user_id: str):
         "O TriPlanner gera o ciclo completo semana a semana, já com tipos de sessão, volume e ritmo sugeridos."
     )
 
+    st.subheader("📚 Escolha o estilo de método para sua maratona")
+    st.write("Selecione abaixo o método de treinamento. Veja a explicação de cada um antes de decidir:")
+
+    METODO_LABELS = {
+        "Hansons": "Método Hansons",
+        "Daniels": "Método Jack Daniels (VDOT)",
+        "Pfitzinger": "Método Pfitzinger",
+        "Canova": "Método Renato Canova",
+        "Lydiard": "Método Lydiard",
+        "Higdon": "Método Hal Higdon",
+    }
+
+    METODO_EXPLICACAO = {
+        "Hansons": {
+            "titulo": "Método Hansons – Consistência e fadiga controlada",
+            "texto": """• Treinos quase todos os dias e longões mais curtos (até cerca de 26 km).
+• A ideia é chegar cansado nos treinos-chave, simulando os km finais da maratona sem precisar correr 30+ km.
+• Funciona muito bem para quem consegue treinar 5–6x por semana e gosta de rotina.
+Ideal se você já corre com certa frequência e quer evoluir o tempo de forma consistente.""",
+        },
+        "Daniels": {
+            "titulo": "Método Jack Daniels (VDOT) – O método científico",
+            "texto": """• Usa ritmos bem definidos (easy, limiar, VO2, maratona), calculados a partir do seu ritmo atual.
+• Equilibra volume, intensidade e recuperação de forma muito organizada.
+• Costuma ter 1–2 treinos fortes por semana, o resto é corrida fácil.
+Ideal se você gosta de planilha bem estruturada, números e quer algo seguro e eficiente.""",
+        },
+        "Pfitzinger": {
+            "titulo": "Método Pfitzinger – Forte e específico para maratona",
+            "texto": """• Focado em corredores intermediários e avançados que já têm base.
+• Usa longões bem fortes, muitas vezes com trechos em ritmo de maratona, e “medium-long runs” durante a semana.
+• Volume moderado a alto e treinos exigentes em limiar e ritmo de prova.
+Ideal se você já tem experiência em corrida e quer baixar bem o seu tempo na maratona.""",
+        },
+        "Canova": {
+            "titulo": "Método Renato Canova – Performance máxima",
+            "texto": """• Método usado por muitos atletas de elite de maratona.
+• Muito volume e treinos longos próximos ou ligeiramente mais rápidos que o ritmo de maratona.
+• Sessões longas (20–40 km) com blocos em ritmo de prova e variações pequenas de ritmo.
+Ideal se você é avançado, tem bastante tempo para treinar e está buscando performance agressiva (recorde pessoal forte).""",
+        },
+        "Lydiard": {
+            "titulo": "Método Lydiard – Base aeróbica gigante",
+            "texto": """• Começa com uma fase longa só de base (muito volume em ritmo confortável).
+• Depois entra em fases de colina, velocidade e polimento, como uma pirâmide.
+• Ótimo para construir resistência duradoura ao longo dos meses.
+Ideal se você quer construir uma base muito sólida e pensa em evolução de médio e longo prazo.""",
+        },
+        "Higdon": {
+            "titulo": "Método Hal Higdon – Simples e seguro",
+            "texto": """• Planos fáceis de seguir, com poucos treinos complexos.
+• Voltado para iniciantes ou quem quer terminar a maratona bem, sem se preocupar com detalhes técnicos.
+• Costuma ter 3–5 dias de corrida por semana e progressões suaves nos longões.
+Ideal se esta é sua primeira maratona, se você está voltando de pausa ou se prefere um plano simples, sem complicação.""",
+        },
+    }
+
+    method_options = list(METODO_LABELS.keys())
+    default_method = st.session_state.get("selected_marathon_method", method_options[0])
+    metodo_key = st.radio(
+        "Método de treinamento:",
+        options=method_options,
+        format_func=lambda k: METODO_LABELS[k],
+        index=method_options.index(default_method) if default_method in method_options else 0,
+    )
+    st.session_state["selected_marathon_method"] = metodo_key
+
+    info = METODO_EXPLICACAO[metodo_key]
+    st.markdown(f"### {info['titulo']}")
+    st.write(info["texto"])
+
+    user_preferences = load_preferences_for_user(user_id)
+    default_race_date = today() + timedelta(days=140)
+    method_options = ["Hansons", "Daniels", "Pfitzinger", "Canova", "Lydiard", "Higdon"]
+
+    with st.form("marathon_plan_form"):
+        col_a, col_b = st.columns(2, gap="large")
+        selected_idx = method_options.index(st.session_state.get("selected_marathon_method", method_options[0]))
+        method_key = col_a.selectbox(
+            "Método", options=method_options, index=selected_idx, key="marathon_method_select"
+        )
+        st.session_state["selected_marathon_method"] = method_key
+        race_date = col_b.date_input("Data da maratona", value=default_race_date, key="marathon_race_date")
+
+        target_pace = col_a.number_input(
+            "Pace alvo (min/km)", min_value=3.0, max_value=10.0, step=0.05, value=5.5,
+            help="Informe o ritmo desejado na prova. Ajustaremos Easy/Tempo/Interval automaticamente.",
+            key="marathon_target_pace",
+        )
+        base_weekly_km = col_b.number_input(
+            "Volume atual (km/sem)", min_value=10.0, max_value=200.0, step=1.0, value=45.0,
+            help="Use uma média recente para que o plano respeite aumentos seguros.",
+            key="marathon_base_km",
+        )
+
+        current_long_run_km = col_a.number_input(
+            "Longão recente (km)", min_value=8.0, max_value=42.0, step=1.0, value=18.0,
+            help="Maior longão feito nas últimas semanas.",
+            key="marathon_long_run",
+        )
+        weekly_days = int(col_b.slider(
+            "Dias de corrida por semana", min_value=3, max_value=7, value=5,
+            help="Use 3-4 para agendas apertadas, 6-7 para métodos que pedem mais volume.",
+            key="marathon_weekly_days",
+        ))
+
+        runner_level = col_a.selectbox(
+            "Nível", ["iniciante", "intermediário", "avançado"], index=1, key="marathon_level",
+        )
+
+        submit = st.form_submit_button("Gerar plano de maratona", use_container_width=True)
+
+    plan_df = st.session_state.get("marathon_last_plan")
+
+    if submit:
+        try:
+            cfg = marathon_methods.MarathonPlanConfig(
+                race_date=race_date,
+                current_long_run_km=float(current_long_run_km),
+                weekly_days=weekly_days,
+                base_weekly_km=float(base_weekly_km),
+                target_marathon_pace=float(target_pace),
+                runner_level=runner_level,
+            )
+            plan_df = marathon_methods.gerar_plano_maratona(method_key, cfg)
+            st.session_state["marathon_last_plan"] = plan_df
+            st.session_state["marathon_last_method"] = method_key
+            st.session_state["marathon_last_pace"] = float(target_pace)
+            st.success("Plano gerado! Revise as semanas e exporte para acompanhar.")
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Erro ao gerar o plano: {exc}")
+            plan_df = None
+
+    if plan_df is not None and not plan_df.empty:
+        col_info_1, col_info_2, col_info_3 = st.columns(3)
+        start_date = plan_df["date"].min()
+        end_date = plan_df["date"].max()
+        total_km = plan_df.groupby("week")["distance_km"].sum().sum()
+        col_info_1.metric("Início do ciclo", start_date.strftime("%d/%m/%Y") if hasattr(start_date, "strftime") else start_date)
+        col_info_2.metric("Total aproximado", f"{total_km:.0f} km")
+        col_info_3.metric("Semanas", plan_df["week"].max())
+
+        st.dataframe(
+            plan_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "week": st.column_config.NumberColumn("Semana", format="%d"),
+                "date": st.column_config.DateColumn("Data"),
+                "day_name": "Dia",
+                "session_type": "Sessão",
+                "distance_km": st.column_config.NumberColumn("Distância (km)", format="%.1f"),
+                "intensity_label": "Intensidade",
+                "description": st.column_config.TextColumn("Descrição", width="large"),
+                "method": "Método",
+            },
+            height=520,
+        )
+
+        weekly_totals = plan_df.groupby("week")["distance_km"].sum().reset_index()
+        st.bar_chart(weekly_totals, x="week", y="distance_km")
+
+        if st.button("➕ Incluir plano no calendário", use_container_width=True, key="add_marathon_to_cal"):
+            pace_ctx = {"run_pace_min_per_km": float(st.session_state.get("marathon_last_pace", target_pace))}
+            cal_df, time_warnings = marathon_plan_to_trainings(
+                plan_df,
+                user_id,
+                preferences=user_preferences,
+                pace_context=pace_ctx,
+            )
+            if cal_df.empty:
+                st.warning("Não há sessões válidas para incluir no calendário.")
+            else:
+                df_current = st.session_state.get("df", load_all())
+                df_current = df_current.copy()
+                if not df_current.empty:
+                    df_current["Data"] = pd.to_datetime(df_current["Data"], errors="coerce").dt.date
+                start_date = cal_df["Data"].min()
+                end_date = cal_df["Data"].max()
+                mask_replace = (
+                    (df_current.get("UserID") == user_id)
+                    & pd.to_datetime(df_current.get("Data"), errors="coerce").dt.date.between(start_date, end_date)
+                )
+                df_filtered = df_current[~mask_replace].copy()
+                merged = pd.concat([df_filtered, cal_df], ignore_index=True)[SCHEMA_COLS]
+                save_user_df(user_id, merged)
+                canonical_week_df.clear()
+                st.success("Plano incluído no calendário! Ajuste horários ou detalhes se precisar.")
+                if time_warnings:
+                    st.warning("\n".join(time_warnings))
+
+        csv_data = plan_df.to_csv(index=False)
+        st.download_button(
+            "📥 Baixar plano em CSV",
+            data=csv_data,
+            file_name=f"plano_{st.session_state.get('marathon_last_method', 'maratona')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_marathon_plan",
+        )
+    else:
+        st.info("Preencha os campos e gere o plano para visualizar aqui.")
+
     user_preferences = load_preferences_for_user(user_id)
     default_race_date = today() + timedelta(days=140)
     method_options = ["Hansons", "Daniels", "Pfitzinger", "Canova", "Lydiard", "Higdon"]
