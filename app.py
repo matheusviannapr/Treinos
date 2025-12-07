@@ -7567,18 +7567,47 @@ def main():
                 col_atl.metric(
                     "ATL (hoje)", f"{latest['ATL']:.1f}",
                     delta=(latest["ATL"] - prev["ATL"]) if prev is not None else None,
-                    help=f"Última atualização em {latest['Data'].strftime('%d/%m/%Y')}"
+                    help=(
+                        "ATL (Acute Training Load) = fadiga recente calculada com média"
+                        " móvel exponencial de 7 dias usando os TSS das atividades do"
+                        f" Strava. Última atualização em {latest['Data'].strftime('%d/%m/%Y')}"
+                    )
                 )
                 col_ctl.metric(
                     "CTL (hoje)", f"{latest['CTL']:.1f}",
                     delta=(latest["CTL"] - prev["CTL"]) if prev is not None else None,
-                    help=f"Última atualização em {latest['Data'].strftime('%d/%m/%Y')}"
+                    help=(
+                        "CTL (Chronic Training Load) = forma/fitness de longo prazo"
+                        " estimada via média móvel exponencial de 42 dias a partir do TSS"
+                        f" diário do Strava. Última atualização em {latest['Data'].strftime('%d/%m/%Y')}"
+                    )
                 )
                 col_tsb.metric(
                     "TSB (hoje)", f"{latest['TSB']:.1f}",
                     delta=(latest["TSB"] - prev["TSB"]) if prev is not None else None,
-                    help=f"Última atualização em {latest['Data'].strftime('%d/%m/%Y')}"
+                    help=(
+                        "TSB (Training Stress Balance) = CTL de ontem menos ATL de ontem;"
+                        " indica frescor para treinar/competir. Alimentado pelos TSS"
+                        f" históricos do Strava. Última atualização em {latest['Data'].strftime('%d/%m/%Y')}"
+                    )
                 )
+
+                with st.popover("❔ O que significam ATL/CTL/TSB e como calculamos?", use_container_width=True):
+                    st.markdown(
+                        """
+                        **Definições rápidas**
+
+                        - **ATL (Acute Training Load):** fatiga recente derivada de uma média móvel exponencial de 7 dias.
+                        - **CTL (Chronic Training Load):** forma/fitness de longo prazo usando uma média móvel exponencial de 42 dias.
+                        - **TSB (Training Stress Balance):** diferença entre o CTL e o ATL do dia anterior, indicando frescor.
+
+                        **Como estimamos**
+                        - Somamos o TSS de todas as atividades Strava por dia e preenchemos dias sem treino com TSS = 0.
+                        - Aplicamos o Performance Manager Model (Coggan) com constantes 7d (ATL) e 42d (CTL) via médias móveis exponenciais.
+                        - O TSB de cada dia usa o CTL e ATL de **ontem** para refletir o balanço de carga antes do treino do dia.
+                        - Todos os cálculos usam o histórico completo de atividades Strava já salvas, mantendo continuidade diária.
+                        """
+                    )
 
                 st.markdown("### Evolução ATL/CTL/TSB com histórico do Strava")
                 plot_atl_ctl_history(memory_df)
