@@ -2005,6 +2005,29 @@ def _save_training_loads(user_id: str, payload: dict):
     )
 
 
+def _load_strava_training_loads(user_id: str) -> dict:
+    row = db.fetch_one(
+        "SELECT value FROM meta WHERE key = :key", {"key": f"load_metrics_strava_{user_id}"}
+    )
+    if row and row.get("value"):
+        try:
+            return json.loads(row["value"])
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_strava_training_loads(user_id: str, payload: dict):
+    db.execute(
+        """
+        INSERT INTO meta (key, value)
+        VALUES (:key, :value)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """,
+        {"key": f"load_metrics_strava_{user_id}", "value": json.dumps(payload)},
+    )
+
+
 def _compute_tss(duration_seconds: float, np_value: float | None, ftp: float | None, rpe: float | None) -> tuple[float, float]:
     ftp_val = ftp or 0.0
     np_val = np_value or 0.0
@@ -2018,6 +2041,173 @@ def _compute_tss(duration_seconds: float, np_value: float | None, ftp: float | N
         rpe_val = 5.0
     tss_val = (duration_minutes / 60.0) * rpe_val * 10.0
     return tss_val, 0.0
+
+
+def compute_daily_tss_series(
+    activities: list[dict], end_date: date | None = None
+) -> list[dict[str, float | date]]:
+    """
+    Build a continuous daily TSS series from Strava activities.
+
+    The series starts at the first activity date and fills every day until
+    ``end_date`` (defaults to today) with TSS=0 when no activities exist.
+    Each activity relies on the existing training load metric (TSS/stress
+    score or EMA fallback based on duration/RPE/NP) already used in the app.
+    """
+
+    if not activities:
+        return []
+
+    tss_per_day: dict[date, float] = {}
+    for act in activities:
+        raw_date = act.get("start_date_local") or act.get("start_date") or act.get("Data")
+        start_dt = pd.to_datetime(raw_date, errors="coerce")
+        if not isinstance(start_dt, pd.Timestamp) or pd.isna(start_dt):
+            continue
+
+        activity_date = start_dt.date()
+        tss_val = None
+        for key in ["tss", "stress_score", "suffer_score", "training_load", "TSS"]:
+            if act.get(key) is not None:
+                try:
+                    tss_val = float(act.get(key))
+                    break
+                except Exception:
+                    tss_val = None
+
+        if tss_val is None:
+            moving_seconds = float(act.get("moving_time") or act.get("MovingSeconds") or 0.0)
+            np_value = act.get("weighted_average_watts") or act.get("NP")
+            perceived = act.get("perceived_exertion") or act.get("RPE")
+            tss_val, _ = _compute_tss(moving_seconds, np_value, None, perceived)
+
+        current = float(tss_per_day.get(activity_date, 0.0) or 0.0)
+        tss_per_day[activity_date] = current + float(tss_val or 0.0)
+
+    if not tss_per_day:
+        return []
+
+    start_date = min(tss_per_day.keys())
+    final_date = end_date or date.today()
+    final_date = max(final_date, max(tss_per_day.keys()))
+
+    series: list[dict[str, float | date]] = []
+    cursor = start_date
+    while cursor <= final_date:
+        series.append({"date": cursor, "tss": float(tss_per_day.get(cursor, 0.0) or 0.0)})
+        cursor += timedelta(days=1)
+    return series
+
+
+def compute_atl_ctl_from_daily_tss(daily_tss: list[dict[str, float | date]]):
+    """
+    Compute ATL, CTL and TSB using the Performance Manager Model.
+
+    Uses exponential moving averages with tau_ATL=7 and tau_CTL=42.
+    TSB for a given day uses CTL/ATL from the previous day to mirror the
+    classic Training Stress Balance definition.
+    """
+
+    if not daily_tss:
+        return []
+
+    sorted_series = sorted(
+        [entry for entry in daily_tss if isinstance(entry.get("date"), date)],
+        key=lambda x: x["date"],
+    )
+    if not sorted_series:
+        return []
+
+    k_atl = 1 - math.exp(-1 / 7)
+    k_ctl = 1 - math.exp(-1 / 42)
+
+    points = []
+    first = sorted_series[0]
+    atl = float(first.get("tss", 0.0) or 0.0)
+    ctl = float(first.get("tss", 0.0) or 0.0)
+    points.append(
+        {
+            "date": first["date"],
+            "tss": float(first.get("tss", 0.0) or 0.0),
+            "atl": atl,
+            "ctl": ctl,
+            "tsb": 0.0,
+        }
+    )
+
+    for entry in sorted_series[1:]:
+        tss_val = float(entry.get("tss", 0.0) or 0.0)
+        tsb = ctl - atl
+        atl = atl + k_atl * (tss_val - atl)
+        ctl = ctl + k_ctl * (tss_val - ctl)
+        points.append(
+            {
+                "date": entry["date"],
+                "tss": tss_val,
+                "atl": atl,
+                "ctl": ctl,
+                "tsb": tsb,
+            }
+        )
+
+    return points
+
+
+def get_user_atl_ctl_timeseries(user_id: str) -> list[dict[str, float | date]]:
+    """
+    Build the ATL/CTL/TSB timeseries from stored Strava history.
+
+    - Reads all Strava activities already persisted for the user.
+    - Aggregates a continuous daily TSS series (filling missing days with zero).
+    - Applies the Performance Manager exponential model (ATL=7d, CTL=42d).
+    - Saves a cache in the meta table for quick reuse.
+    """
+
+    strava_data = _load_strava_data(user_id)
+    activities = []
+    if isinstance(strava_data, dict):
+        acts = strava_data.get("activities")
+        if isinstance(acts, list):
+            activities = acts
+
+    if not activities:
+        cached = _load_strava_training_loads(user_id)
+        if cached:
+            parsed = []
+            for day_str, vals in cached.items():
+                try:
+                    day_dt = pd.to_datetime(day_str, errors="coerce").date()
+                except Exception:
+                    continue
+                parsed.append(
+                    {
+                        "date": day_dt,
+                        "tss": float(vals.get("TSS", 0.0) or 0.0),
+                        "atl": float(vals.get("ATL", 0.0) or 0.0),
+                        "ctl": float(vals.get("CTL", 0.0) or 0.0),
+                        "tsb": float(vals.get("TSB", 0.0) or 0.0),
+                    }
+                )
+            if parsed:
+                return sorted(parsed, key=lambda x: x["date"])
+        return []
+
+    daily_series = compute_daily_tss_series(activities)
+    atl_ctl_series = compute_atl_ctl_from_daily_tss(daily_series)
+
+    if atl_ctl_series:
+        payload = {
+            entry["date"].isoformat(): {
+                "TSS": entry.get("tss", 0.0),
+                "ATL": entry.get("atl", 0.0),
+                "CTL": entry.get("ctl", 0.0),
+                "TSB": entry.get("tsb", 0.0),
+            }
+            for entry in atl_ctl_series
+        }
+        _save_strava_training_loads(user_id, payload)
+
+    return atl_ctl_series
 
 
 def _update_training_loads(user_id: str, user_df: pd.DataFrame) -> pd.DataFrame:
@@ -4825,6 +5015,34 @@ def plot_load_chart(weekly_metrics: pd.DataFrame):
     plt.tight_layout()
     st.pyplot(fig)
 
+
+def plot_atl_ctl_history(load_df: pd.DataFrame):
+    if load_df.empty:
+        st.info("Sem histórico de atividades Strava suficiente para calcular ATL/CTL.")
+        return
+
+    chart_df = load_df.copy()
+    chart_df["Data"] = pd.to_datetime(chart_df["Data"], errors="coerce")
+    chart_df = chart_df.dropna(subset=["Data"])
+    if chart_df.empty:
+        st.info("Sem datas válidas para exibir o histórico de carga.")
+        return
+
+    fig, ax = plt.subplots(figsize=(11, 4))
+    ax.bar(chart_df["Data"], chart_df["TSS"], color="#f0ad4e", alpha=0.3, label="TSS diário")
+    ax.plot(chart_df["Data"], chart_df["ATL"], label="ATL", color="#ff7f0e", linewidth=2)
+    ax.plot(chart_df["Data"], chart_df["CTL"], label="CTL", color="#1f77b4", linewidth=2)
+    ax.set_ylabel("Carga (TSS)")
+    ax.set_xlabel("Data")
+    ax2 = ax.twinx()
+    ax2.plot(chart_df["Data"], chart_df["TSB"], label="TSB", color="#6c757d", linestyle="--")
+    ax2.set_ylabel("TSB")
+    ax.legend(loc="upper left")
+    ax2.legend(loc="upper right")
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    st.pyplot(fig)
+
 # ----------------------------------------------------------------------------
 # Periodização — generate_cycle
 # ----------------------------------------------------------------------------
@@ -7261,6 +7479,7 @@ def main():
         st.header("📈 Dashboard de Performance")
         weekly_metrics, df_with_load = calculate_metrics(df)
         metrics_memory = _load_training_loads(user_id)
+        strava_load_series = get_user_atl_ctl_timeseries(user_id)
 
         df_dashboard = df.copy()
         if not df_dashboard.empty:
@@ -7308,12 +7527,23 @@ def main():
                 else:
                     st.info("Cadastre treinos para visualizar a aderência diária.")
 
-            if metrics_memory:
-                st.markdown("---")
-                st.subheader("Carga do atleta (ATL/CTL/TSB)")
-                memory_rows = []
+            load_rows: list[dict] = []
+            if strava_load_series:
+                for entry in strava_load_series:
+                    if not isinstance(entry.get("date"), date):
+                        continue
+                    load_rows.append(
+                        {
+                            "Data": entry["date"],
+                            "TSS": round(float(entry.get("tss", 0.0) or 0.0), 2),
+                            "ATL": round(float(entry.get("atl", 0.0) or 0.0), 2),
+                            "CTL": round(float(entry.get("ctl", 0.0) or 0.0), 2),
+                            "TSB": round(float(entry.get("tsb", 0.0) or 0.0), 2),
+                        }
+                    )
+            elif metrics_memory:
                 for day_str, vals in metrics_memory.items():
-                    memory_rows.append(
+                    load_rows.append(
                         {
                             "Data": day_str,
                             "TSS": round(float(vals.get("TSS", 0.0) or 0.0), 2),
@@ -7323,7 +7553,11 @@ def main():
                         }
                     )
 
-                memory_df = pd.DataFrame(memory_rows)
+            if load_rows:
+                st.markdown("---")
+                st.subheader("Carga do atleta (ATL/CTL/TSB)")
+
+                memory_df = pd.DataFrame(load_rows)
                 memory_df["Data"] = pd.to_datetime(memory_df["Data"], errors="coerce").dt.date
                 memory_df = memory_df.dropna(subset=["Data"]).sort_values("Data")
 
@@ -7331,20 +7565,23 @@ def main():
                 prev = memory_df.iloc[-2] if len(memory_df) > 1 else None
                 col_atl, col_ctl, col_tsb = st.columns(3)
                 col_atl.metric(
-                    "ATL", f"{latest['ATL']:.1f}",
+                    "ATL (hoje)", f"{latest['ATL']:.1f}",
                     delta=(latest["ATL"] - prev["ATL"]) if prev is not None else None,
                     help=f"Última atualização em {latest['Data'].strftime('%d/%m/%Y')}"
                 )
                 col_ctl.metric(
-                    "CTL", f"{latest['CTL']:.1f}",
+                    "CTL (hoje)", f"{latest['CTL']:.1f}",
                     delta=(latest["CTL"] - prev["CTL"]) if prev is not None else None,
                     help=f"Última atualização em {latest['Data'].strftime('%d/%m/%Y')}"
                 )
                 col_tsb.metric(
-                    "TSB", f"{latest['TSB']:.1f}",
+                    "TSB (hoje)", f"{latest['TSB']:.1f}",
                     delta=(latest["TSB"] - prev["TSB"]) if prev is not None else None,
                     help=f"Última atualização em {latest['Data'].strftime('%d/%m/%Y')}"
                 )
+
+                st.markdown("### Evolução ATL/CTL/TSB com histórico do Strava")
+                plot_atl_ctl_history(memory_df)
 
                 with st.expander("Memória de cálculo ATL/CTL/TSB (diário)", expanded=False):
                     st.dataframe(
