@@ -6895,7 +6895,7 @@ def main():
                 )
 
             with st.popover(
-                "➕ Adicionar treino avulso", use_container_width=True, key=f"add_single_{week_start}"
+                "➕ Adicionar treino avulso", use_container_width=True
             ):
                 st.markdown(
                     "Configure um treino único para incluí-lo diretamente no calendário e nas exportações."
