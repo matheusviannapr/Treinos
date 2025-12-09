@@ -6894,6 +6894,118 @@ def main():
                     "💡 Clique em um treino para abrir os detalhes lado a lado e depois clique novamente para fechar."
                 )
 
+            with st.popover(
+                "➕ Adicionar treino avulso", use_container_width=True, key=f"add_single_{week_start}"
+            ):
+                st.markdown(
+                    "Configure um treino único para incluí-lo diretamente no calendário e nas exportações."
+                )
+
+                with st.form(key=f"form_avulso_{week_start}"):
+                    mod_avulso = st.selectbox(
+                        "Modalidade",
+                        options=MODALIDADES,
+                        key=f"mod_avulso_{week_start}",
+                    )
+                    tipos_disp = TIPOS_MODALIDADE.get(mod_avulso, ["Treino"])
+                    tipo_avulso = st.selectbox(
+                        "Tipo de treino",
+                        options=tipos_disp,
+                        key=f"tipo_avulso_{week_start}",
+                    )
+
+                    data_avulso = st.date_input(
+                        "Data",
+                        value=week_start,
+                        min_value=week_start,
+                        max_value=week_start + timedelta(days=6),
+                        key=f"data_avulso_{week_start}",
+                    )
+                    hora_avulso = st.time_input(
+                        "Horário de início",
+                        value=time(6, 0),
+                        key=f"hora_avulso_{week_start}",
+                    )
+                    duracao_avulso = st.number_input(
+                        "Duração (min)",
+                        min_value=15,
+                        max_value=300,
+                        value=DEFAULT_TRAINING_DURATION_MIN,
+                        step=5,
+                        key=f"dur_avulso_{week_start}",
+                    )
+
+                    unidade = UNITS_ALLOWED.get(mod_avulso, "")
+                    volume_avulso = st.number_input(
+                        f"Volume ({unidade})",
+                        min_value=0.0,
+                        value=0.0,
+                        step=_unit_step(unidade),
+                        format="%.1f" if unidade == "km" else "%g",
+                        key=f"vol_avulso_{week_start}",
+                    )
+
+                    detalhamento_avulso = st.text_area(
+                        "Detalhamento/roteiro", key=f"det_avulso_{week_start}", height=120
+                    )
+                    obs_avulso = st.text_area(
+                        "Observações rápidas", key=f"obs_avulso_{week_start}", height=80
+                    )
+                    rpe_avulso = st.slider(
+                        "RPE esperado",
+                        min_value=0,
+                        max_value=10,
+                        value=5,
+                        key=f"rpe_avulso_{week_start}",
+                    )
+
+                    submitted_avulso = st.form_submit_button("Incluir treino avulso")
+
+                    if submitted_avulso:
+                        start_avulso = datetime.combine(data_avulso, hora_avulso)
+                        end_avulso = start_avulso + timedelta(minutes=int(duracao_avulso))
+                        novo_uid = generate_uid(user_id)
+
+                        novo_treino = {
+                            "UserID": user_id,
+                            "UID": novo_uid,
+                            "Data": data_avulso,
+                            "Start": start_avulso.isoformat(),
+                            "End": end_avulso.isoformat(),
+                            "Modalidade": mod_avulso,
+                            "Tipo de Treino": tipo_avulso,
+                            "Volume": float(volume_avulso),
+                            "Unidade": unidade,
+                            "RPE": int(rpe_avulso),
+                            "Detalhamento": detalhamento_avulso,
+                            "TempoEstimadoMin": int(duracao_avulso),
+                            "Observações": obs_avulso,
+                            "Status": "Planejado",
+                            "adj": "",
+                            "AdjAppliedAt": "",
+                            "ChangeLog": json.dumps([], ensure_ascii=False),
+                            "LastEditedAt": datetime.now().isoformat(timespec="seconds"),
+                            "WeekStart": monday_of_week(data_avulso),
+                            "Fase": "",
+                            "TSS": 0.0,
+                            "IF": 0.0,
+                            "ATL": 0.0,
+                            "CTL": 0.0,
+                            "TSB": 0.0,
+                            "StravaID": "",
+                            "StravaURL": "",
+                            "DuracaoRealMin": 0.0,
+                            "DistanciaReal": 0.0,
+                        }
+
+                        df_current = st.session_state.get("df", pd.DataFrame()).copy()
+                        novo_df = pd.DataFrame([novo_treino], columns=SCHEMA_COLS)
+                        df_current = pd.concat([df_current, novo_df], ignore_index=True)
+                        save_user_df(user_id, df_current)
+                        canonical_week_df.clear()
+                        st.toast("Treino avulso incluído no calendário!", icon="✅")
+                        safe_rerun()
+
             if st.session_state.get("calendar_forcar_snapshot", False):
                 eventos = []
                 if isinstance(cal_state, dict):
