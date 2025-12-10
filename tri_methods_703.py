@@ -239,14 +239,60 @@ def gerar_plano_703_friel(cfg: Plan70Config) -> pd.DataFrame:
             phase = "Taper"
 
         sessions: list[_Session] = []
+        counts: dict[str, int] = {"swim": 0, "bike": 0, "run": 0, "strength": 0}
+        limits = {
+            "swim": cfg.swim_sessions_per_week,
+            "bike": cfg.bike_sessions_per_week,
+            "run": cfg.run_sessions_per_week,
+        }
+
+        def _add_if_allowed(sess: _Session):
+            sport = sess.sport
+            if sport not in limits or counts[sport] < limits[sport]:
+                sessions.append(sess)
+                if sport in counts:
+                    counts[sport] += 1
+
         long_run_km = long_run_prog[wk]
         long_ride_km = long_ride_prog[wk]
         include_brick = phase in {"Build", "Peak"}
 
-        # Monday – swim technique or rest
+        # Essential anchors first (so they are never dropped by limits)
+        long_ride_duration = (long_ride_km / _sport_speed(cfg, "bike")) * 60
+        _add_if_allowed(
+            _Session(
+                day_offset=5,
+                sport="bike",
+                session_label="Long Ride",
+                duration_min=long_ride_duration,
+                distance_km=long_ride_km,
+                intensity_zone="Z2" if phase in {"Prep", "Base"} else "Z2/Z3",
+                key_focus="endurance",
+                description="Longão de bike com cadência estável; inclua 2x20-30min em ritmo de prova nas fases avançadas.",
+                method="Friel_703",
+            )
+        )
+
+        long_run_duration = (long_run_km / _sport_speed(cfg, "run")) * 60
+        run_zone = "Z2" if phase in {"Prep", "Base"} else "Z2/Z3"
+        _add_if_allowed(
+            _Session(
+                day_offset=6,
+                sport="run",
+                session_label="Long Run",
+                duration_min=long_run_duration,
+                distance_km=long_run_km,
+                intensity_zone=run_zone,
+                key_focus="endurance",
+                description="Longão progressivo, últimos 20-30min em ritmo de prova na fase Build/Peak.",
+                method="Friel_703",
+            )
+        )
+
+        # Monday – swim technique or rest (priority swim #1)
         swim_duration = 45 if phase != "Taper" else 30
         swim_distance = _distance_from_duration(swim_duration, cfg, "swim")
-        sessions.append(
+        _add_if_allowed(
             _Session(
                 day_offset=0,
                 sport="swim",
@@ -255,50 +301,14 @@ def gerar_plano_703_friel(cfg: Plan70Config) -> pd.DataFrame:
                 distance_km=swim_distance,
                 intensity_zone="easy",
                 key_focus="technique",
-                description="Trabalho de técnica com  drills e respirações controladas.",
+                description="Trabalho de técnica com drills e respirações controladas.",
                 method="Friel_703",
             )
         )
 
-        # Tuesday – run tempo or easy depending on phase
-        run_duration = 50 if phase in {"Build", "Peak"} else 40
-        run_zone = "Z3" if phase in {"Build", "Peak"} else "Z2"
-        run_desc = "Tempo contínuo em limiar inferior." if run_zone == "Z3" else "Rodagem aeróbica confortável."
-        sessions.append(
-            _Session(
-                day_offset=1,
-                sport="run",
-                session_label="Tempo Run" if run_zone == "Z3" else "Easy Run",
-                duration_min=run_duration,
-                distance_km=_distance_from_duration(run_duration, cfg, "run"),
-                intensity_zone=run_zone,
-                key_focus="tempo" if run_zone == "Z3" else "endurance",
-                description=run_desc,
-                method="Friel_703",
-            )
-        )
-
-        # Wednesday – bike aerobic + optional brick strides
-        bike_duration = 75 if phase in {"Build", "Peak"} else 65
-        bike_zone = "Z2" if phase in {"Prep", "Base"} else "Z2/Z3"
-        bike_desc = "Endurance progressivo com 2-3 blocos em Z3." if bike_zone == "Z2/Z3" else "Pedal contínuo leve a moderado."
-        sessions.append(
-            _Session(
-                day_offset=2,
-                sport="bike",
-                session_label="Endurance Ride",
-                duration_min=bike_duration,
-                distance_km=_distance_from_duration(bike_duration, cfg, "bike"),
-                intensity_zone=bike_zone,
-                key_focus="endurance",
-                description=bike_desc,
-                method="Friel_703",
-            )
-        )
-
-        # Thursday – swim aerobic
+        # Thursday – swim endurance (priority swim #2)
         swim_end_duration = 55 if phase not in {"Prep", "Taper"} else 45
-        sessions.append(
+        _add_if_allowed(
             _Session(
                 day_offset=3,
                 sport="swim",
@@ -312,7 +322,43 @@ def gerar_plano_703_friel(cfg: Plan70Config) -> pd.DataFrame:
             )
         )
 
-        # Friday – rest or optional mobility
+        # Wednesday – bike aerobic (priority bike #2)
+        bike_duration = 75 if phase in {"Build", "Peak"} else 65
+        bike_zone = "Z2" if phase in {"Prep", "Base"} else "Z2/Z3"
+        bike_desc = "Endurance progressivo com 2-3 blocos em Z3." if bike_zone == "Z2/Z3" else "Pedal contínuo leve a moderado."
+        _add_if_allowed(
+            _Session(
+                day_offset=2,
+                sport="bike",
+                session_label="Endurance Ride",
+                duration_min=bike_duration,
+                distance_km=_distance_from_duration(bike_duration, cfg, "bike"),
+                intensity_zone=bike_zone,
+                key_focus="endurance",
+                description=bike_desc,
+                method="Friel_703",
+            )
+        )
+
+        # Tuesday – run tempo or easy depending on phase (priority run #2)
+        run_duration = 50 if phase in {"Build", "Peak"} else 40
+        run_zone = "Z3" if phase in {"Build", "Peak"} else "Z2"
+        run_desc = "Tempo contínuo em limiar inferior." if run_zone == "Z3" else "Rodagem aeróbica confortável."
+        _add_if_allowed(
+            _Session(
+                day_offset=1,
+                sport="run",
+                session_label="Tempo Run" if run_zone == "Z3" else "Easy Run",
+                duration_min=run_duration,
+                distance_km=_distance_from_duration(run_duration, cfg, "run"),
+                intensity_zone=run_zone,
+                key_focus="tempo" if run_zone == "Z3" else "endurance",
+                description=run_desc,
+                method="Friel_703",
+            )
+        )
+
+        # Friday – rest day maintained regardless of extra slots
         sessions.append(
             _Session(
                 day_offset=4,
@@ -327,24 +373,10 @@ def gerar_plano_703_friel(cfg: Plan70Config) -> pd.DataFrame:
             )
         )
 
-        # Saturday – long ride (+ brick later)
-        long_ride_duration = (long_ride_km / _sport_speed(cfg, "bike")) * 60
-        sessions.append(
-            _Session(
-                day_offset=5,
-                sport="bike",
-                session_label="Long Ride",
-                duration_min=long_ride_duration,
-                distance_km=long_ride_km,
-                intensity_zone="Z2" if phase in {"Prep", "Base"} else "Z2/Z3",
-                key_focus="endurance",
-                description="Longão de bike com cadência estável; inclua 2x20-30min em ritmo de prova nas fases avançadas.",
-                method="Friel_703",
-            )
-        )
-        if include_brick and cfg.run_sessions_per_week >= 3:
+        # Optional additions to match configured session counts without breaking rest day
+        if include_brick:
             brick_run_duration = 30 if phase != "Peak" else 35
-            sessions.append(
+            _add_if_allowed(
                 _Session(
                     day_offset=5,
                     sport="run",
@@ -358,22 +390,56 @@ def gerar_plano_703_friel(cfg: Plan70Config) -> pd.DataFrame:
                 )
             )
 
-        # Sunday – long run
-        long_run_duration = (long_run_km / _sport_speed(cfg, "run")) * 60
-        run_zone = "Z2" if phase in {"Prep", "Base"} else "Z2/Z3"
-        sessions.append(
-            _Session(
-                day_offset=6,
-                sport="run",
-                session_label="Long Run",
-                duration_min=long_run_duration,
-                distance_km=long_run_km,
-                intensity_zone=run_zone,
-                key_focus="endurance",
-                description="Longão progressivo, últimos 20-30min em ritmo de prova na fase Build/Peak.",
-                method="Friel_703",
+        # Third swim if availability allows (placed on Tuesday for dupla com corrida)
+        if counts["swim"] < limits["swim"]:
+            extra_swim_dur = 40 if phase == "Prep" else 50
+            _add_if_allowed(
+                _Session(
+                    day_offset=1,
+                    sport="swim",
+                    session_label="Swim Opcional",
+                    duration_min=extra_swim_dur,
+                    distance_km=_distance_from_duration(extra_swim_dur, cfg, "swim"),
+                    intensity_zone="easy" if phase == "Prep" else "aerobic",
+                    key_focus="technique" if phase == "Prep" else "endurance",
+                    description="Sessão extra curta para alinhar com a disponibilidade de natação.",
+                    method="Friel_703",
+                )
             )
-        )
+
+        # Additional bike tempo/brick style if availability allows
+        if counts["bike"] < limits["bike"]:
+            tempo_bike_dur = 60 if phase in {"Prep", "Base"} else 70
+            _add_if_allowed(
+                _Session(
+                    day_offset=3,
+                    sport="bike",
+                    session_label="Bike Tempo Curto",
+                    duration_min=tempo_bike_dur,
+                    distance_km=_distance_from_duration(tempo_bike_dur, cfg, "bike"),
+                    intensity_zone="Z2" if phase in {"Prep", "Base"} else "Z2/Z3",
+                    key_focus="tempo" if phase not in {"Prep"} else "endurance",
+                    description="Bloco curto em ritmo constante para atender o nº de bikes da semana.",
+                    method="Friel_703",
+                )
+            )
+
+        # Extra easy run (keeps Friday as rest by doubling Monday) if slots remain
+        if counts["run"] < limits["run"]:
+            easy_extra_dur = 30 if phase == "Prep" else 35
+            _add_if_allowed(
+                _Session(
+                    day_offset=0,
+                    sport="run",
+                    session_label="Easy Run Opcional",
+                    duration_min=easy_extra_dur,
+                    distance_km=_distance_from_duration(easy_extra_dur, cfg, "run"),
+                    intensity_zone="Z1/Z2",
+                    key_focus="recovery",
+                    description="Rodagem leve adicional para cumprir a frequência de corrida sem remover o dia de descanso.",
+                    method="Friel_703",
+                )
+            )
 
         sessions = _cap_sessions(sessions, cfg)
         sessions = _scale_durations_to_cap(sessions, cfg.available_hours_per_week)
