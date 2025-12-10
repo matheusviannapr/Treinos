@@ -56,6 +56,7 @@ import db
 import triplanner_engine
 import marathon_methods
 import tri_methods_703
+import tri_methods_full
 import strength
 
 # ----------------------------------------------------------------------------
@@ -5565,6 +5566,117 @@ def plan_703_to_trainings(
     return df_out[SCHEMA_COLS], warnings
 
 
+def plan_full_to_trainings(
+    plan_df: pd.DataFrame,
+    user_id: str,
+    preferences: dict | None = None,
+    pace_context: dict | None = None,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Converte o DataFrame de métodos Ironman Full para o formato do calendário."""
+
+    if plan_df is None or plan_df.empty or "date" not in plan_df.columns:
+        return pd.DataFrame(columns=SCHEMA_COLS), []
+
+    df = plan_df.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    df = df.dropna(subset=["date"])
+    if df.empty:
+        return pd.DataFrame(columns=SCHEMA_COLS), []
+
+    modality_map = {
+        "swim": "Natação",
+        "bike": "Ciclismo",
+        "run": "Corrida",
+        "strength": "Força/Calistenia",
+        "brick": "Brick",
+        "rest": "Descanso",
+    }
+
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    records: list[dict] = []
+    for _, row in df.iterrows():
+        day_date = row["date"]
+        method = str(row.get("method", "Ironman Full"))
+        sport = str(row.get("sport", "")).lower()
+        modality = modality_map.get(sport, "Corrida" if row.get("distance_km", 0) else "Descanso")
+
+        distance = float(row.get("distance_km", 0.0) or 0.0)
+        duration_min = float(row.get("duration_min", 0.0) or 0.0)
+        if distance <= 0 and duration_min > 0:
+            pace_ctx = pace_context or _pace_defaults_from_state()
+            pace_kmh = {
+                "Natação": 4.0 * 3.6,
+                "Ciclismo": pace_ctx.get("bike_speed_kmh", 28.0),
+                "Corrida": 60 / max(pace_ctx.get("run_pace_min_per_km", 6.0), 0.1),
+            }.get(modality, 10.0)
+            distance = (duration_min / 60) * pace_kmh
+
+        session_label = str(row.get("session_label", ""))
+        session_type = str(row.get("key_focus", row.get("intensity_zone", "")))
+        tss = float(row.get("tss_estimate", 0.0) or 0.0)
+        description = str(row.get("description", ""))
+        week_start = day_date - timedelta(days=day_date.weekday())
+
+        records.append(
+            {
+                "UserID": user_id,
+                "UID": generate_uid(user_id, day_date, session_label, duration_min),
+                "Data": day_date,
+                "Start": time(hour=6, minute=0),
+                "End": time(hour=6, minute=0) + timedelta(minutes=duration_min),
+                "Modalidade": modality,
+                "Tipo de Treino": session_label or modality,
+                "Volume": distance if modality != "Descanso" else 0.0,
+                "Unidade": "km",
+                "RPE": 6 if modality == "Descanso" else 7,
+                "Detalhamento": description,
+                "TempoEstimadoMin": duration_min,
+                "Observações": "",
+                "Status": "Planejado",
+                "adj": 0.0,
+                "AdjAppliedAt": "",
+                "ChangeLog": "",
+                "LastEditedAt": now_iso,
+                "WeekStart": week_start,
+                "Fase": session_type,
+                "TSS": tss,
+                "IF": 0.0,
+                "ATL": 0.0,
+                "CTL": 0.0,
+                "TSB": 0.0,
+                "StravaID": "",
+                "StravaURL": "",
+                "DuracaoRealMin": 0.0,
+                "DistanciaReal": 0.0,
+            }
+        )
+
+    if not records:
+        return pd.DataFrame(columns=SCHEMA_COLS), []
+
+    df_out = pd.DataFrame(records)
+    warnings: list[str] = []
+    for week_start, idxs in df_out.groupby("WeekStart").groups.items():
+        week_mask = df_out.index.isin(idxs)
+        week_slots = get_week_availability(user_id, week_start)
+        use_availability = bool(week_slots)
+        week_df, remaining_slots, warn_week = assign_times_to_week(
+            df_out.loc[week_mask],
+            week_slots,
+            use_availability=use_availability,
+            preferences=preferences,
+            pace_context=pace_context,
+        )
+        df_out.loc[week_mask, ["Start", "End", "TempoEstimadoMin"]] = week_df[
+            ["Start", "End", "TempoEstimadoMin"]
+        ].values
+        if use_availability:
+            set_week_availability(user_id, week_start, remaining_slots)
+        warnings.extend(warn_week or [])
+
+    return df_out[SCHEMA_COLS], warnings
+
+
 def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None):
     st.subheader("Planejamento semanal do ciclo")
     st.markdown(
@@ -5574,8 +5686,11 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
 
     user_preferences = user_preferences or {}
 
-    tab_multi, tab_marathon, tab_703 = st.tabs([
-        "Plano multiesporte", "Plano de maratona (métodos)", "Plano 70.3 (métodos)"
+    tab_multi, tab_marathon, tab_703, tab_full = st.tabs([
+        "Plano multiesporte",
+        "Plano de maratona (métodos)",
+        "Plano 70.3 (métodos)",
+        "Plano Ironman Full (métodos)",
     ])
 
     with tab_multi:
@@ -5722,6 +5837,9 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
 
     with tab_703:
         render_703_methods_tab(user_id)
+
+    with tab_full:
+        render_full_methods_tab(user_id)
 
 
 def render_marathon_methods_tab(user_id: str):
@@ -6236,6 +6354,261 @@ def render_703_methods_tab(user_id: str):
             mime="text/csv",
             use_container_width=True,
             key="download_703_plan",
+        )
+    else:
+        st.info("Preencha os campos e gere o plano para visualizar aqui.")
+
+
+def render_full_methods_tab(user_id: str):
+    st.subheader("Planos de Ironman Full por método")
+    st.markdown(
+        "Compare três abordagens consagradas (MAF, Endurance Nation e CTS) e gere um ciclo completo "
+        "para 140.6 já estruturado por semanas."
+    )
+
+    method_options = ["MAF_Full", "EN_Full", "CTS_Full"]
+    method_labels = {
+        "MAF_Full": "MAF Full (Mark Allen)",
+        "EN_Full": "Endurance Nation (Fast Before Far)",
+        "CTS_Full": "CTS (TSS/CTL/ATL)",
+    }
+    method_details = {
+        "MAF_Full": {
+            "title": "MAF Full – Base aeróbica gigante",
+            "text": """Volume alto e intensidade baixa por muitas semanas. Cresce longões de forma segura,
+introduz intensidade tardiamente e mantém bricks leves até a fase específica.""",
+        },
+        "EN_Full": {
+            "title": "EN Full – Fast Before Far",
+            "text": """Primeiro fica rápido/forte com sessões de FTP/VO2 e tempo, depois expande volume.
+Bricks fortes nas fases finais e bike como pilar central.""",
+        },
+        "CTS_Full": {
+            "title": "CTS Full – Controle via TSS",
+            "text": """Planejamento orientado por carga (TSS) com blocos focados em potência na bike,
+durabilidade de corrida e especificidade de prova.""",
+        },
+    }
+
+    default_method = st.session_state.get("selected_full_method", method_options[0])
+
+    with st.popover("📚 Escolha o estilo de método para Ironman Full", use_container_width=True):
+        st.write("Selecione o método desejado e veja o foco principal de cada abordagem.")
+        metodo_key = st.radio(
+            "Método de treinamento:",
+            options=method_options,
+            format_func=lambda k: method_labels.get(k, k.replace("_", " ")),
+            index=method_options.index(default_method),
+            key="method_full_radio",
+        )
+        st.session_state["selected_full_method"] = metodo_key
+
+        info = method_details.get(metodo_key, {})
+        if info:
+            st.markdown(f"### {info.get('title', metodo_key)}")
+            st.write(info.get("text", ""))
+
+    st.markdown("#### Método para gerar o plano")
+    metodo_key = st.selectbox(
+        "Escolha o método Ironman Full",
+        method_options,
+        index=method_options.index(st.session_state.get("selected_full_method", default_method)),
+        format_func=lambda k: method_labels.get(k, k.replace("_", " ")),
+        key="method_full_select",
+    )
+    st.session_state["selected_full_method"] = metodo_key
+
+    user_preferences = load_preferences_for_user(user_id)
+    default_race_date = today() + timedelta(days=210)
+
+    with st.form("full_plan_form"):
+        col_a, col_b = st.columns(2, gap="large")
+        race_date = col_a.date_input("Data do Ironman Full", value=default_race_date, key="full_race_date")
+        athlete_level = col_b.selectbox(
+            "Nível do atleta",
+            ["iniciante", "intermediario", "avancado"],
+            index=1,
+            key="level_full",
+        )
+
+        available_hours = col_a.slider(
+            "Horas disponíveis por semana",
+            min_value=8.0,
+            max_value=22.0,
+            value=14.0,
+            step=0.5,
+            key="available_hours_full",
+        )
+
+        current_long_run = col_b.number_input(
+            "Longão de corrida atual (km)",
+            min_value=8.0,
+            max_value=40.0,
+            value=16.0,
+            step=1.0,
+            key="long_run_full",
+        )
+        current_long_ride = col_b.number_input(
+            "Longão de bike atual (km)",
+            min_value=40.0,
+            max_value=220.0,
+            value=120.0,
+            step=5.0,
+            key="long_ride_full",
+        )
+
+        weekly_swim = col_a.number_input(
+            "Volume atual de natação (km/sem)",
+            min_value=3.0,
+            max_value=20.0,
+            value=8.0,
+            step=0.5,
+            key="weekly_swim_full",
+        )
+        weekly_bike = col_a.number_input(
+            "Volume atual de bike (km/sem)",
+            min_value=80.0,
+            max_value=400.0,
+            value=180.0,
+            step=5.0,
+            key="weekly_bike_full",
+        )
+        weekly_run = col_a.number_input(
+            "Volume atual de corrida (km/sem)",
+            min_value=20.0,
+            max_value=140.0,
+            value=50.0,
+            step=1.0,
+            key="weekly_run_full",
+        )
+
+        col_c, col_d, col_e = st.columns(3)
+        swim_sessions = col_c.slider("Nados/sem", min_value=2, max_value=5, value=3, key="swim_sessions_full")
+        bike_sessions = col_d.slider("Bikes/sem", min_value=2, max_value=5, value=3, key="bike_sessions_full")
+        run_sessions = col_e.slider("Corridas/sem", min_value=3, max_value=6, value=5, key="run_sessions_full")
+
+        col_f, col_g = st.columns(2)
+        target_time = col_f.number_input(
+            "Tempo alvo (h) opcional",
+            min_value=0.0,
+            max_value=17.0,
+            value=0.0,
+            step=0.25,
+            help="Use 0 se não quiser definir um alvo.",
+            key="target_time_full",
+        )
+        target_pace = col_g.number_input(
+            "Pace alvo na maratona (min/km, opcional)",
+            min_value=0.0,
+            max_value=9.0,
+            value=0.0,
+            step=0.05,
+            help="Use 0 se não quiser definir.",
+            key="target_pace_full",
+        )
+
+        col_h, col_i = st.columns(2)
+        uses_power = col_h.checkbox("Uso medidor de potência", value=True, key="uses_power_full")
+        uses_hr = col_i.checkbox("Uso zonas de FC", value=True, key="uses_hr_full")
+
+        submit = st.form_submit_button("Gerar plano Ironman Full", use_container_width=True)
+
+    plan_df = st.session_state.get("plan_full_last_plan")
+
+    if submit:
+        try:
+            cfg = tri_methods_full.PlanFullConfig(
+                race_date=race_date,
+                current_long_run_km=float(current_long_run),
+                current_long_ride_km=float(current_long_ride),
+                current_weekly_swim_km=float(weekly_swim),
+                current_weekly_bike_km=float(weekly_bike),
+                current_weekly_run_km=float(weekly_run),
+                available_hours_per_week=float(available_hours),
+                swim_sessions_per_week=int(swim_sessions),
+                bike_sessions_per_week=int(bike_sessions),
+                run_sessions_per_week=int(run_sessions),
+                athlete_level=athlete_level,
+                target_full_time_hours=float(target_time) if target_time > 0 else None,
+                target_marathon_pace_full=float(target_pace) if target_pace > 0 else None,
+                uses_power_meter=bool(uses_power),
+                uses_hr_zones=bool(uses_hr),
+            )
+            plan_df = tri_methods_full.gerar_plano_full(metodo_key, cfg)
+            st.session_state["plan_full_last_plan"] = plan_df
+            st.session_state["plan_full_last_method"] = metodo_key
+            st.success("Plano Ironman Full gerado! Revise as semanas e exporte.")
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Erro ao gerar o plano: {exc}")
+            plan_df = None
+
+    if plan_df is not None and not plan_df.empty:
+        col1, col2, col3 = st.columns(3)
+        start_date = plan_df["date"].min()
+        end_date = plan_df["date"].max()
+        total_hours = plan_df["duration_min"].sum() / 60
+        col1.metric("Início do ciclo", start_date.strftime("%d/%m/%Y") if hasattr(start_date, "strftime") else start_date)
+        col2.metric("Término", end_date.strftime("%d/%m/%Y") if hasattr(end_date, "strftime") else end_date)
+        col3.metric("Horas previstas", f"{total_hours:.1f} h")
+
+        st.dataframe(
+            plan_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "week": st.column_config.NumberColumn("Semana", format="%d"),
+                "date": st.column_config.DateColumn("Data"),
+                "day_name": "Dia",
+                "sport": "Modalidade",
+                "session_label": "Sessão",
+                "duration_min": st.column_config.NumberColumn("Duração (min)", format="%.0f"),
+                "distance_km": st.column_config.NumberColumn("Distância (km)", format="%.1f"),
+                "intensity_zone": "Intensidade",
+                "key_focus": "Foco",
+                "description": st.column_config.TextColumn("Descrição", width="large"),
+                "method": "Método",
+            },
+            height=520,
+        )
+
+        weekly_hours = plan_df.groupby("week")["duration_min"].sum().reset_index()
+        weekly_hours["duration_h"] = weekly_hours["duration_min"] / 60
+        st.bar_chart(weekly_hours, x="week", y="duration_h")
+
+        if st.button("➕ Incluir plano no calendário", use_container_width=True, key="add_full_to_cal"):
+            pace_ctx = _pace_defaults_from_state()
+            cal_df, time_warnings = plan_full_to_trainings(
+                plan_df, user_id, preferences=user_preferences, pace_context=pace_ctx
+            )
+            if cal_df.empty:
+                st.warning("Não há sessões válidas para incluir no calendário.")
+            else:
+                df_current = st.session_state.get("df", load_all())
+                df_current = df_current.copy()
+                if not df_current.empty:
+                    df_current["Data"] = pd.to_datetime(df_current["Data"], errors="coerce").dt.date
+                start_date = cal_df["Data"].min()
+                end_date = cal_df["Data"].max()
+                mask_replace = (
+                    (df_current.get("UserID") == user_id)
+                    & pd.to_datetime(df_current.get("Data"), errors="coerce").dt.date.between(start_date, end_date)
+                )
+                df_filtered = df_current[~mask_replace].copy()
+                merged = pd.concat([df_filtered, cal_df], ignore_index=True)[SCHEMA_COLS]
+                save_user_df(user_id, merged)
+                canonical_week_df.clear()
+                st.success("Plano incluído no calendário! Ajuste horários ou detalhes se precisar.")
+                if time_warnings:
+                    st.warning("\n".join(time_warnings))
+
+        csv_data = plan_df.to_csv(index=False)
+        st.download_button(
+            "📥 Baixar plano Ironman Full em CSV",
+            data=csv_data,
+            file_name=f"plano_{st.session_state.get('plan_full_last_method', metodo_key)}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_full_plan",
         )
     else:
         st.info("Preencha os campos e gere o plano para visualizar aqui.")
@@ -6974,6 +7347,7 @@ def main():
         "Navegação",
         [
             "📅 Meu Plano",
+            "🏁 Ironman Full (métodos)",
             "📋 Fichas de treino",
             "🗓️ Resumo do Dia",
             "📈 Dashboard",
@@ -7856,6 +8230,10 @@ def main():
 
         with tab_ciclo:
             render_cycle_planning_tab(user_id, user_preferences=user_preferences)
+
+    elif menu == "🏁 Ironman Full (métodos)":
+        st.header("🏁 Plano Ironman Full (métodos)")
+        render_full_methods_tab(user_id)
 
     # ---------------- RESUMO DO DIA ----------------
     elif menu == "🗓️ Resumo do Dia":
