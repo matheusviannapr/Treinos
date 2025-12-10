@@ -7347,6 +7347,7 @@ def main():
         "Navegação",
         [
             "📅 Meu Plano",
+            "🏁 Ironman Full (métodos)",
             "📋 Fichas de treino",
             "🗓️ Resumo do Dia",
             "📈 Dashboard",
@@ -8229,6 +8230,10 @@ def main():
 
         with tab_ciclo:
             render_cycle_planning_tab(user_id, user_preferences=user_preferences)
+
+    elif menu == "🏁 Ironman Full (métodos)":
+        st.header("🏁 Plano Ironman Full (métodos)")
+        render_full_methods_tab(user_id)
 
     # ---------------- RESUMO DO DIA ----------------
     elif menu == "🗓️ Resumo do Dia":
