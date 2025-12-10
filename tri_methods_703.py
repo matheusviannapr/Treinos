@@ -441,6 +441,59 @@ def gerar_plano_703_friel(cfg: Plan70Config) -> pd.DataFrame:
                 )
             )
 
+        # If session availability is still higher, allow 2-a-days to respect configured counts
+        filler_days = [0, 1, 3, 2, 5, 6]  # keep Friday off
+        while counts["swim"] < limits["swim"]:
+            day = filler_days[counts["swim"] % len(filler_days)]
+            dur = 35 if phase == "Prep" else 45
+            _add_if_allowed(
+                _Session(
+                    day_offset=day,
+                    sport="swim",
+                    session_label="Swim Curto Extra",
+                    duration_min=dur,
+                    distance_km=_distance_from_duration(dur, cfg, "swim"),
+                    intensity_zone="easy" if phase == "Prep" else "aerobic",
+                    key_focus="technique" if phase == "Prep" else "endurance",
+                    description="Sessão curta adicional para cumprir o nº de nados da semana.",
+                    method="Friel_703",
+                )
+            )
+
+        while counts["bike"] < limits["bike"]:
+            day = filler_days[counts["bike"] % len(filler_days)]
+            dur = 45 if phase == "Prep" else 55
+            _add_if_allowed(
+                _Session(
+                    day_offset=day,
+                    sport="bike",
+                    session_label="Bike Recovery Extra",
+                    duration_min=dur,
+                    distance_km=_distance_from_duration(dur, cfg, "bike"),
+                    intensity_zone="Z1/Z2",
+                    key_focus="recovery",
+                    description="Giro fácil adicional para atingir o nº de bikes da semana sem sobrecarregar.",
+                    method="Friel_703",
+                )
+            )
+
+        while counts["run"] < limits["run"]:
+            day = filler_days[counts["run"] % len(filler_days)]
+            dur = 25 if phase == "Prep" else 30
+            _add_if_allowed(
+                _Session(
+                    day_offset=day,
+                    sport="run",
+                    session_label="Recovery Run Extra",
+                    duration_min=dur,
+                    distance_km=_distance_from_duration(dur, cfg, "run"),
+                    intensity_zone="Z1/Z2",
+                    key_focus="recovery",
+                    description="Rodagem muito leve extra para respeitar a disponibilidade semanal (mantendo sexta livre).",
+                    method="Friel_703",
+                )
+            )
+
         sessions = _cap_sessions(sessions, cfg)
         sessions = _scale_durations_to_cap(sessions, cfg.available_hours_per_week)
         frames.extend(_session_rows(sessions, wk, start_date))
