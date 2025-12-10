@@ -83,8 +83,14 @@ def _weeks_to_race(race_date: date) -> int:
     return math.ceil(days / 7)
 
 
+def _monday_of_week(d: date) -> date:
+    return d - timedelta(days=d.weekday())
+
+
 def _start_date_for_cycle(race_date: date, total_weeks: int) -> date:
-    return race_date - timedelta(days=total_weeks * 7 - 1)
+    """Return the Monday that starts the full cycle so day_offset=0 is always Monday."""
+    race_week_monday = _monday_of_week(race_date)
+    return race_week_monday - timedelta(weeks=total_weeks - 1)
 
 
 def _progressive_hours(total_weeks: int, cfg: Plan70Config, peak_multiplier: float = 1.35) -> list[float]:
@@ -246,12 +252,20 @@ def gerar_plano_703_friel(cfg: Plan70Config) -> pd.DataFrame:
             "run": cfg.run_sessions_per_week,
         }
 
-        def _add_if_allowed(sess: _Session):
+        day_sport_used: dict[int, set[str]] = {}
+
+        def _add_if_allowed(sess: _Session) -> bool:
             sport = sess.sport
+            day_set = day_sport_used.setdefault(sess.day_offset, set())
+            if sport in day_set:
+                return False
             if sport not in limits or counts[sport] < limits[sport]:
                 sessions.append(sess)
+                day_set.add(sport)
                 if sport in counts:
                     counts[sport] += 1
+                return True
+            return False
 
         long_run_km = long_run_prog[wk]
         long_ride_km = long_ride_prog[wk]
@@ -443,56 +457,52 @@ def gerar_plano_703_friel(cfg: Plan70Config) -> pd.DataFrame:
 
         # If session availability is still higher, allow 2-a-days to respect configured counts
         filler_days = [0, 1, 3, 2, 5, 6]  # keep Friday off
-        while counts["swim"] < limits["swim"]:
-            day = filler_days[counts["swim"] % len(filler_days)]
-            dur = 35 if phase == "Prep" else 45
-            _add_if_allowed(
-                _Session(
-                    day_offset=day,
-                    sport="swim",
-                    session_label="Swim Curto Extra",
-                    duration_min=dur,
-                    distance_km=_distance_from_duration(dur, cfg, "swim"),
-                    intensity_zone="easy" if phase == "Prep" else "aerobic",
-                    key_focus="technique" if phase == "Prep" else "endurance",
-                    description="Sessão curta adicional para cumprir o nº de nados da semana.",
-                    method="Friel_703",
-                )
-            )
+        def _fill_extra_sessions(sport: str, dur: float, intensity: str, focus: str, label: str, desc: str):
+            missing = limits[sport] - counts[sport]
+            for idx in range(missing):
+                for day in filler_days:
+                    candidate = _Session(
+                        day_offset=day,
+                        sport=sport,
+                        session_label=label,
+                        duration_min=dur,
+                        distance_km=_distance_from_duration(dur, cfg, sport),
+                        intensity_zone=intensity,
+                        key_focus=focus,
+                        description=desc,
+                        method="Friel_703",
+                    )
+                    if _add_if_allowed(candidate):
+                        break
+                else:
+                    break
 
-        while counts["bike"] < limits["bike"]:
-            day = filler_days[counts["bike"] % len(filler_days)]
-            dur = 45 if phase == "Prep" else 55
-            _add_if_allowed(
-                _Session(
-                    day_offset=day,
-                    sport="bike",
-                    session_label="Bike Recovery Extra",
-                    duration_min=dur,
-                    distance_km=_distance_from_duration(dur, cfg, "bike"),
-                    intensity_zone="Z1/Z2",
-                    key_focus="recovery",
-                    description="Giro fácil adicional para atingir o nº de bikes da semana sem sobrecarregar.",
-                    method="Friel_703",
-                )
-            )
+        _fill_extra_sessions(
+            "swim",
+            35 if phase == "Prep" else 45,
+            "easy" if phase == "Prep" else "aerobic",
+            "technique" if phase == "Prep" else "endurance",
+            "Swim Curto Extra",
+            "Sessão curta adicional para cumprir o nº de nados da semana.",
+        )
 
-        while counts["run"] < limits["run"]:
-            day = filler_days[counts["run"] % len(filler_days)]
-            dur = 25 if phase == "Prep" else 30
-            _add_if_allowed(
-                _Session(
-                    day_offset=day,
-                    sport="run",
-                    session_label="Recovery Run Extra",
-                    duration_min=dur,
-                    distance_km=_distance_from_duration(dur, cfg, "run"),
-                    intensity_zone="Z1/Z2",
-                    key_focus="recovery",
-                    description="Rodagem muito leve extra para respeitar a disponibilidade semanal (mantendo sexta livre).",
-                    method="Friel_703",
-                )
-            )
+        _fill_extra_sessions(
+            "bike",
+            45 if phase == "Prep" else 55,
+            "Z1/Z2",
+            "recovery",
+            "Bike Recovery Extra",
+            "Giro fácil adicional para atingir o nº de bikes da semana sem sobrecarregar.",
+        )
+
+        _fill_extra_sessions(
+            "run",
+            25 if phase == "Prep" else 30,
+            "Z1/Z2",
+            "recovery",
+            "Recovery Run Extra",
+            "Rodagem muito leve extra para respeitar a disponibilidade semanal (mantendo sexta livre).",
+        )
 
         sessions = _cap_sessions(sessions, cfg)
         sessions = _scale_durations_to_cap(sessions, cfg.available_hours_per_week)
