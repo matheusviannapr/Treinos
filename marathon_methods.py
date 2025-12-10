@@ -28,6 +28,7 @@ class MarathonPlanConfig:
     base_weekly_km: float
     target_marathon_pace: float
     runner_level: str
+    strength_sessions_per_week: int = 3
 
 
 @dataclass
@@ -36,6 +37,7 @@ class _Session:
     intensity_label: str
     distance_km: float
     description: str
+    day_offset: int | None = None
 
 
 def _pace_table(cfg: MarathonPlanConfig) -> dict[str, float]:
@@ -82,7 +84,8 @@ def _build_week_dataframe(
 ) -> pd.DataFrame:
     data_rows = []
     week_start = start_date + timedelta(days=7 * week_idx)
-    for day_offset, sess in enumerate(sessions):
+    for idx, sess in enumerate(sessions):
+        day_offset = sess.day_offset if sess.day_offset is not None else idx
         current_date = week_start + timedelta(days=day_offset)
         data_rows.append(
             {
@@ -132,6 +135,40 @@ def _allocate_easy_runs(week_volume: float, fixed_sessions: Iterable[_Session]) 
         return []
     per_day = remaining / easy_slots
     return [per_day] * easy_slots
+
+
+def _inject_strength_sessions(sessions: List[_Session], cfg: MarathonPlanConfig) -> List[_Session]:
+    """Ensure 3+ strength/calisthenia touches per week without reducing run volume."""
+
+    desired = max(3, cfg.strength_sessions_per_week)
+    existing = sum(1 for sess in sessions if sess.session_type.lower().startswith("strength"))
+    if existing >= desired:
+        return sessions
+
+    used_days = {
+        sess.day_offset if sess.day_offset is not None else idx
+        for idx, sess in enumerate(sessions)
+        if sess.session_type.lower().startswith("strength")
+    }
+
+    preferred_days = [0, 2, 4, 6, 1, 3, 5]
+    for day in preferred_days:
+        if len(used_days) >= desired:
+            break
+        if day in used_days:
+            continue
+        sessions.append(
+            _Session(
+                session_type="Strength",
+                intensity_label="Strength",
+                distance_km=0.0,
+                description="Força/calistenia (30-40min) focando core, glúteos e prevenção de lesões.",
+                day_offset=day,
+            )
+        )
+        used_days.add(day)
+
+    return sessions
 
 
 def gerar_plano_hansons(cfg: MarathonPlanConfig) -> pd.DataFrame:
@@ -253,6 +290,12 @@ def gerar_plano_hansons(cfg: MarathonPlanConfig) -> pd.DataFrame:
             else:
                 sessions.append(sess)
 
+        sessions = _inject_strength_sessions(sessions, cfg)
+        sessions = _inject_strength_sessions(sessions, cfg)
+        sessions = _inject_strength_sessions(sessions, cfg)
+        sessions = _inject_strength_sessions(sessions, cfg)
+        sessions = _inject_strength_sessions(sessions, cfg)
+        sessions = _inject_strength_sessions(sessions, cfg)
         sessions = _apply_weekly_limit(sessions, cfg.weekly_days)
         frames.append(_build_week_dataframe("Hansons", idx, start_date, sessions))
 

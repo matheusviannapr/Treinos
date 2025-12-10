@@ -50,6 +50,7 @@ class Plan70Config:
     target_run_pace_703: float | None = None
     prefers_two_bricks: bool | None = False
     has_gym_access: bool | None = False
+    strength_sessions_per_week: int = 3
 
 
 @dataclass
@@ -132,7 +133,7 @@ def _cap_sessions(sess: list[_Session], cfg: Plan70Config) -> list[_Session]:
         "swim": cfg.swim_sessions_per_week,
         "bike": cfg.bike_sessions_per_week,
         "run": cfg.run_sessions_per_week,
-        "strength": 2,
+        "strength": max(0, cfg.strength_sessions_per_week),
     }
     counts: dict[str, int] = {}
     filtered: list[_Session] = []
@@ -208,6 +209,42 @@ def _distance_from_duration(duration_min: float, cfg: Plan70Config, sport: str) 
     return (duration_min / 60.0) * speed
 
 
+def _strength_sessions(
+    cfg: Plan70Config,
+    method: str,
+    phase: str | None,
+    preferred_days: Iterable[int],
+    avoid_days: set[int] | None = None,
+) -> list[_Session]:
+    """Generate strength/calisthenics blocks for the week respecting user preference."""
+
+    desired = max(3, cfg.strength_sessions_per_week)
+    duration = 30 if phase in {"Prep", "Taper"} else 40
+    avoid = avoid_days or set()
+    sessions: list[_Session] = []
+    used_days: set[int] = set()
+    for day in preferred_days:
+        if len(sessions) >= desired:
+            break
+        if day in avoid or day in used_days:
+            continue
+        sessions.append(
+            _Session(
+                day_offset=day,
+                sport="strength",
+                session_label="Força/Calistenia",
+                duration_min=duration,
+                distance_km=0.0,
+                intensity_zone="strength",
+                key_focus="strength",
+                description="Rotina de força e core (3x10-15 repetições). Inclua mobilidade e prevenção de lesões.",
+                method=method,
+            )
+        )
+        used_days.add(day)
+    return sessions
+
+
 # ---------------------------------------------------------------------------
 # Method generators
 # ---------------------------------------------------------------------------
@@ -250,6 +287,7 @@ def gerar_plano_703_friel(cfg: Plan70Config) -> pd.DataFrame:
             "swim": cfg.swim_sessions_per_week,
             "bike": cfg.bike_sessions_per_week,
             "run": cfg.run_sessions_per_week,
+            "strength": cfg.strength_sessions_per_week,
         }
 
         day_sport_used: dict[int, set[str]] = {}
@@ -401,8 +439,18 @@ def gerar_plano_703_friel(cfg: Plan70Config) -> pd.DataFrame:
                     key_focus="brick",
                     description="Corrida curta logo após o pedal, ritmo controlado Z2 focando transição eficiente.",
                     method="Friel_703",
-                )
             )
+        )
+
+        # Strength / calisthenics blocks (never on Friday rest day)
+        for strength_sess in _strength_sessions(
+            cfg,
+            method="Friel_703",
+            phase=phase,
+            preferred_days=[0, 2, 3, 6, 1, 5],
+            avoid_days={4},
+        ):
+            _add_if_allowed(strength_sess)
 
         # Third swim if availability allows (placed on Tuesday for dupla com corrida)
         if counts["swim"] < limits["swim"]:
@@ -681,6 +729,16 @@ def gerar_plano_703_barryp(cfg: Plan70Config) -> pd.DataFrame:
                 )
             )
 
+        # Strength / calistenia, mantendo sexta livre
+        for strength_sess in _strength_sessions(
+            cfg,
+            method="BarryP_Tri",
+            phase=phase,
+            preferred_days=[0, 2, 5, 3, 6, 1],
+            avoid_days={4},
+        ):
+            sessions.append(strength_sess)
+
         # Sunday – long run (BarryP backbone)
         long_run_km = long_km
         sessions.append(
@@ -827,6 +885,16 @@ def gerar_plano_703_sweetspot(cfg: Plan70Config) -> pd.DataFrame:
                 method="SweetSpot_703",
             )
         )
+
+        # Strength / calistenia espalhada na semana sem quebrar o descanso de sexta
+        for strength_sess in _strength_sessions(
+            cfg,
+            method="SweetSpot_703",
+            phase=phase,
+            preferred_days=[0, 2, 3, 6, 1, 5],
+            avoid_days={4},
+        ):
+            sessions.append(strength_sess)
 
         # Saturday – long ride (race specific) with brick run
         long_ride_km = long_ride_prog[wk]

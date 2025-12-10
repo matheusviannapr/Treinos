@@ -5848,6 +5848,17 @@ Ideal se esta é sua primeira maratona, se você está voltando de pausa ou se p
             key="marathon_weekly_days",
         ))
 
+        strength_sessions = int(
+            col_a.slider(
+                "Força/calistenia por semana",
+                min_value=3,
+                max_value=5,
+                value=3,
+                help="Inclui treinos curtos de core/prevenção (30-40min). Mínimo recomendado: 3x/sem.",
+                key="marathon_strength_sessions",
+            )
+        )
+
         runner_level = col_a.selectbox(
             "Nível", ["iniciante", "intermediário", "avançado"], index=1, key="marathon_level",
         )
@@ -5865,6 +5876,7 @@ Ideal se esta é sua primeira maratona, se você está voltando de pausa ou se p
                 base_weekly_km=float(base_weekly_km),
                 target_marathon_pace=float(target_pace),
                 runner_level=runner_level,
+                strength_sessions_per_week=strength_sessions,
             )
             plan_df = marathon_methods.gerar_plano_maratona(method_key, cfg)
             st.session_state["marathon_last_plan"] = plan_df
@@ -6109,6 +6121,18 @@ def render_703_methods_tab(user_id: str):
             key="run_sessions_703",
         )
 
+        col_m, _ = st.columns(2)
+        strength_sessions_703 = int(
+            col_m.slider(
+                "Força/calistenia por semana",
+                min_value=3,
+                max_value=5,
+                value=3,
+                help="Sessões curtas (30-40min) de força funcional e core. Mantemos mínimo de 3x/sem.",
+                key="strength_sessions_703",
+            )
+        )
+
         prefers_two_bricks = st.checkbox(
             "Prefiro 2 bricks por semana quando possível",
             value=False,
@@ -6132,6 +6156,7 @@ def render_703_methods_tab(user_id: str):
                 swim_sessions_per_week=int(swim_sessions),
                 bike_sessions_per_week=int(bike_sessions),
                 run_sessions_per_week=int(run_sessions),
+                strength_sessions_per_week=strength_sessions_703,
                 athlete_level=athlete_level,
                 target_703_time_hours=float(target_time) if target_time else None,
                 prefers_two_bricks=bool(prefers_two_bricks),
