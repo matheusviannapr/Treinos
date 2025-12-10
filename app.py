@@ -55,6 +55,7 @@ from streamlit_calendar import calendar as st_calendar  # pip install streamlit-
 import db
 import triplanner_engine
 import marathon_methods
+import tri_methods_703
 import strength
 
 # ----------------------------------------------------------------------------
@@ -5444,6 +5445,126 @@ def marathon_plan_to_trainings(
     return df_out[SCHEMA_COLS], warnings
 
 
+def plan_703_to_trainings(
+    plan_df: pd.DataFrame,
+    user_id: str,
+    preferences: dict | None = None,
+    pace_context: dict | None = None,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Converte o DataFrame de métodos 70.3 para o formato do calendário."""
+
+    if plan_df is None or plan_df.empty or "date" not in plan_df.columns:
+        return pd.DataFrame(columns=SCHEMA_COLS), []
+
+    df = plan_df.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    df = df.dropna(subset=["date"])
+    if df.empty:
+        return pd.DataFrame(columns=SCHEMA_COLS), []
+
+    modality_map = {
+        "swim": "Natação",
+        "bike": "Ciclismo",
+        "run": "Corrida",
+        "strength": "Força/Calistenia",
+        "brick": "Brick",
+        "rest": "Descanso",
+    }
+
+    level = st.session_state.get("level_703", "intermediario")
+    now_iso = datetime.now().isoformat(timespec="seconds")
+    records: list[dict] = []
+    for _, row in df.iterrows():
+        day_date = row["date"]
+        method = str(row.get("method", "70.3"))
+        sport = str(row.get("sport", "")).lower()
+        modality = modality_map.get(sport, "Corrida" if row.get("distance_km", 0) else "Descanso")
+
+        distance = float(row.get("distance_km", 0.0) or 0.0)
+        duration_min = float(row.get("duration_min", 0.0) or 0.0)
+        if distance <= 0 and duration_min > 0:
+            speed_lookup = {
+                "Natação": tri_methods_703.SWIM_SPEED_KMH_BY_LEVEL,
+                "Ciclismo": tri_methods_703.BIKE_SPEED_KMH_BY_LEVEL,
+                "Corrida": tri_methods_703.RUN_SPEED_KMH_BY_LEVEL,
+            }
+            speed_table = speed_lookup.get(modality)
+            if speed_table:
+                distance = round((duration_min / 60.0) * speed_table.get(level, list(speed_table.values())[0]), 2)
+
+        unidade = "km" if modality != "Força/Calistenia" else "min"
+        volume = round(distance if unidade == "km" else duration_min, 1)
+
+        intensity = str(row.get("intensity_zone", ""))
+        descr = str(row.get("description", "")).strip()
+        detail_parts = [f"Método {method}"]
+        if intensity:
+            detail_parts.append(f"Intensidade: {intensity}")
+        if descr:
+            detail_parts.append(descr)
+        detalhamento = " | ".join(detail_parts)
+
+        week_start = monday_of_week(day_date)
+        records.append(
+            {
+                "UserID": user_id,
+                "UID": "",
+                "Data": day_date,
+                "Start": "",
+                "End": "",
+                "Modalidade": modality,
+                "Tipo de Treino": row.get("session_label", "Sessão"),
+                "Volume": volume,
+                "Unidade": unidade,
+                "RPE": 0.0,
+                "Detalhamento": detalhamento,
+                "TempoEstimadoMin": duration_min,
+                "Observações": "",
+                "Status": "Planejado",
+                "adj": 0.0,
+                "AdjAppliedAt": "",
+                "ChangeLog": "",
+                "LastEditedAt": now_iso,
+                "WeekStart": week_start,
+                "Fase": row.get("key_focus", ""),
+                "TSS": 0.0,
+                "IF": 0.0,
+                "ATL": 0.0,
+                "CTL": 0.0,
+                "TSB": 0.0,
+                "StravaID": "",
+                "StravaURL": "",
+                "DuracaoRealMin": 0.0,
+                "DistanciaReal": 0.0,
+            }
+        )
+
+    if not records:
+        return pd.DataFrame(columns=SCHEMA_COLS), []
+
+    df_out = pd.DataFrame(records)
+    warnings: list[str] = []
+    for week_start, idxs in df_out.groupby("WeekStart").groups.items():
+        week_mask = df_out.index.isin(idxs)
+        week_slots = get_week_availability(user_id, week_start)
+        use_availability = bool(week_slots)
+        week_df, remaining_slots, warn_week = assign_times_to_week(
+            df_out.loc[week_mask],
+            week_slots,
+            use_availability=use_availability,
+            preferences=preferences,
+            pace_context=pace_context,
+        )
+        df_out.loc[week_mask, ["Start", "End", "TempoEstimadoMin"]] = week_df[
+            ["Start", "End", "TempoEstimadoMin"]
+        ].values
+        if use_availability:
+            set_week_availability(user_id, week_start, remaining_slots)
+        warnings.extend(warn_week or [])
+
+    return df_out[SCHEMA_COLS], warnings
+
+
 def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None):
     st.subheader("Planejamento semanal do ciclo")
     st.markdown(
@@ -5453,8 +5574,8 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
 
     user_preferences = user_preferences or {}
 
-    tab_multi, tab_marathon = st.tabs([
-        "Plano multiesporte", "Plano de maratona (métodos)"
+    tab_multi, tab_marathon, tab_703 = st.tabs([
+        "Plano multiesporte", "Plano de maratona (métodos)", "Plano 70.3 (métodos)"
     ])
 
     with tab_multi:
@@ -5599,6 +5720,9 @@ def render_cycle_planning_tab(user_id: str, user_preferences: dict | None = None
     with tab_marathon:
         render_marathon_methods_tab(user_id)
 
+    with tab_703:
+        render_703_methods_tab(user_id)
+
 
 def render_marathon_methods_tab(user_id: str):
     st.subheader("Planos de maratona por método")
@@ -5724,6 +5848,17 @@ Ideal se esta é sua primeira maratona, se você está voltando de pausa ou se p
             key="marathon_weekly_days",
         ))
 
+        strength_sessions = int(
+            col_a.slider(
+                "Força/calistenia por semana",
+                min_value=3,
+                max_value=5,
+                value=3,
+                help="Inclui treinos curtos de core/prevenção (30-40min). Mínimo recomendado: 3x/sem.",
+                key="marathon_strength_sessions",
+            )
+        )
+
         runner_level = col_a.selectbox(
             "Nível", ["iniciante", "intermediário", "avançado"], index=1, key="marathon_level",
         )
@@ -5741,6 +5876,7 @@ Ideal se esta é sua primeira maratona, se você está voltando de pausa ou se p
                 base_weekly_km=float(base_weekly_km),
                 target_marathon_pace=float(target_pace),
                 runner_level=runner_level,
+                strength_sessions_per_week=strength_sessions,
             )
             plan_df = marathon_methods.gerar_plano_maratona(method_key, cfg)
             st.session_state["marathon_last_plan"] = plan_df
@@ -5817,6 +5953,289 @@ Ideal se esta é sua primeira maratona, se você está voltando de pausa ou se p
             mime="text/csv",
             use_container_width=True,
             key="download_marathon_plan",
+        )
+    else:
+        st.info("Preencha os campos e gere o plano para visualizar aqui.")
+
+
+def render_703_methods_tab(user_id: str):
+    st.subheader("Planos de 70.3 por método")
+    st.markdown(
+        "Compare três abordagens clássicas e gere uma planilha semanal pronta para natação, bike e corrida."
+    )
+
+    method_options = ["Friel_703", "BarryP_Tri", "SweetSpot_703"]
+    method_labels = {
+        "Friel_703": "Friel 70.3 (periodização clássica)",
+        "BarryP_Tri": "BarryP Tri (corrida muito consistente)",
+        "SweetSpot_703": "Sweet Spot 70.3 (bike forte e bricks)",
+    }
+    method_details = {
+        "Friel_703": {
+            "title": "Friel 70.3 – periodização por fases",
+            "text": """Fases Prep → Base → Build → Peak → Taper.
+• Cresce o long ride até ~3h+ e o long run até ~20 km.
+• Inclui bricks nas fases mais avançadas e semanas de descarga regulares.""",
+        },
+        "BarryP_Tri": {
+            "title": "BarryP Tri – durabilidade na corrida",
+            "text": """Mantém frequência alta de corrida (3 curtas, 2 médias, 1 longa quando possível).
+• Bike com um long ride, um tempo/Z3 e um leve ou brick.
+• Bricks nas fases Build/Peak para consolidar transição.""",
+        },
+        "SweetSpot_703": {
+            "title": "Sweet Spot 70.3 – bike forte e específica",
+            "text": """Estrutura semanal em torno de 2 sessões de sweet spot + long ride.
+• Bricks com corrida pós-bike para acostumar as pernas.
+• Mantém 2–3 nados com técnica, endurance e blocos em ritmo de prova.""",
+        },
+    }
+
+    default_method = st.session_state.get("selected_703_method", method_options[0])
+
+    with st.popover("📚 Escolha o estilo de método para 70.3", use_container_width=True):
+        st.write("Selecione e entenda o foco de cada método antes de gerar o plano.")
+        metodo_key = st.radio(
+            "Método de treinamento:",
+            options=method_options,
+            format_func=lambda k: method_labels.get(k, k.replace("_", " ")), 
+            index=method_options.index(default_method),
+            key="method_703_radio",
+        )
+        st.session_state["selected_703_method"] = metodo_key
+
+        info = method_details.get(metodo_key, {})
+        if info:
+            st.markdown(f"### {info.get('title', metodo_key)}")
+            st.write(info.get("text", ""))
+
+    st.markdown("#### Método para gerar o plano")
+    metodo_key = st.selectbox(
+        "Escolha o método 70.3",
+        method_options,
+        index=method_options.index(st.session_state.get("selected_703_method", default_method)),
+        format_func=lambda k: method_labels.get(k, k.replace("_", " ")),
+        key="method_703_select",
+    )
+    st.session_state["selected_703_method"] = metodo_key
+
+    user_preferences = load_preferences_for_user(user_id)
+
+    default_race_date = date.today() + timedelta(days=140)
+    with st.form("plan_703_form"):
+        col_a, col_b, col_c = st.columns(3)
+        race_date = col_a.date_input(
+            "Data da prova 70.3",
+            value=st.session_state.get("race_date_703", default_race_date),
+            key="race_date_703",
+        )
+        available_hours = col_b.number_input(
+            "Horas disponíveis/sem",
+            min_value=5.0,
+            max_value=20.0,
+            value=10.0,
+            step=0.5,
+            help="Inclua força/mobilidade se fizer parte da rotina.",
+            key="hours_703",
+        )
+        athlete_level = col_c.selectbox(
+            "Nível",
+            ["iniciante", "intermediario", "avancado"],
+            index=1,
+            key="level_703",
+        )
+
+        col_d, col_e, col_f = st.columns(3)
+        long_run = col_d.number_input(
+            "Longão de corrida recente (km)",
+            min_value=8.0,
+            max_value=35.0,
+            value=16.0,
+            step=1.0,
+            key="long_run_703",
+        )
+        long_ride = col_e.number_input(
+            "Longão de bike recente (km)",
+            min_value=40.0,
+            max_value=200.0,
+            value=80.0,
+            step=5.0,
+            key="long_ride_703",
+        )
+        weekly_swim = col_f.number_input(
+            "Volume atual de natação (km/sem)",
+            min_value=2.0,
+            max_value=10.0,
+            value=4.0,
+            step=0.5,
+            key="weekly_swim_703",
+        )
+
+        col_g, col_h, col_i = st.columns(3)
+        weekly_bike = col_g.number_input(
+            "Volume atual de bike (km/sem)",
+            min_value=60.0,
+            max_value=350.0,
+            value=140.0,
+            step=5.0,
+            key="weekly_bike_703",
+        )
+        weekly_run = col_h.number_input(
+            "Volume atual de corrida (km/sem)",
+            min_value=15.0,
+            max_value=120.0,
+            value=40.0,
+            step=1.0,
+            key="weekly_run_703",
+        )
+        target_time = col_i.number_input(
+            "Tempo alvo (h) opcional",
+            min_value=4.5,
+            max_value=9.5,
+            value=6.0,
+            step=0.25,
+            help="Use apenas se quiser um alvo aproximado para contexto.",
+            key="target_time_703",
+        )
+
+        col_j, col_k, col_l = st.columns(3)
+        swim_sessions = col_j.slider(
+            "Nados/sem",
+            min_value=2,
+            max_value=4,
+            value=3,
+            key="swim_sessions_703",
+        )
+        bike_sessions = col_k.slider(
+            "Bikes/sem",
+            min_value=2,
+            max_value=4,
+            value=3,
+            key="bike_sessions_703",
+        )
+        run_sessions = col_l.slider(
+            "Corridas/sem",
+            min_value=3,
+            max_value=6,
+            value=5,
+            key="run_sessions_703",
+        )
+
+        col_m, _ = st.columns(2)
+        strength_sessions_703 = int(
+            col_m.slider(
+                "Força/calistenia por semana",
+                min_value=3,
+                max_value=5,
+                value=3,
+                help="Sessões curtas (30-40min) de força funcional e core. Mantemos mínimo de 3x/sem.",
+                key="strength_sessions_703",
+            )
+        )
+
+        prefers_two_bricks = st.checkbox(
+            "Prefiro 2 bricks por semana quando possível",
+            value=False,
+            key="prefers_two_bricks_703",
+        )
+
+        submit = st.form_submit_button("Gerar plano 70.3", use_container_width=True)
+
+    plan_df = st.session_state.get("plan_703_last_plan")
+
+    if submit:
+        try:
+            cfg = tri_methods_703.Plan70Config(
+                race_date=race_date,
+                current_long_run_km=float(long_run),
+                current_long_ride_km=float(long_ride),
+                current_weekly_swim_km=float(weekly_swim),
+                current_weekly_bike_km=float(weekly_bike),
+                current_weekly_run_km=float(weekly_run),
+                available_hours_per_week=float(available_hours),
+                swim_sessions_per_week=int(swim_sessions),
+                bike_sessions_per_week=int(bike_sessions),
+                run_sessions_per_week=int(run_sessions),
+                strength_sessions_per_week=strength_sessions_703,
+                athlete_level=athlete_level,
+                target_703_time_hours=float(target_time) if target_time else None,
+                prefers_two_bricks=bool(prefers_two_bricks),
+            )
+            plan_df = tri_methods_703.gerar_plano_703(metodo_key, cfg)
+            st.session_state["plan_703_last_plan"] = plan_df
+            st.session_state["plan_703_last_method"] = metodo_key
+            st.success("Plano 70.3 gerado! Revise a estrutura e exporte.")
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"Erro ao gerar o plano: {exc}")
+            plan_df = None
+
+    if plan_df is not None and not plan_df.empty:
+        col1, col2, col3 = st.columns(3)
+        start_date = plan_df["date"].min()
+        end_date = plan_df["date"].max()
+        total_hours = plan_df["duration_min"].sum() / 60
+        col1.metric("Início do ciclo", start_date.strftime("%d/%m/%Y") if hasattr(start_date, "strftime") else start_date)
+        col2.metric("Término", end_date.strftime("%d/%m/%Y") if hasattr(end_date, "strftime") else end_date)
+        col3.metric("Horas previstas", f"{total_hours:.1f} h")
+
+        st.dataframe(
+            plan_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "week": st.column_config.NumberColumn("Semana", format="%d"),
+                "date": st.column_config.DateColumn("Data"),
+                "day_name": "Dia",
+                "sport": "Modalidade",
+                "session_label": "Sessão",
+                "duration_min": st.column_config.NumberColumn("Duração (min)", format="%.0f"),
+                "distance_km": st.column_config.NumberColumn("Distância (km)", format="%.1f"),
+                "intensity_zone": "Intensidade",
+                "key_focus": "Foco",
+                "description": st.column_config.TextColumn("Descrição", width="large"),
+                "method": "Método",
+            },
+            height=520,
+        )
+
+        weekly_hours = plan_df.groupby("week")["duration_min"].sum().reset_index()
+        weekly_hours["duration_h"] = weekly_hours["duration_min"] / 60
+        st.bar_chart(weekly_hours, x="week", y="duration_h")
+
+        if st.button("➕ Incluir plano no calendário", use_container_width=True, key="add_703_to_cal"):
+            pace_ctx = _pace_defaults_from_state()
+            cal_df, time_warnings = plan_703_to_trainings(
+                plan_df, user_id, preferences=user_preferences, pace_context=pace_ctx
+            )
+            if cal_df.empty:
+                st.warning("Não há sessões válidas para incluir no calendário.")
+            else:
+                df_current = st.session_state.get("df", load_all())
+                df_current = df_current.copy()
+                if not df_current.empty:
+                    df_current["Data"] = pd.to_datetime(df_current["Data"], errors="coerce").dt.date
+                start_date = cal_df["Data"].min()
+                end_date = cal_df["Data"].max()
+                mask_replace = (
+                    (df_current.get("UserID") == user_id)
+                    & pd.to_datetime(df_current.get("Data"), errors="coerce").dt.date.between(start_date, end_date)
+                )
+                df_filtered = df_current[~mask_replace].copy()
+                merged = pd.concat([df_filtered, cal_df], ignore_index=True)[SCHEMA_COLS]
+                save_user_df(user_id, merged)
+                canonical_week_df.clear()
+                st.success("Plano incluído no calendário! Ajuste horários ou detalhes se precisar.")
+                if time_warnings:
+                    st.warning("\n".join(time_warnings))
+
+        csv_data = plan_df.to_csv(index=False)
+        st.download_button(
+            "📥 Baixar plano 70.3 em CSV",
+            data=csv_data,
+            file_name=f"plano_{st.session_state.get('plan_703_last_method', metodo_key)}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="download_703_plan",
         )
     else:
         st.info("Preencha os campos e gere o plano para visualizar aqui.")
