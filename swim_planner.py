@@ -271,6 +271,12 @@ def _session_entry(
     }
 
 
+def _session_distance_km(total_meters: int) -> float:
+    """Converts total meters to kilometers rounded to 3 decimals."""
+
+    return round(total_meters / 1000.0, 3)
+
+
 def gerar_plano_swim_css(cfg: PlanSwimConfig) -> pd.DataFrame:
     css_sec = _css_from_cfg(cfg)
     css_pace = _format_pace_min_per_100(css_sec)
@@ -291,18 +297,31 @@ def gerar_plano_swim_css(cfg: PlanSwimConfig) -> pd.DataFrame:
             day_offset = days_template[idx % len(days_template)]
             session_date = week_start + timedelta(days=day_offset)
             distance_km = dist_per_session[idx] if idx < len(dist_per_session) else weekly_km / len(session_plan)
-            description_parts = [warmup_easy(400)]
+            warmup_m = 400
+            cooldown_m = 200
+            drills_m = 0
+            main_m = 0
+            description_parts = [warmup_easy(warmup_m)]
             intensity = "Z2"
             focus = "aerobic_base"
             label = "Técnica"
             if sess_type == "technique":
-                description_parts.append(drills_block(400))
-                description_parts.append(mainset_endurance_ladders(int(distance_km * 1000 * 0.6), css_pace))
+                drills_m = 400
+                main_m = max(int(distance_km * 1000 * 0.6), 800)
+                description_parts.append(drills_block(drills_m))
+                description_parts.append(mainset_endurance_ladders(main_m, css_pace))
                 label = "Technique"
                 intensity = "Z1"
                 focus = "technique"
             elif sess_type == "css_interval":
-                description_parts.append(drills_block(200))
+                drills_m = 200
+                if cfg.athlete_level == "iniciante":
+                    main_m = 14 * 50
+                elif cfg.athlete_level == "avancado":
+                    main_m = 7 * 200
+                else:
+                    main_m = 10 * 100
+                description_parts.append(drills_block(drills_m))
                 description_parts.append(mainset_css_intervals(cfg.athlete_level, css_pace or "CSS"))
                 label = "CSS Main Set"
                 intensity = "CSS"
@@ -320,17 +339,24 @@ def gerar_plano_swim_css(cfg: PlanSwimConfig) -> pd.DataFrame:
                 intensity = "Z3"
                 focus = "css"
             elif sess_type == "threshold":
+                main_m = 10 * 100
                 description_parts.append(mainset_threshold_100s(10, 20, css_pace))
                 label = "Threshold"
                 intensity = "Z4"
                 focus = "threshold"
             elif sess_type == "recovery":
-                description_parts.append(drills_block(200))
+                drills_m = 200
+                main_m = 8 * 50
+                description_parts.append(drills_block(drills_m))
                 description_parts.append("Série principal: 8x50 Z1/Z2 concentrando na técnica.")
                 label = "Recovery/Skills"
                 intensity = "Z1"
                 focus = "recovery"
-            description_parts.append(cooldown_easy(200))
+            if main_m == 0:
+                main_m = max(int(distance_km * 1000 * 0.7), 600)
+            total_m = warmup_m + drills_m + main_m + cooldown_m
+            distance_km = _session_distance_km(total_m)
+            description_parts.append(cooldown_easy(cooldown_m))
             description_parts.append("Nota técnica: alongar braçada, manter cotovelo alto.")
             desc = " ".join(description_parts)
             rows.append(
@@ -368,12 +394,18 @@ def gerar_plano_swim_base(cfg: PlanSwimConfig) -> pd.DataFrame:
             day_offset = days_template[idx % len(days_template)]
             session_date = week_start + timedelta(days=day_offset)
             distance_km = dist_per_session[idx]
-            description_parts = [warmup_easy(300)]
+            warmup_m = 300
+            cooldown_m = 200
+            drills_m = 0
+            main_m = 0
+            description_parts = [warmup_easy(warmup_m)]
             intensity = "Z2"
             focus = "aerobic_base"
             label = "Base"
             if sess_type.startswith("technique"):
-                description_parts.append(drills_block(500))
+                drills_m = 500
+                main_m = 12 * 50 + 8 * 25
+                description_parts.append(drills_block(drills_m))
                 description_parts.append("Série principal: 12x50 (25 drill/25 nado) + 8x25 scull, respiração bilateral.")
                 intensity = "Z1"
                 focus = "technique"
@@ -383,6 +415,7 @@ def gerar_plano_swim_base(cfg: PlanSwimConfig) -> pd.DataFrame:
                 description_parts.append(f"Contínuo: 1x{main_m}m Z2 com respiração controlada.")
                 label = "Endurance"
             elif sess_type == "aerobic":
+                main_m = 8 * 200
                 description_parts.append("Série principal: 8x200 Z2 (20s) mantendo braçada estável.")
                 label = "Aeróbio Intervalado"
             elif sess_type == "long_continuous":
@@ -390,6 +423,7 @@ def gerar_plano_swim_base(cfg: PlanSwimConfig) -> pd.DataFrame:
                 description_parts.append(f"Contínuo longo: 1x{main_m}m Z2, foco em deslize.")
                 label = "Contínuo Longo"
             elif sess_type == "recovery":
+                main_m = 6 * 100
                 description_parts.append("Série principal: 6x100 Z1/Z2, saindo a cada 2'30\".")
                 intensity = "Z1"
                 focus = "recovery"
@@ -398,7 +432,11 @@ def gerar_plano_swim_base(cfg: PlanSwimConfig) -> pd.DataFrame:
                 description_parts[-1] = "Série principal: 8x100 Z3 (20s) a cada 2 semanas para estímulo leve."
                 intensity = "Z3"
                 focus = "threshold"
-            description_parts.append(cooldown_easy(200))
+            if main_m == 0:
+                main_m = max(int(distance_km * 1000 * 0.75), 1000)
+            total_m = warmup_m + drills_m + main_m + cooldown_m
+            distance_km = _session_distance_km(total_m)
+            description_parts.append(cooldown_easy(cooldown_m))
             description_parts.append("Nota técnica: manter linha hidrodinâmica e respiração suave.")
             rows.append(
                 _session_entry(
@@ -434,30 +472,43 @@ def gerar_plano_swim_polarized(cfg: PlanSwimConfig) -> pd.DataFrame:
             day_offset = days_template[idx % len(days_template)]
             session_date = week_start + timedelta(days=day_offset)
             distance_km = dist_per_session[idx]
-            description_parts = [warmup_easy(300)]
+            warmup_m = 300
+            cooldown_m = 200
+            drills_m = 0
+            main_m = 0
+            description_parts = [warmup_easy(warmup_m)]
             if sess_type == "hard":
                 if wk >= total_weeks - cfg.taper_weeks:
+                    main_m = 6 * 50
                     description_parts.append("Série principal: 6x50 forte (15s) para acordar, sem acumular fadiga.")
                     intensity = "Z4"
                     focus = "threshold"
                     label = "Prime"
                 elif wk % 2 == 0:
+                    main_m = 12 * 100
                     description_parts.append(mainset_threshold_100s(12, 20, css_pace))
                     intensity = "Z4"
                     focus = "threshold"
                     label = "Threshold"
                 else:
+                    main_m = 20 * 50
                     description_parts.append("Série principal: 20x50 Z5 (15-20s) mantendo técnica sob alta cadência.")
                     intensity = "Z5"
                     focus = "threshold"
                     label = "VO2"
             else:
-                description_parts.append(drills_block(300))
-                description_parts.append(mainset_endurance_ladders(int(distance_km * 1000 * 0.7), css_pace))
+                drills_m = 300
+                main_m = max(int(distance_km * 1000 * 0.7), 1000)
+                description_parts.append(drills_block(drills_m))
+                description_parts.append(mainset_endurance_ladders(main_m, css_pace))
                 intensity = "Z2"
                 focus = "aerobic_base"
                 label = "Easy/Drills"
-            description_parts.append(cooldown_easy(200))
+            if main_m == 0:
+                main_m = max(int(distance_km * 1000 * 0.75), 800)
+            total_m = warmup_m + drills_m + main_m + cooldown_m
+            distance_km = _session_distance_km(total_m)
+            description_parts.append(cooldown_easy(cooldown_m))
             description_parts.append("Nota técnica: manter cotovelo alto mesmo em tiros fortes.")
             rows.append(
                 _session_entry(
@@ -493,12 +544,18 @@ def gerar_plano_swim_openwater(cfg: PlanSwimConfig) -> pd.DataFrame:
             day_offset = days_template[idx % len(days_template)]
             session_date = week_start + timedelta(days=day_offset)
             distance_km = dist_per_session[idx]
-            description_parts = [warmup_easy(400)]
+            warmup_m = 400
+            cooldown_m = 200
+            drills_m = 0
+            main_m = 0
+            description_parts = [warmup_easy(warmup_m)]
             intensity = "Z2"
             focus = "openwater"
             label = "Open Water Skills"
             if sess_type == "skills":
-                description_parts.append(drills_block(300))
+                drills_m = 300
+                main_m = 10 * 100
+                description_parts.append(drills_block(drills_m))
                 description_parts.append("Série principal: 10x100 sem pegar parede, respiração bilateral, sighting a cada 8 braçadas.")
             elif sess_type == "ow_long":
                 main_m = max(int(distance_km * 1000 * 0.85), 2000)
@@ -506,20 +563,27 @@ def gerar_plano_swim_openwater(cfg: PlanSwimConfig) -> pd.DataFrame:
                 label = "Endurance Continuous"
                 focus = "race_specific"
             elif sess_type == "tempo":
+                main_m = 3 * 1000
                 description_parts.append(f"Série principal: 3x1000 (45s) ritmo de prova ({css_pace or 'Z3'}), sighting no último 200.")
                 label = "Race Tempo"
                 focus = "race_specific"
             elif sess_type == "start_set":
+                main_m = 10 * 50 + 1500
                 description_parts.append("Largada: 10x50 forte (20s) + 1x1500 steady simulando prova com poucas viradas.")
                 label = "Start + Settle"
                 intensity = "Z3"
                 focus = "race_specific"
             elif sess_type == "recovery":
+                main_m = 8 * 75
                 description_parts.append("Série principal: 8x75 Z1/Z2 com 15s, focar navegação suave.")
                 label = "Recovery"
                 intensity = "Z1"
                 focus = "recovery"
-            description_parts.append(cooldown_easy(200))
+            if main_m == 0:
+                main_m = max(int(distance_km * 1000 * 0.8), 1200)
+            total_m = warmup_m + drills_m + main_m + cooldown_m
+            distance_km = _session_distance_km(total_m)
+            description_parts.append(cooldown_easy(cooldown_m))
             description_parts.append("Nota técnica: simular águas abertas (sighting, sem parede).")
             rows.append(
                 _session_entry(
