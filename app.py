@@ -58,6 +58,7 @@ import marathon_methods
 import tri_methods_703
 import tri_methods_full
 import strength
+import swim_planner
 
 # ----------------------------------------------------------------------------
 # Utilitários básicos
@@ -7348,6 +7349,7 @@ def main():
         [
             "📅 Meu Plano",
             "🏁 Ironman Full (métodos)",
+            "🏊 Plano de Natação",
             "📋 Fichas de treino",
             "🗓️ Resumo do Dia",
             "📈 Dashboard",
@@ -8234,6 +8236,122 @@ def main():
     elif menu == "🏁 Ironman Full (métodos)":
         st.header("🏁 Plano Ironman Full (métodos)")
         render_full_methods_tab(user_id)
+
+    elif menu == "🏊 Plano de Natação":
+        st.header("🏊 Plano de Natação — sessões realistas por método")
+
+        method_options = [
+            "CSS_Endurance",
+            "Base_Technique",
+            "Polarized_8020",
+            "OpenWater_Specific",
+        ]
+        method_labels = {
+            "CSS_Endurance": "CSS / T-Pace (endurance)",
+            "Base_Technique": "Base + Técnica",
+            "Polarized_8020": "Polarizado 80/20",
+            "OpenWater_Specific": "Águas Abertas / Ironman",
+        }
+
+        default_swim_method = st.session_state.get("selected_swim_method", method_options[0])
+        metodo_key = st.selectbox(
+            "Método de natação:",
+            method_options,
+            index=method_options.index(default_swim_method),
+            format_func=lambda k: method_labels.get(k, k),
+            key="swim_method_select",
+        )
+        st.session_state["selected_swim_method"] = metodo_key
+
+        default_start = date.today()
+        default_race = date.today() + timedelta(days=70)
+        with st.form("swim_plan_form", clear_on_submit=False):
+            col_a, col_b, col_c = st.columns(3)
+            start_date = col_a.date_input("Início do ciclo", value=default_start, key="swim_start")
+            race_date = col_b.date_input("Data alvo (prova ou marco)", value=default_race, key="swim_race")
+            athlete_level = col_c.selectbox(
+                "Nível do atleta",
+                ["iniciante", "intermediario", "avancado"],
+                key="swim_level",
+            )
+
+            col_d, col_e, col_f = st.columns(3)
+            goal_distance = col_d.selectbox("Prova alvo", ["1500m", "3km", "5km", "10km", "Ironman"], key="swim_goal")
+            pool_length_m = col_e.selectbox("Tamanho da piscina (m)", [25, 50], key="swim_pool_len")
+            sessions_per_week = col_f.slider("Nados por semana", 2, 6, value=3, key="swim_sessions")
+
+            col_g, col_h, col_i = st.columns(3)
+            available_km = col_g.number_input("Volume máximo disponível (km/sem)", 2.0, 20.0, value=8.0, step=0.5, key="swim_available")
+            current_km = col_h.number_input("Volume atual (km/sem)", 1.0, 15.0, value=4.0, step=0.5, key="swim_current")
+            prefer_openwater = col_i.checkbox("Incluir sessão em águas abertas quando possível", value=False, key="swim_ow_pref")
+
+            col_j, col_k, col_l = st.columns(3)
+            t200 = col_j.number_input("Teste 200m (seg)", min_value=0, max_value=600, value=0, step=5, key="swim_t200")
+            t400 = col_k.number_input("Teste 400m (seg)", min_value=0, max_value=1200, value=0, step=5, key="swim_t400")
+            css_direct = col_l.number_input(
+                "CSS direto (seg/100m) opcional",
+                min_value=0,
+                max_value=400,
+                value=0,
+                step=1,
+                help="Use se já souber seu T-Pace/CSS; senão preencha os testes.",
+                key="swim_css_direct",
+            )
+
+            submit_swim = st.form_submit_button("Gerar plano de natação", use_container_width=True)
+
+        plan_df = st.session_state.get("last_swim_plan")
+        if submit_swim:
+            try:
+                cfg = swim_planner.PlanSwimConfig(
+                    start_date=start_date,
+                    race_date=race_date,
+                    athlete_level=athlete_level,
+                    goal_distance=goal_distance,
+                    pool_length_m=int(pool_length_m),
+                    sessions_per_week=int(sessions_per_week),
+                    available_km_per_week=float(available_km),
+                    current_km_per_week=float(current_km),
+                    t200_sec=int(t200) if t200 else None,
+                    t400_sec=int(t400) if t400 else None,
+                    prefer_openwater=bool(prefer_openwater),
+                    css_pace_sec_per_100=float(css_direct) if css_direct else None,
+                )
+                plan_df = swim_planner.gerar_plano_swim(metodo_key, cfg)
+                st.session_state["last_swim_plan"] = plan_df
+                st.success("Plano de natação gerado! Ajuste conforme necessário.")
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Erro ao gerar plano de natação: {exc}")
+                plan_df = None
+
+        if plan_df is not None and not plan_df.empty:
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Semanas", f"{plan_df['week'].max():.0f}")
+            col2.metric("Primeira sessão", str(plan_df["date"].min()))
+            col3.metric("Volume total (km)", f"{plan_df['distance_km'].sum():.1f}")
+
+            st.data_editor(
+                plan_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "week": st.column_config.NumberColumn("Semana", format="%d"),
+                    "date": st.column_config.DateColumn("Data"),
+                    "day_name": "Dia",
+                    "sport": "Modalidade",
+                    "session_label": "Sessão",
+                    "distance_km": st.column_config.NumberColumn("Distância (km)", format="%.2f"),
+                    "duration_min": st.column_config.NumberColumn("Duração (min)", format="%.0f"),
+                    "intensity_zone": "Intensidade",
+                    "key_focus": "Foco",
+                    "description": st.column_config.TextColumn("Descrição", width="large"),
+                    "method": "Método",
+                },
+            )
+
+            weekly_totals = plan_df.groupby("week")["distance_km"].sum().reset_index()
+            weekly_totals.rename(columns={"distance_km": "volume_km"}, inplace=True)
+            st.bar_chart(weekly_totals, x="week", y="volume_km")
 
     # ---------------- RESUMO DO DIA ----------------
     elif menu == "🗓️ Resumo do Dia":
