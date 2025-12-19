@@ -7463,29 +7463,37 @@ def main():
 
     user_preferences = st.session_state.get("user_preferences_cache", load_preferences_for_user(user_id))
 
-    # SIDEBAR
-    st.sidebar.title("TriPlanner 🏃‍♂️ 🚴 🏊")
-    if LOGO_PATH and os.path.exists(LOGO_PATH):
-        st.sidebar.image(LOGO_PATH, use_column_width=True)
-    st.sidebar.markdown(f"👤 **{user_name}**  \n`{user_id}`")
-    if st.sidebar.button("Sair"):
-        logout()
+    # TOP NAVIGATION (replaces sidebar)
+    nav_container = st.container()
+    with nav_container:
+        col_logo, col_user, col_logout = st.columns([1, 3, 1], gap="medium")
+        with col_logo:
+            if LOGO_PATH and os.path.exists(LOGO_PATH):
+                st.image(LOGO_PATH, use_column_width=True)
+            else:
+                st.markdown("### TriPlanner 🏃‍♂️ 🚴 🏊")
+        with col_user:
+            st.markdown(f"👤 **{user_name}**  \n`{user_id}`")
+        with col_logout:
+            if st.button("Sair"):
+                logout()
 
-    menu = st.sidebar.radio(
-        "Navegação",
-        [
-            "📅 Meu Plano",
-            "📋 Fichas de treino",
-            "🗓️ Resumo do Dia",
-            "📈 Dashboard",
-            "🚴 Strava",
-            "⚙️ Configurações",
-            "💬 Suporte/Contato",
-        ],
-        index=0,
-    )
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("Desenvolvido por **Matheus Vianna**")
+        menu = st.radio(
+            "Navegação",
+            [
+                "📅 Meu Plano",
+                "📋 Fichas de treino",
+                "🗓️ Resumo do Dia",
+                "📈 Dashboard",
+                "🚴 Strava",
+                "⚙️ Configurações",
+                "💬 Suporte/Contato",
+            ],
+            index=0,
+            horizontal=True,
+        )
+        st.markdown("---")
+        st.markdown("Desenvolvido por **Matheus Vianna**")
 
     if menu == "📅 Meu Plano":
         st.header("📅 Planejamento Semanal")
