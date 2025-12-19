@@ -7496,6 +7496,7 @@ def main():
 
         menu_items = [
             "📅 Meu Plano",
+            "🧭 Monte minha semana",
             "📋 Fichas de treino",
             "🗓️ Resumo do Dia",
             "📈 Dashboard",
@@ -7520,227 +7521,39 @@ def main():
         st.markdown("Desenvolvido por **Matheus Vianna**")
 
     if menu == "📅 Meu Plano":
-        st.header("📅 Planejamento Semanal")
-        tab_semana, tab_ciclo = st.tabs(["Planeje sua semana", "Plano semanal do ciclo"])
-        with tab_semana:
+        st.header("📅 Meu Plano")
+        st.caption("Seu calendário semanal com ajustes rápidos, horários livres e exportações.")
 
-            off_days_set = set(user_preferences.get("off_days", []))
-            opcoes_agendamento = [
-                "Padrão do app (ignorar horários livres)",
-                "Usar padrão de horários salvo",
-            ]
-            modo_agendamento_default = st.session_state.get(
-                "modo_agendamento_choice", opcoes_agendamento[0]
-            )
+        # 1. Semana atual
+        col1, col2, col3 = st.columns([1, 2, 1])
+        if col1.button("⬅️ Semana anterior"):
+            st.session_state["current_week_start"] -= timedelta(days=7)
+            st.session_state["calendar_snapshot"] = []
+            st.session_state["calendar_forcar_snapshot"] = False
+            st.session_state["selected_training_uid"] = None
+            canonical_week_df.clear()
+            safe_rerun()
+        week_start = st.session_state["current_week_start"]
+        col2.subheader(f"Semana de {week_start.strftime('%d/%m/%Y')}")
+        if col3.button("Semana seguinte ➡️"):
+            st.session_state["current_week_start"] += timedelta(days=7)
+            st.session_state["calendar_snapshot"] = []
+            st.session_state["calendar_forcar_snapshot"] = False
+            st.session_state["selected_training_uid"] = None
+            canonical_week_df.clear()
+            safe_rerun()
 
-            generate_week_clicked = False
-            with st.popover(
-                "⚙️ Parâmetros de prescrição e metas semanais", width="stretch"
-            ):
-                st.markdown(
-                    "Defina ritmos de referência, sessões e dias preferidos para gerar a semana e o ciclo já corrigidos."
-                )
+        if st.session_state.get("pending_clear_week") not in (None, week_start):
+            st.session_state["pending_clear_week"] = None
 
-                st.markdown("**Parâmetros de prescrição**")
-                col_p1, col_p2, col_p3 = st.columns(3, gap="medium")
-                paces = {
-                    "run_pace_min_per_km": col_p1.number_input(
-                        "Corrida Z2 (min/km)",
-                        value=float(st.session_state.get("run_pace_min_per_km", 5.0)),
-                        min_value=3.0,
-                        max_value=10.0,
-                        step=0.1,
-                        format="%.1f",
-                        key="run_pace_min_per_km",
-                        help="Informe o pace confortável/Z2 (ex.: 6.0 = 6:00/km)",
-                    ),
-                    "swim_sec_per_100m": col_p2.number_input(
-                        "Natação (seg/100m)",
-                        value=int(st.session_state.get("swim_sec_per_100m", 110)),
-                        min_value=60,
-                        max_value=200,
-                        step=5,
-                        key="swim_sec_per_100m",
-                    ),
-                    "bike_kmh": col_p3.number_input(
-                        "Ciclismo (km/h)",
-                        value=float(st.session_state.get("bike_kmh", 32.0)),
-                        min_value=15.0,
-                        max_value=50.0,
-                        step=0.5,
-                        format="%.1f",
-                        key="bike_kmh",
-                    ),
-                }
+        week_df_raw = week_slice(df, week_start)
+        if week_df_raw.empty:
+            week_df_raw = default_week_df(week_start, user_id)
 
-                st.markdown("**Metas semanais (volume, sessões e dias preferidos)**")
-                weekly_targets = {}
-                sessions_per_mod = {}
-                cols_mod = st.columns(len(MODALIDADES), gap="medium")
-                cols_sess = st.columns(len(MODALIDADES), gap="medium")
+        week_slots = get_week_availability(user_id, week_start)
 
-                dias_semana_options = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4, "Sáb": 5, "Dom": 6}
-                default_days = {
-                    "Corrida": [2, 4, 6],
-                    "Ciclismo": [1, 3, 5],
-                    "Natação": [0, 2],
-                    "Força/Calistenia": [1, 4],
-                    "Mobilidade": [0, 6],
-                }
-
-                for i, mod in enumerate(MODALIDADES):
-                    unit = UNITS_ALLOWED[mod]
-                    default_volume = SUPPORT_WORK_DEFAULTS.get(mod, 0.0)
-
-                    weekly_targets[mod] = cols_mod[i].number_input(
-                        f"{mod} ({unit})/sem",
-                        value=float(st.session_state.get(f"target_{mod}", default_volume)),
-                        min_value=0.0,
-                        step=_unit_step(unit),
-                        format="%.1f" if unit == "km" else "%g",
-                        key=f"target_{mod}",
-                    )
-
-                    default_selected = [
-                        abrev
-                        for abrev, idx in dias_semana_options.items()
-                        if idx in default_days.get(mod, []) and idx not in off_days_set
-                    ]
-                    cols_mod[i].multiselect(
-                        f"Dias {mod}",
-                        options=list(dias_semana_options.keys()),
-                        key=f"pref_days_{mod}",
-                        default=default_selected,
-                    )
-
-                    cols_sess[i].selectbox(
-                        f"Treino chave {mod}",
-                        options=[""] + TIPOS_MODALIDADE.get(mod, []),
-                        key=f"key_sess_{mod}",
-                    )
-
-                    default_sessions = 3 if mod in ["Corrida", "Ciclismo"] else 2
-                    sessions_per_mod[mod] = cols_sess[i].number_input(
-                        f"Sessões {mod}",
-                        value=int(st.session_state.get(f"sess_{mod}", default_sessions)),
-                        min_value=0,
-                        max_value=5,
-                        step=1,
-                        key=f"sess_{mod}",
-                    )
-
-                st.caption("Essas metas também alimentam a geração de ciclo direto no calendário.")
-
-                st.markdown("**Como encaixar os treinos no horário?**")
-                modo_agendamento = st.radio(
-                    "Opção de agendamento",
-                    opcoes_agendamento,
-                    index=opcoes_agendamento.index(modo_agendamento_default)
-                    if modo_agendamento_default in opcoes_agendamento
-                    else 0,
-                    horizontal=True,
-                    key="modo_agendamento_radio",
-                )
-                st.session_state["modo_agendamento_choice"] = modo_agendamento
-
-                generate_week_clicked = st.button(
-                    "📆 Gerar Semana Automática",
-                    key="btn_generate_week",
-                )
-
-            st.markdown("---")
-
-            # 3. Semana atual
-            col1, col2, col3 = st.columns([1, 2, 1])
-            if col1.button("⬅️ Semana anterior"):
-                st.session_state["current_week_start"] -= timedelta(days=7)
-                st.session_state["calendar_snapshot"] = []
-                st.session_state["calendar_forcar_snapshot"] = False
-                st.session_state["selected_training_uid"] = None
-                canonical_week_df.clear()
-                safe_rerun()
-            week_start = st.session_state["current_week_start"]
-            col2.subheader(f"Semana de {week_start.strftime('%d/%m/%Y')}")
-            if col3.button("Semana seguinte ➡️"):
-                st.session_state["current_week_start"] += timedelta(days=7)
-                st.session_state["calendar_snapshot"] = []
-                st.session_state["calendar_forcar_snapshot"] = False
-                st.session_state["selected_training_uid"] = None
-                canonical_week_df.clear()
-                safe_rerun()
-
-            if st.session_state.get("pending_clear_week") not in (None, week_start):
-                st.session_state["pending_clear_week"] = None
-
-            week_df_raw = week_slice(df, week_start)
-            if week_df_raw.empty:
-                week_df_raw = default_week_df(week_start, user_id)
-    
-            week_slots = get_week_availability(user_id, week_start)
-    
-            # Gerar semana automática
-            if generate_week_clicked:
-                dias_map = dias_semana_options
-                off_days_set = set(user_preferences.get("off_days", []))
-                current_preferred_days = {}
-                for mod in MODALIDADES:
-                    selected_labels = st.session_state.get(f"pref_days_{mod}", [])
-                    selected = [dias_map[d] for d in selected_labels if d in dias_map]
-                    filtered = [d for d in selected if d not in off_days_set]
-                    if not filtered:
-                        filtered = [idx for idx in dias_map.values() if idx not in off_days_set]
-                    current_preferred_days[mod] = filtered
-                key_sessions = {mod: st.session_state.get(f"key_sess_{mod}", "") for mod in MODALIDADES}
-
-                weekly_targets = _ensure_support_work(weekly_targets, sessions_per_mod)
-
-                new_week_df = distribute_week_by_targets(
-                    week_start,
-                    weekly_targets,
-                    sessions_per_mod,
-                    key_sessions,
-                    paces,
-                    current_preferred_days,
-                    user_id,
-                    off_days=user_preferences.get("off_days"),
-                )
-    
-                use_saved_pattern = modo_agendamento == opcoes_agendamento[1]
-                pattern = load_timepattern_for_user(user_id) if use_saved_pattern else None
-                warnings = []
-
-                if use_saved_pattern and not pattern:
-                    st.warning(
-                        "Nenhum padrão de horários salvo ainda. Usando lógica padrão do app."
-                    )
-
-                if pattern:
-                    new_week_df = apply_time_pattern_to_week(new_week_df, pattern)
-                else:
-                    new_week_df, _updated_slots, warnings = assign_times_to_week(
-                        new_week_df,
-                        week_slots,
-                        use_availability=False,
-                        preferences=user_preferences,
-                        pace_context=paces,
-                    )
-
-                for warn in warnings:
-                    st.warning(warn)
-    
-                user_df = st.session_state["df"]
-                others = user_df[user_df["WeekStart"] != week_start]
-                user_df_new = pd.concat([others, new_week_df], ignore_index=True)
-                save_user_df(user_id, user_df_new)
-                st.success("Semana gerada e salva!")
-                canonical_week_df.clear()
-                safe_rerun()
-    
-            # Recarrega df do usuário após geração
-            df = st.session_state["df"]
-
-            # Calendário: usa df canônico (MESMO dataset do PDF/ICS)
-            st.subheader("Calendário da Semana")
+        # Calendário: usa df canônico (MESMO dataset do PDF/ICS)
+        st.subheader("Calendário da Semana")
 
             selected_uid = st.session_state.get("selected_training_uid")
             detail_placeholder = None
@@ -8387,7 +8200,241 @@ def main():
         else:
             st.info("Nenhum treino (além de descanso) nesta semana.")
 
-        with tab_ciclo:
+    elif menu == "🧭 Monte minha semana":
+        st.header("🧭 Monte minha semana")
+        st.caption(
+            "Defina volumes semanais ou utilize os métodos prontos para gerar a semana desejada."
+        )
+        tab_volume, tab_metodos = st.tabs(
+            ["Por volume semanal", "Métodos do app"]
+        )
+
+        with tab_volume:
+            off_days_set = set(user_preferences.get("off_days", []))
+            opcoes_agendamento = [
+                "Padrão do app (ignorar horários livres)",
+                "Usar padrão de horários salvo",
+            ]
+            modo_agendamento_default = st.session_state.get(
+                "modo_agendamento_choice", opcoes_agendamento[0]
+            )
+
+            generate_week_clicked = False
+            with st.popover(
+                "⚙️ Parâmetros de prescrição e metas semanais", width="stretch"
+            ):
+                st.markdown(
+                    "Defina ritmos de referência, sessões e dias preferidos para gerar a semana."
+                )
+
+                st.markdown("**Parâmetros de prescrição**")
+                col_p1, col_p2, col_p3 = st.columns(3, gap="medium")
+                paces = {
+                    "run_pace_min_per_km": col_p1.number_input(
+                        "Corrida Z2 (min/km)",
+                        value=float(st.session_state.get("run_pace_min_per_km", 5.0)),
+                        min_value=3.0,
+                        max_value=10.0,
+                        step=0.1,
+                        format="%.1f",
+                        key="run_pace_min_per_km",
+                        help="Informe o pace confortável/Z2 (ex.: 6.0 = 6:00/km)",
+                    ),
+                    "swim_sec_per_100m": col_p2.number_input(
+                        "Natação (seg/100m)",
+                        value=int(st.session_state.get("swim_sec_per_100m", 110)),
+                        min_value=60,
+                        max_value=200,
+                        step=5,
+                        key="swim_sec_per_100m",
+                    ),
+                    "bike_kmh": col_p3.number_input(
+                        "Ciclismo (km/h)",
+                        value=float(st.session_state.get("bike_kmh", 32.0)),
+                        min_value=15.0,
+                        max_value=50.0,
+                        step=0.5,
+                        format="%.1f",
+                        key="bike_kmh",
+                    ),
+                }
+
+                st.markdown("**Metas semanais (volume, sessões e dias preferidos)**")
+                weekly_targets = {}
+                sessions_per_mod = {}
+                cols_mod = st.columns(len(MODALIDADES), gap="medium")
+                cols_sess = st.columns(len(MODALIDADES), gap="medium")
+
+                dias_semana_options = {
+                    "Seg": 0,
+                    "Ter": 1,
+                    "Qua": 2,
+                    "Qui": 3,
+                    "Sex": 4,
+                    "Sáb": 5,
+                    "Dom": 6,
+                }
+                default_days = {
+                    "Corrida": [2, 4, 6],
+                    "Ciclismo": [1, 3, 5],
+                    "Natação": [0, 2],
+                    "Força/Calistenia": [1, 4],
+                    "Mobilidade": [0, 6],
+                }
+
+                for i, mod in enumerate(MODALIDADES):
+                    unit = UNITS_ALLOWED[mod]
+                    default_volume = SUPPORT_WORK_DEFAULTS.get(mod, 0.0)
+
+                    weekly_targets[mod] = cols_mod[i].number_input(
+                        f"{mod} ({unit})/sem",
+                        value=float(st.session_state.get(f"target_{mod}", default_volume)),
+                        min_value=0.0,
+                        step=_unit_step(unit),
+                        format="%.1f" if unit == "km" else "%g",
+                        key=f"target_{mod}",
+                    )
+
+                    default_selected = [
+                        abrev
+                        for abrev, idx in dias_semana_options.items()
+                        if idx in default_days.get(mod, []) and idx not in off_days_set
+                    ]
+                    cols_mod[i].multiselect(
+                        f"Dias {mod}",
+                        options=list(dias_semana_options.keys()),
+                        key=f"pref_days_{mod}",
+                        default=default_selected,
+                    )
+
+                    cols_sess[i].selectbox(
+                        f"Treino chave {mod}",
+                        options=[""] + TIPOS_MODALIDADE.get(mod, []),
+                        key=f"key_sess_{mod}",
+                    )
+
+                    default_sessions = 3 if mod in ["Corrida", "Ciclismo"] else 2
+                    sessions_per_mod[mod] = cols_sess[i].number_input(
+                        f"Sessões {mod}",
+                        value=int(st.session_state.get(f"sess_{mod}", default_sessions)),
+                        min_value=0,
+                        max_value=5,
+                        step=1,
+                        key=f"sess_{mod}",
+                    )
+
+                st.caption("Essas metas também alimentam a geração de ciclo direto no calendário.")
+
+                st.markdown("**Como encaixar os treinos no horário?**")
+                modo_agendamento = st.radio(
+                    "Opção de agendamento",
+                    opcoes_agendamento,
+                    index=opcoes_agendamento.index(modo_agendamento_default)
+                    if modo_agendamento_default in opcoes_agendamento
+                    else 0,
+                    horizontal=True,
+                    key="modo_agendamento_radio",
+                )
+                st.session_state["modo_agendamento_choice"] = modo_agendamento
+
+                generate_week_clicked = st.button(
+                    "📆 Gerar Semana Automática",
+                    key="btn_generate_week",
+                )
+
+            st.markdown("---")
+
+            col1, col2, col3 = st.columns([1, 2, 1])
+            if col1.button("⬅️ Semana anterior", key="week_prev_volume"):
+                st.session_state["current_week_start"] -= timedelta(days=7)
+                st.session_state["calendar_snapshot"] = []
+                st.session_state["calendar_forcar_snapshot"] = False
+                st.session_state["selected_training_uid"] = None
+                canonical_week_df.clear()
+                safe_rerun()
+            week_start = st.session_state["current_week_start"]
+            col2.subheader(f"Semana de {week_start.strftime('%d/%m/%Y')}")
+            if col3.button("Semana seguinte ➡️", key="week_next_volume"):
+                st.session_state["current_week_start"] += timedelta(days=7)
+                st.session_state["calendar_snapshot"] = []
+                st.session_state["calendar_forcar_snapshot"] = False
+                st.session_state["selected_training_uid"] = None
+                canonical_week_df.clear()
+                safe_rerun()
+
+            week_df_raw = week_slice(df, week_start)
+            if week_df_raw.empty:
+                week_df_raw = default_week_df(week_start, user_id)
+
+            week_slots = get_week_availability(user_id, week_start)
+
+            if generate_week_clicked:
+                dias_map = dias_semana_options
+                off_days_set = set(user_preferences.get("off_days", []))
+                current_preferred_days = {}
+                for mod in MODALIDADES:
+                    selected_labels = st.session_state.get(f"pref_days_{mod}", [])
+                    selected = [dias_map[d] for d in selected_labels if d in dias_map]
+                    filtered = [d for d in selected if d not in off_days_set]
+                    if not filtered:
+                        filtered = [
+                            idx for idx in dias_map.values() if idx not in off_days_set
+                        ]
+                    current_preferred_days[mod] = filtered
+                key_sessions = {
+                    mod: st.session_state.get(f"key_sess_{mod}", "")
+                    for mod in MODALIDADES
+                }
+
+                weekly_targets = _ensure_support_work(weekly_targets, sessions_per_mod)
+
+                new_week_df = distribute_week_by_targets(
+                    week_start,
+                    weekly_targets,
+                    sessions_per_mod,
+                    key_sessions,
+                    paces,
+                    current_preferred_days,
+                    user_id,
+                    off_days=user_preferences.get("off_days"),
+                )
+
+                use_saved_pattern = modo_agendamento == opcoes_agendamento[1]
+                pattern = load_timepattern_for_user(user_id) if use_saved_pattern else None
+                warnings = []
+
+                if use_saved_pattern and not pattern:
+                    st.warning(
+                        "Nenhum padrão de horários salvo ainda. Usando lógica padrão do app."
+                    )
+
+                if pattern:
+                    new_week_df = apply_time_pattern_to_week(new_week_df, pattern)
+                else:
+                    new_week_df, _updated_slots, warnings = assign_times_to_week(
+                        new_week_df,
+                        week_slots,
+                        use_availability=False,
+                        preferences=user_preferences,
+                        pace_context=paces,
+                    )
+
+                for warn in warnings:
+                    st.warning(warn)
+
+                user_df = st.session_state["df"]
+                others = user_df[user_df["WeekStart"] != week_start]
+                user_df_new = pd.concat([others, new_week_df], ignore_index=True)
+                save_user_df(user_id, user_df_new)
+                st.success("Semana gerada e salva! Veja o calendário em 📅 Meu Plano.")
+                canonical_week_df.clear()
+                safe_rerun()
+
+            st.info(
+                "Após gerar ou ajustar os treinos, abra 📅 Meu Plano para visualizar o calendário."
+            )
+
+        with tab_metodos:
             render_cycle_planning_tab(user_id, user_preferences=user_preferences)
 
     # ---------------- RESUMO DO DIA ----------------
