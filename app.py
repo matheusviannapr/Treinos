@@ -604,6 +604,15 @@ def load_css():
         .stButton button *, .stButton button {{
             color: #ffffff !important;
         }}
+        .stButton button[data-testid="baseButton-secondary"] {{
+            background: {surface};
+            border: 1px solid {border};
+            box-shadow: 0 6px 14px rgba(0, 0, 0, 0.12);
+        }}
+        .stButton button[data-testid="baseButton-secondary"] *,
+        .stButton button[data-testid="baseButton-secondary"] {{
+            color: {text_primary} !important;
+        }}
         .stDownloadButton button {{
             background: {primary};
             border-radius: 14px;
@@ -619,10 +628,17 @@ def load_css():
             background: {primary_hover};
             box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
         }}
+        .stButton button[data-testid="baseButton-secondary"]:hover {{
+            background: {surface_soft};
+            box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
+        }}
         .stButton button:active {{
             transform: translateY(0);
             background: {primary_active};
             box-shadow: 0 6px 12px rgba(0, 0, 0, 0.18);
+        }}
+        .stButton button[data-testid="baseButton-secondary"]:active {{
+            background: {surface};
         }}
         .stButton button:disabled {{
             opacity: 0.55;
@@ -7463,17 +7479,22 @@ def main():
 
     user_preferences = st.session_state.get("user_preferences_cache", load_preferences_for_user(user_id))
 
-    # SIDEBAR
-    st.sidebar.title("TriPlanner 🏃‍♂️ 🚴 🏊")
-    if LOGO_PATH and os.path.exists(LOGO_PATH):
-        st.sidebar.image(LOGO_PATH, use_column_width=True)
-    st.sidebar.markdown(f"👤 **{user_name}**  \n`{user_id}`")
-    if st.sidebar.button("Sair"):
-        logout()
+    # TOP NAVIGATION (replaces sidebar)
+    nav_container = st.container()
+    with nav_container:
+        col_logo, col_user, col_logout = st.columns([1, 3, 1], gap="medium")
+        with col_logo:
+            if LOGO_PATH and os.path.exists(LOGO_PATH):
+                st.image(LOGO_PATH, use_column_width=True)
+            else:
+                st.markdown("### TriPlanner 🏃‍♂️ 🚴 🏊")
+        with col_user:
+            st.markdown(f"👤 **{user_name}**  \n`{user_id}`")
+        with col_logout:
+            if st.button("Sair", type="secondary"):
+                logout()
 
-    menu = st.sidebar.radio(
-        "Navegação",
-        [
+        menu_items = [
             "📅 Meu Plano",
             "📋 Fichas de treino",
             "🗓️ Resumo do Dia",
@@ -7481,11 +7502,24 @@ def main():
             "🚴 Strava",
             "⚙️ Configurações",
             "💬 Suporte/Contato",
-        ],
-        index=0,
-    )
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("Desenvolvido por **Matheus Vianna**")
+        ]
+        if "top_nav_choice" not in st.session_state:
+            st.session_state["top_nav_choice"] = menu_items[0]
+
+        nav_columns = st.columns(len(menu_items), gap="small")
+        for idx, label in enumerate(menu_items):
+            is_active = st.session_state["top_nav_choice"] == label
+            if nav_columns[idx].button(
+                label,
+                key=f"nav_{idx}",
+                type="primary" if is_active else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state["top_nav_choice"] = label
+
+        menu = st.session_state["top_nav_choice"]
+        st.markdown("---")
+        st.markdown("Desenvolvido por **Matheus Vianna**")
 
     if menu == "📅 Meu Plano":
         st.header("📅 Planejamento Semanal")
