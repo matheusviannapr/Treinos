@@ -8220,9 +8220,8 @@ def main():
             )
 
             generate_week_clicked = False
-            with st.popover(
-                "⚙️ Parâmetros de prescrição e metas semanais", width="stretch"
-            ):
+            st.markdown("### ⚙️ Parâmetros de prescrição e metas semanais")
+            with st.container(border=True):
                 st.markdown(
                     "Defina ritmos de referência, sessões e dias preferidos para gerar a semana."
                 )
