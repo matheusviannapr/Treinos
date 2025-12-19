@@ -405,19 +405,20 @@ def suggestion_to_exercicios(exercicios_raw: List[Dict[str, Any]]) -> List[Dict[
     return exercicios
 
 
-def apply_suggestion_to_block(
-    fichas: List[Dict[str, Any]], bloco: str, exercicios: List[Dict[str, Any]]
+def apply_suggestion_to_sheet(
+    fichas: List[Dict[str, Any]],
+    nome_ficha: str,
+    exercicios: List[Dict[str, Any]],
+    identificador: Optional[str] = None,
 ) -> tuple[Dict[str, Any], bool]:
-    identificador = str(bloco).upper()
-    target = next(
-        (f for f in fichas if str(f.get("identificador", "")).upper() == identificador), None
-    )
+    nome_ficha = nome_ficha.strip()
+    target = get_ficha_by_nome(fichas, nome_ficha)
     created = False
     if not target:
         target = {
             "id": str(uuid.uuid4()),
-            "nome_ficha": f"Ficha {identificador}",
-            "identificador": identificador,
+            "nome_ficha": nome_ficha,
+            "identificador": identificador or "",
             "exercicios": [],
         }
         fichas.append(target)
@@ -484,43 +485,66 @@ def main() -> None:
     if table_key not in st.session_state["tables"]:
         st.session_state["tables"][table_key] = df
 
-    st.markdown("### Treinos sugeridos para blocos A, B ou C")
-    st.caption("Escolha um dos modelos prontos e envie diretamente para a ficha do bloco escolhido.")
-    sugestoes_nomes = [s.get("nome") for s in SUGGESTED_TREINOS]
-    sugestao_selecionada = st.selectbox(
-        "Veja os treinos sugeridos", sugestoes_nomes, key=f"sugestoes_select_{ficha['id']}"
-    )
-    sugestao = next((s for s in SUGGESTED_TREINOS if s.get("nome") == sugestao_selecionada), None)
-    sugestao_exercicios = suggestion_to_exercicios(sugestao.get("exercicios", [])) if sugestao else []
-    sugestao_df = pd.DataFrame(sugestao_exercicios)
-    if not sugestao_df.empty:
-        st.dataframe(
-            sugestao_df.drop(columns=["carga_observacao", "descanso_s"]), use_container_width=True
+    @st.dialog("Sugestões de treino")
+    def suggestion_dialog():
+        st.markdown("### Treinos sugeridos")
+        st.caption("Escolha um modelo pronto e envie diretamente para qualquer ficha.")
+        sugestoes_nomes = [s.get("nome") for s in SUGGESTED_TREINOS]
+        sugestao_selecionada = st.selectbox(
+            "Veja os treinos sugeridos", sugestoes_nomes, key=f"sugestoes_select_{ficha['id']}"
         )
+        sugestao = next(
+            (s for s in SUGGESTED_TREINOS if s.get("nome") == sugestao_selecionada), None
+        )
+        sugestao_exercicios = suggestion_to_exercicios(sugestao.get("exercicios", [])) if sugestao else []
+        sugestao_df = pd.DataFrame(sugestao_exercicios)
+        if not sugestao_df.empty:
+            st.dataframe(
+                sugestao_df.drop(columns=["carga_observacao", "descanso_s"]),
+                use_container_width=True,
+            )
 
-    col_sug_1, col_sug_2 = st.columns(2)
-    with col_sug_1:
-        bloco_destino = st.selectbox(
-            "Enviar para qual bloco?", ["A", "B", "C"], key=f"bloco_destino_{ficha['id']}"
+        destino_opcoes = [f.get("nome_ficha") for f in fichas] + ["Criar nova ficha"]
+        destino_selecionado = st.selectbox(
+            "Enviar para qual ficha?",
+            destino_opcoes,
+            key=f"destino_sugestoes_{ficha['id']}",
         )
-    with col_sug_2:
-        if st.button("Enviar treino sugerido para o bloco", key=f"btn_enviar_sug_{ficha['id']}"):
+        nome_novo = ""
+        identificador_novo = ""
+        if destino_selecionado == "Criar nova ficha":
+            nome_novo = st.text_input("Nome da nova ficha", key=f"novo_nome_{ficha['id']}")
+            identificador_novo = st.text_input(
+                "Identificador opcional (ex.: A, B, Full Body)",
+                key=f"novo_identificador_{ficha['id']}",
+            )
+        nome_destino = nome_novo.strip() if destino_selecionado == "Criar nova ficha" else destino_selecionado
+
+        if st.button("Enviar treino sugerido", key=f"btn_enviar_sug_{ficha['id']}"):
             if not sugestao_exercicios:
                 st.error("Escolha uma sugestão válida para enviar.")
+            elif not nome_destino:
+                st.error("Informe o nome da ficha destino.")
             else:
-                destino_ficha, created = apply_suggestion_to_block(
-                    fichas, bloco_destino, sugestao_exercicios
+                destino_ficha, created = apply_suggestion_to_sheet(
+                    fichas,
+                    nome_destino,
+                    sugestao_exercicios,
+                    identificador=identificador_novo.strip() or None,
                 )
                 if destino_ficha.get("id") == ficha.get("id"):
                     st.session_state["tables"][table_key] = ficha_to_dataframe(destino_ficha)
                 msg_extra = " (ficha criada automaticamente)" if created else ""
                 st.success(
-                    f"{sugestao_selecionada} adicionada à ficha do bloco {bloco_destino}{msg_extra}."
+                    f"{sugestao_selecionada} adicionada à ficha {nome_destino}{msg_extra}."
                 )
                 if destino_ficha.get("id") != ficha.get("id"):
                     st.info(
-                        f"Selecione a ficha {destino_ficha.get('nome_ficha', f'Ficha {bloco_destino}')} na barra lateral para editar ou visualizar."
+                        f"Selecione a ficha {destino_ficha.get('nome_ficha', nome_destino)} na barra lateral para editar ou visualizar."
                     )
+
+    if st.button("Abrir sugestões de treino", key=f"open_sugestoes_{ficha['id']}"):
+        suggestion_dialog()
 
     if st.button("Adicionar exercício"):
         st.session_state["tables"][table_key] = add_empty_row(st.session_state["tables"][table_key])
