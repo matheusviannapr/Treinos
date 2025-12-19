@@ -7500,8 +7500,6 @@ def main():
             "🗓️ Resumo do Dia",
             "📈 Dashboard",
             "🚴 Strava",
-            "⚙️ Configurações",
-            "💬 Suporte/Contato",
         ]
         if "top_nav_choice" not in st.session_state:
             st.session_state["top_nav_choice"] = menu_items[0]
