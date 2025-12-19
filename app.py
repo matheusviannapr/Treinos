@@ -7555,293 +7555,293 @@ def main():
         # Calendário: usa df canônico (MESMO dataset do PDF/ICS)
         st.subheader("Calendário da Semana")
 
-            selected_uid = st.session_state.get("selected_training_uid")
-            detail_placeholder = None
+        selected_uid = st.session_state.get("selected_training_uid")
+        detail_placeholder = None
 
-            if selected_uid:
-                col_cal, col_detail = st.columns([1.8, 1], gap="large")
-                cal_target = col_cal
-                detail_placeholder = col_detail.container()
-            else:
-                cal_target = st.container()
+        if selected_uid:
+            col_cal, col_detail = st.columns([1.8, 1], gap="large")
+            cal_target = col_cal
+            detail_placeholder = col_detail.container()
+        else:
+            cal_target = st.container()
 
-            def _update_detail_panel(uid: Optional[str], *, rerun: bool = False):
-                st.session_state["selected_training_uid"] = uid
-                if rerun:
+        def _update_detail_panel(uid: Optional[str], *, rerun: bool = False):
+            st.session_state["selected_training_uid"] = uid
+            if rerun:
+                safe_rerun()
+
+        week_df_can = canonical_week_df(user_id, week_start)
+
+        def _sanitize_rpe_value(raw_value) -> int:
+            try:
+                val = float(raw_value)
+                if math.isnan(val):
+                    return 0
+                return int(max(0, min(10, round(val))))
+            except Exception:
+                return 0
+
+        events = []
+
+        # Treinos
+        for _, row in week_df_can.iterrows():
+            uid = row["UID"]
+            vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
+
+            mod_display = modality_label(row.get("Modalidade"))
+            title = f"{mod_display} - {row['Tipo de Treino']}"
+            if vol_val > 0:
+                title += f" ({vol_val:g} {row['Unidade']})"
+
+            start_dt = row["StartDT"]
+            end_dt = row["EndDT"]
+
+            color_rgb = MODALITY_COLORS.get(row["Modalidade"])
+            color = "#{:02X}{:02X}{:02X}".format(*color_rgb) if color_rgb else None
+
+            ev = {
+                "id": uid,
+                "title": title,
+                "start": start_dt.isoformat(),
+                "end": end_dt.isoformat(),
+                "extendedProps": {
+                    "uid": uid,
+                    "type": "treino",
+                },
+            }
+            if color:
+                ev["color"] = color
+            events.append(ev)
+
+        # Slots livres
+        for i, s in enumerate(week_slots):
+            events.append({
+                "id": f"free-{i}",
+                "title": "Livre",
+                "start": s["start"].isoformat(),
+                "end": s["end"].isoformat(),
+                "color": "#27AE60",
+                "extendedProps": {
+                    "type": "free",
+                    "slot_index": i,
+                },
+            })
+
+        calendar_height = "900px" if selected_uid else "720px"
+
+        options = {
+            "initialView": "timeGridWeek",
+            "locale": "pt-br",
+            "firstDay": 1,
+            "slotMinTime": "05:00:00",
+            "slotMaxTime": "21:00:00",
+            "allDaySlot": False,
+            "selectable": True,
+            "editable": True,
+            "eventDurationEditable": True,
+            "headerToolbar": {"left": "", "center": "", "right": ""},
+            "height": calendar_height,
+        }
+        options["initialDate"] = week_start.isoformat()
+
+        with cal_target:
+            cal_state = st_calendar(
+                events=events,
+                options=options,
+                key=f"cal_semana_{get_week_key(week_start)}",
+            )
+        if cal_state and "eventsSet" in cal_state:
+            eventos_visuais = cal_state["eventsSet"]["events"]
+            st.session_state["calendar_snapshot"] = eventos_visuais
+
+        if not selected_uid:
+            st.caption(
+                "💡 Clique em um treino para abrir os detalhes lado a lado e depois clique novamente para fechar."
+            )
+
+        with st.popover(
+            "➕ Adicionar treino avulso", use_container_width=True
+        ):
+            st.markdown(
+                "Configure um treino único para incluí-lo diretamente no calendário e nas exportações."
+            )
+
+            with st.form(key=f"form_avulso_{week_start}"):
+                mod_avulso = st.selectbox(
+                    "Modalidade",
+                    options=MODALIDADES,
+                    key=f"mod_avulso_{week_start}",
+                )
+                tipos_disp = TIPOS_MODALIDADE.get(mod_avulso, ["Treino"])
+                tipo_avulso = st.selectbox(
+                    "Tipo de treino",
+                    options=tipos_disp,
+                    key=f"tipo_avulso_{week_start}",
+                )
+
+                data_avulso = st.date_input(
+                    "Data",
+                    value=week_start,
+                    min_value=week_start,
+                    max_value=week_start + timedelta(days=6),
+                    key=f"data_avulso_{week_start}",
+                )
+                hora_avulso = st.time_input(
+                    "Horário de início",
+                    value=time(6, 0),
+                    key=f"hora_avulso_{week_start}",
+                )
+                duracao_avulso = st.number_input(
+                    "Duração (min)",
+                    min_value=15,
+                    max_value=300,
+                    value=DEFAULT_TRAINING_DURATION_MIN,
+                    step=5,
+                    key=f"dur_avulso_{week_start}",
+                )
+
+                unidade = UNITS_ALLOWED.get(mod_avulso, "")
+                volume_avulso = st.number_input(
+                    f"Volume ({unidade})",
+                    min_value=0.0,
+                    value=0.0,
+                    step=_unit_step(unidade),
+                    format="%.1f" if unidade == "km" else "%g",
+                    key=f"vol_avulso_{week_start}",
+                )
+
+                detalhamento_avulso = st.text_area(
+                    "Detalhamento/roteiro", key=f"det_avulso_{week_start}", height=120
+                )
+                obs_avulso = st.text_area(
+                    "Observações rápidas", key=f"obs_avulso_{week_start}", height=80
+                )
+                rpe_avulso = st.slider(
+                    "RPE esperado",
+                    min_value=0,
+                    max_value=10,
+                    value=5,
+                    key=f"rpe_avulso_{week_start}",
+                )
+
+                submitted_avulso = st.form_submit_button("Incluir treino avulso")
+
+                if submitted_avulso:
+                    start_avulso = datetime.combine(data_avulso, hora_avulso)
+                    end_avulso = start_avulso + timedelta(minutes=int(duracao_avulso))
+                    novo_uid = generate_uid(user_id)
+
+                    novo_treino = {
+                        "UserID": user_id,
+                        "UID": novo_uid,
+                        "Data": data_avulso,
+                        "Start": start_avulso.isoformat(),
+                        "End": end_avulso.isoformat(),
+                        "Modalidade": mod_avulso,
+                        "Tipo de Treino": tipo_avulso,
+                        "Volume": float(volume_avulso),
+                        "Unidade": unidade,
+                        "RPE": int(rpe_avulso),
+                        "Detalhamento": detalhamento_avulso,
+                        "TempoEstimadoMin": int(duracao_avulso),
+                        "Observações": obs_avulso,
+                        "Status": "Planejado",
+                        "adj": "",
+                        "AdjAppliedAt": "",
+                        "ChangeLog": json.dumps([], ensure_ascii=False),
+                        "LastEditedAt": datetime.now().isoformat(timespec="seconds"),
+                        "WeekStart": monday_of_week(data_avulso),
+                        "Fase": "",
+                        "TSS": 0.0,
+                        "IF": 0.0,
+                        "ATL": 0.0,
+                        "CTL": 0.0,
+                        "TSB": 0.0,
+                        "StravaID": "",
+                        "StravaURL": "",
+                        "DuracaoRealMin": 0.0,
+                        "DistanciaReal": 0.0,
+                    }
+
+                    df_current = st.session_state.get("df", pd.DataFrame()).copy()
+                    novo_df = pd.DataFrame([novo_treino], columns=SCHEMA_COLS)
+                    df_current = pd.concat([df_current, novo_df], ignore_index=True)
+                    save_user_df(user_id, df_current)
+                    canonical_week_df.clear()
+                    st.toast("Treino avulso incluído no calendário!", icon="✅")
                     safe_rerun()
 
-            week_df_can = canonical_week_df(user_id, week_start)
-
-            def _sanitize_rpe_value(raw_value) -> int:
-                try:
-                    val = float(raw_value)
-                    if math.isnan(val):
-                        return 0
-                    return int(max(0, min(10, round(val))))
-                except Exception:
-                    return 0
-
-            events = []
-
-            # Treinos
-            for _, row in week_df_can.iterrows():
-                uid = row["UID"]
-                vol_val = float(row["Volume"]) if str(row["Volume"]).strip() != "" else 0.0
-
-                mod_display = modality_label(row.get("Modalidade"))
-                title = f"{mod_display} - {row['Tipo de Treino']}"
-                if vol_val > 0:
-                    title += f" ({vol_val:g} {row['Unidade']})"
-
-                start_dt = row["StartDT"]
-                end_dt = row["EndDT"]
-
-                color_rgb = MODALITY_COLORS.get(row["Modalidade"])
-                color = "#{:02X}{:02X}{:02X}".format(*color_rgb) if color_rgb else None
-
-                ev = {
-                    "id": uid,
-                    "title": title,
-                    "start": start_dt.isoformat(),
-                    "end": end_dt.isoformat(),
-                    "extendedProps": {
-                        "uid": uid,
-                        "type": "treino",
-                    },
-                }
-                if color:
-                    ev["color"] = color
-                events.append(ev)
-
-            # Slots livres
-            for i, s in enumerate(week_slots):
-                events.append({
-                    "id": f"free-{i}",
-                    "title": "Livre",
-                    "start": s["start"].isoformat(),
-                    "end": s["end"].isoformat(),
-                    "color": "#27AE60",
-                    "extendedProps": {
-                        "type": "free",
-                        "slot_index": i,
-                    },
-                })
-
-            calendar_height = "900px" if selected_uid else "720px"
-
-            options = {
-                "initialView": "timeGridWeek",
-                "locale": "pt-br",
-                "firstDay": 1,
-                "slotMinTime": "05:00:00",
-                "slotMaxTime": "21:00:00",
-                "allDaySlot": False,
-                "selectable": True,
-                "editable": True,
-                "eventDurationEditable": True,
-                "headerToolbar": {"left": "", "center": "", "right": ""},
-                "height": calendar_height,
-            }
-            options["initialDate"] = week_start.isoformat()
-
-            with cal_target:
-                cal_state = st_calendar(
-                    events=events,
-                    options=options,
-                    key=f"cal_semana_{get_week_key(week_start)}",
-                )
-            if cal_state and "eventsSet" in cal_state:
-                eventos_visuais = cal_state["eventsSet"]["events"]
-                st.session_state["calendar_snapshot"] = eventos_visuais
-
-            if not selected_uid:
-                st.caption(
-                    "💡 Clique em um treino para abrir os detalhes lado a lado e depois clique novamente para fechar."
-                )
-
-            with st.popover(
-                "➕ Adicionar treino avulso", use_container_width=True
-            ):
-                st.markdown(
-                    "Configure um treino único para incluí-lo diretamente no calendário e nas exportações."
-                )
-
-                with st.form(key=f"form_avulso_{week_start}"):
-                    mod_avulso = st.selectbox(
-                        "Modalidade",
-                        options=MODALIDADES,
-                        key=f"mod_avulso_{week_start}",
-                    )
-                    tipos_disp = TIPOS_MODALIDADE.get(mod_avulso, ["Treino"])
-                    tipo_avulso = st.selectbox(
-                        "Tipo de treino",
-                        options=tipos_disp,
-                        key=f"tipo_avulso_{week_start}",
-                    )
-
-                    data_avulso = st.date_input(
-                        "Data",
-                        value=week_start,
-                        min_value=week_start,
-                        max_value=week_start + timedelta(days=6),
-                        key=f"data_avulso_{week_start}",
-                    )
-                    hora_avulso = st.time_input(
-                        "Horário de início",
-                        value=time(6, 0),
-                        key=f"hora_avulso_{week_start}",
-                    )
-                    duracao_avulso = st.number_input(
-                        "Duração (min)",
-                        min_value=15,
-                        max_value=300,
-                        value=DEFAULT_TRAINING_DURATION_MIN,
-                        step=5,
-                        key=f"dur_avulso_{week_start}",
-                    )
-
-                    unidade = UNITS_ALLOWED.get(mod_avulso, "")
-                    volume_avulso = st.number_input(
-                        f"Volume ({unidade})",
-                        min_value=0.0,
-                        value=0.0,
-                        step=_unit_step(unidade),
-                        format="%.1f" if unidade == "km" else "%g",
-                        key=f"vol_avulso_{week_start}",
-                    )
-
-                    detalhamento_avulso = st.text_area(
-                        "Detalhamento/roteiro", key=f"det_avulso_{week_start}", height=120
-                    )
-                    obs_avulso = st.text_area(
-                        "Observações rápidas", key=f"obs_avulso_{week_start}", height=80
-                    )
-                    rpe_avulso = st.slider(
-                        "RPE esperado",
-                        min_value=0,
-                        max_value=10,
-                        value=5,
-                        key=f"rpe_avulso_{week_start}",
-                    )
-
-                    submitted_avulso = st.form_submit_button("Incluir treino avulso")
-
-                    if submitted_avulso:
-                        start_avulso = datetime.combine(data_avulso, hora_avulso)
-                        end_avulso = start_avulso + timedelta(minutes=int(duracao_avulso))
-                        novo_uid = generate_uid(user_id)
-
-                        novo_treino = {
-                            "UserID": user_id,
-                            "UID": novo_uid,
-                            "Data": data_avulso,
-                            "Start": start_avulso.isoformat(),
-                            "End": end_avulso.isoformat(),
-                            "Modalidade": mod_avulso,
-                            "Tipo de Treino": tipo_avulso,
-                            "Volume": float(volume_avulso),
-                            "Unidade": unidade,
-                            "RPE": int(rpe_avulso),
-                            "Detalhamento": detalhamento_avulso,
-                            "TempoEstimadoMin": int(duracao_avulso),
-                            "Observações": obs_avulso,
-                            "Status": "Planejado",
-                            "adj": "",
-                            "AdjAppliedAt": "",
-                            "ChangeLog": json.dumps([], ensure_ascii=False),
-                            "LastEditedAt": datetime.now().isoformat(timespec="seconds"),
-                            "WeekStart": monday_of_week(data_avulso),
-                            "Fase": "",
-                            "TSS": 0.0,
-                            "IF": 0.0,
-                            "ATL": 0.0,
-                            "CTL": 0.0,
-                            "TSB": 0.0,
-                            "StravaID": "",
-                            "StravaURL": "",
-                            "DuracaoRealMin": 0.0,
-                            "DistanciaReal": 0.0,
-                        }
-
-                        df_current = st.session_state.get("df", pd.DataFrame()).copy()
-                        novo_df = pd.DataFrame([novo_treino], columns=SCHEMA_COLS)
-                        df_current = pd.concat([df_current, novo_df], ignore_index=True)
-                        save_user_df(user_id, df_current)
-                        canonical_week_df.clear()
-                        st.toast("Treino avulso incluído no calendário!", icon="✅")
-                        safe_rerun()
-
-            if st.session_state.get("calendar_forcar_snapshot", False):
-                eventos = []
-                if isinstance(cal_state, dict):
-                    eventos = cal_state.get("events") or []
-                    if not eventos:
-                        eventos = cal_state.get("eventsSet", {}).get("events", [])
+        if st.session_state.get("calendar_forcar_snapshot", False):
+            eventos = []
+            if isinstance(cal_state, dict):
+                eventos = cal_state.get("events") or []
                 if not eventos:
-                    eventos = st.session_state.get("calendar_snapshot", [])
+                    eventos = cal_state.get("eventsSet", {}).get("events", [])
+            if not eventos:
+                eventos = st.session_state.get("calendar_snapshot", [])
 
-                if eventos:
-                    df_current = st.session_state["df"].copy()
+            if eventos:
+                df_current = st.session_state["df"].copy()
 
-                    for ev in eventos:
-                        ext = ev.get("extendedProps", {})
-                        if ext.get("type") != "treino":
-                            continue
+                for ev in eventos:
+                    ext = ev.get("extendedProps", {})
+                    if ext.get("type") != "treino":
+                        continue
 
-                        uid = ext.get("uid") or ev.get("id")
-                        if not uid:
-                            continue
+                    uid = ext.get("uid") or ev.get("id")
+                    if not uid:
+                        continue
 
-                        mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
-                        if not mask.any():
-                            continue
+                    mask = (df_current["UserID"] == user_id) & (df_current["UID"] == uid)
+                    if not mask.any():
+                        continue
 
-                        idx = df_current[mask].index[0]
-                        old_row = df_current.loc[idx].copy()
-                        start = parse_iso(ev.get("start"))
-                        end = parse_iso(ev.get("end"))
-                        if not start or not end or end <= start:
-                            continue
+                    idx = df_current[mask].index[0]
+                    old_row = df_current.loc[idx].copy()
+                    start = parse_iso(ev.get("start"))
+                    end = parse_iso(ev.get("end"))
+                    if not start or not end or end <= start:
+                        continue
 
-                        df_current.at[idx, "Start"] = start.isoformat()
-                        df_current.at[idx, "End"] = end.isoformat()
-                        df_current.at[idx, "Data"] = start.date()
-                        df_current.at[idx, "WeekStart"] = monday_of_week(start.date())
-                        df_current.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
-                        df_current.at[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
+                    df_current.at[idx, "Start"] = start.isoformat()
+                    df_current.at[idx, "End"] = end.isoformat()
+                    df_current.at[idx, "Data"] = start.date()
+                    df_current.at[idx, "WeekStart"] = monday_of_week(start.date())
+                    df_current.at[idx, "LastEditedAt"] = datetime.now().isoformat(timespec="seconds")
+                    df_current.at[idx, "ChangeLog"] = append_changelog(old_row, df_current.loc[idx])
 
-                    save_user_df(user_id, df_current)
+                save_user_df(user_id, df_current)
 
-                    df_from_csv = load_all()
-                    st.session_state["df"] = df_from_csv[df_from_csv["UserID"] == user_id].copy()
-                    st.session_state["all_df"] = df_from_csv
-                    st.session_state["calendar_snapshot"] = eventos
+                df_from_csv = load_all()
+                st.session_state["df"] = df_from_csv[df_from_csv["UserID"] == user_id].copy()
+                st.session_state["all_df"] = df_from_csv
+                st.session_state["calendar_snapshot"] = eventos
+                canonical_week_df.clear()
+
+                st.success("✅ Semana salva com os horários visuais do calendário.")
+            else:
+                st.warning("⚠️ Nenhum evento encontrado para salvar.")
+
+            st.session_state["calendar_forcar_snapshot"] = False
+
+        if cal_state and "select" in cal_state:
+            sel = cal_state["select"]
+            s = parse_iso(sel.get("start"))
+            e = parse_iso(sel.get("end"))
+            if s and e and e > s:
+                conflito = False
+                for _, r in week_df_can.iterrows():
+                    ts = r["StartDT"]
+                    te = r["EndDT"]
+                    if ts and te and not (te <= s or ts >= e):
+                        conflito = True
+                        break
+                if not conflito:
+                    week_slots.append({"start": s, "end": e})
+                    set_week_availability(user_id, week_start, week_slots)
+                    st.session_state["selected_training_uid"] = None
                     canonical_week_df.clear()
-
-                    st.success("✅ Semana salva com os horários visuais do calendário.")
-                else:
-                    st.warning("⚠️ Nenhum evento encontrado para salvar.")
-
-                st.session_state["calendar_forcar_snapshot"] = False
-
-            if cal_state and "select" in cal_state:
-                sel = cal_state["select"]
-                s = parse_iso(sel.get("start"))
-                e = parse_iso(sel.get("end"))
-                if s and e and e > s:
-                    conflito = False
-                    for _, r in week_df_can.iterrows():
-                        ts = r["StartDT"]
-                        te = r["EndDT"]
-                        if ts and te and not (te <= s or ts >= e):
-                            conflito = True
-                            break
-                    if not conflito:
-                        week_slots.append({"start": s, "end": e})
-                        set_week_availability(user_id, week_start, week_slots)
-                        st.session_state["selected_training_uid"] = None
-                        canonical_week_df.clear()
-                        safe_rerun()
+                    safe_rerun()
 
         def _persist_calendar_update(uid: str, start: datetime, end: datetime) -> Optional[int]:
             if not uid or not start or not end or end <= start:
