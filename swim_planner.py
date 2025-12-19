@@ -277,6 +277,28 @@ def _session_distance_km(total_meters: int) -> float:
     return round(total_meters / 1000.0, 3)
 
 
+def _round_to_pool(meters: int, pool_length: int) -> int:
+    """Round a distance to the nearest multiple of the pool length (or 50m)."""
+
+    length = pool_length if pool_length in (25, 50) else 50
+    return int(math.ceil(meters / length) * length)
+
+
+def _pad_session_volume(
+    target_km: float, pool_length: int, warmup_m: int, drills_m: int, main_m: int, cooldown_m: int
+) -> tuple[int, int]:
+    """Ensure the session meets the distributed distance target, padding the main set if needed."""
+
+    target_m = int(target_km * 1000)
+    base_total = warmup_m + drills_m + main_m + cooldown_m
+    if target_m <= 0 or base_total >= target_m:
+        return main_m, base_total
+    gap = _round_to_pool(target_m - base_total, pool_length)
+    main_m += gap
+    base_total = warmup_m + drills_m + main_m + cooldown_m
+    return main_m, base_total
+
+
 def gerar_plano_swim_css(cfg: PlanSwimConfig) -> pd.DataFrame:
     css_sec = _css_from_cfg(cfg)
     css_pace = _format_pace_min_per_100(css_sec)
@@ -354,11 +376,15 @@ def gerar_plano_swim_css(cfg: PlanSwimConfig) -> pd.DataFrame:
                 focus = "recovery"
             if main_m == 0:
                 main_m = max(int(distance_km * 1000 * 0.7), 600)
-            total_m = warmup_m + drills_m + main_m + cooldown_m
-            distance_km = _session_distance_km(total_m)
+            base_total = warmup_m + drills_m + main_m + cooldown_m
+            main_m, total_m = _pad_session_volume(distance_km, cfg.pool_length_m, warmup_m, drills_m, main_m, cooldown_m)
+            if total_m > base_total:
+                extra_added = total_m - base_total
+                description_parts.append(f"Extra: completar {extra_added}m contínuos Z2 para bater volume alvo da semana.")
             description_parts.append(cooldown_easy(cooldown_m))
             description_parts.append("Nota técnica: alongar braçada, manter cotovelo alto.")
             desc = " ".join(description_parts)
+            distance_km = _session_distance_km(total_m)
             rows.append(
                 _session_entry(
                     week_num,
@@ -434,7 +460,11 @@ def gerar_plano_swim_base(cfg: PlanSwimConfig) -> pd.DataFrame:
                 focus = "threshold"
             if main_m == 0:
                 main_m = max(int(distance_km * 1000 * 0.75), 1000)
-            total_m = warmup_m + drills_m + main_m + cooldown_m
+            base_total = warmup_m + drills_m + main_m + cooldown_m
+            main_m, total_m = _pad_session_volume(distance_km, cfg.pool_length_m, warmup_m, drills_m, main_m, cooldown_m)
+            if total_m > base_total:
+                extra_added = total_m - base_total
+                description_parts.append(f"Extra: {extra_added}m Z2 contínuos para fechar volume distribuído.")
             distance_km = _session_distance_km(total_m)
             description_parts.append(cooldown_easy(cooldown_m))
             description_parts.append("Nota técnica: manter linha hidrodinâmica e respiração suave.")
@@ -506,7 +536,11 @@ def gerar_plano_swim_polarized(cfg: PlanSwimConfig) -> pd.DataFrame:
                 label = "Easy/Drills"
             if main_m == 0:
                 main_m = max(int(distance_km * 1000 * 0.75), 800)
-            total_m = warmup_m + drills_m + main_m + cooldown_m
+            base_total = warmup_m + drills_m + main_m + cooldown_m
+            main_m, total_m = _pad_session_volume(distance_km, cfg.pool_length_m, warmup_m, drills_m, main_m, cooldown_m)
+            if total_m > base_total:
+                extra_added = total_m - base_total
+                description_parts.append(f"Extra: {extra_added}m Z2 após a série para acertar volume semanal.")
             distance_km = _session_distance_km(total_m)
             description_parts.append(cooldown_easy(cooldown_m))
             description_parts.append("Nota técnica: manter cotovelo alto mesmo em tiros fortes.")
@@ -581,7 +615,11 @@ def gerar_plano_swim_openwater(cfg: PlanSwimConfig) -> pd.DataFrame:
                 focus = "recovery"
             if main_m == 0:
                 main_m = max(int(distance_km * 1000 * 0.8), 1200)
-            total_m = warmup_m + drills_m + main_m + cooldown_m
+            base_total = warmup_m + drills_m + main_m + cooldown_m
+            main_m, total_m = _pad_session_volume(distance_km, cfg.pool_length_m, warmup_m, drills_m, main_m, cooldown_m)
+            if total_m > base_total:
+                extra_added = total_m - base_total
+                description_parts.append(f"Extra: {extra_added}m steady Z2 simulando águas abertas para fechar volume.")
             distance_km = _session_distance_km(total_m)
             description_parts.append(cooldown_easy(cooldown_m))
             description_parts.append("Nota técnica: simular águas abertas (sighting, sem parede).")
