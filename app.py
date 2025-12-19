@@ -2931,10 +2931,10 @@ def suggestion_to_training_df(exercicios_raw: list[dict[str, Any]]) -> pd.DataFr
     return pd.DataFrame(rows, columns=TRAINING_SHEET_COLUMNS)
 
 
-def apply_suggestion_to_block(
-    user_id: str, bloco: str, exercicios_raw: list[dict[str, Any]]
+def apply_suggestion_to_sheet(
+    user_id: str, sheet_name: str, exercicios_raw: list[dict[str, Any]]
 ) -> tuple[str, pd.DataFrame]:
-    sheet_name = f"Ficha {str(bloco).upper()}"
+    sheet_name = sheet_name.strip()
     suggestion_df = suggestion_to_training_df(exercicios_raw)
     save_training_sheet(user_id, sheet_name, suggestion_df)
     return sheet_name, suggestion_df
@@ -7226,45 +7226,58 @@ def render_training_sheets_page(user_id: str):
     exercise_suggestions = sorted({ex for lst in EXERCICIOS_CLASSICOS.values() for ex in lst})
     exercise_to_group = {ex: group for group, exercises in EXERCICIOS_CLASSICOS.items() for ex in exercises}
 
-    st.markdown("### Treinos sugeridos para blocos A, B ou C")
-    st.caption("Visualize um modelo pronto e envie para a ficha A, B ou C em um clique.")
-    suggestion_names = [s.get("nome") for s in SUGGESTED_TREINOS]
-    selected_suggestion_name = st.selectbox(
-        "Veja os treinos sugeridos",
-        suggestion_names,
-        key="training_suggestion_select",
-    )
-    selected_suggestion = next(
-        (s for s in SUGGESTED_TREINOS if s.get("nome") == selected_suggestion_name), None
-    )
-    suggestion_df = (
-        suggestion_to_training_df(selected_suggestion.get("exercicios", []))
-        if selected_suggestion
-        else pd.DataFrame(columns=TRAINING_SHEET_COLUMNS)
-    )
-    if not suggestion_df.empty:
-        st.dataframe(
-            suggestion_df.drop(columns=["carga_observacao", "descanso_s"]),
-            use_container_width=True,
+    @st.dialog("Sugestões de treino")
+    def suggestion_dialog():
+        st.markdown("### Treinos sugeridos")
+        st.caption("Escolha um modelo pronto e envie diretamente para qualquer ficha.")
+        suggestion_names = [s.get("nome") for s in SUGGESTED_TREINOS]
+        selected_suggestion_name = st.selectbox(
+            "Veja os treinos sugeridos",
+            suggestion_names,
+            key="training_suggestion_select_dialog",
         )
+        selected_suggestion = next(
+            (s for s in SUGGESTED_TREINOS if s.get("nome") == selected_suggestion_name), None
+        )
+        suggestion_df = (
+            suggestion_to_training_df(selected_suggestion.get("exercicios", []))
+            if selected_suggestion
+            else pd.DataFrame(columns=TRAINING_SHEET_COLUMNS)
+        )
+        if not suggestion_df.empty:
+            st.dataframe(
+                suggestion_df.drop(columns=["carga_observacao", "descanso_s"]),
+                use_container_width=True,
+            )
 
-    col_sug_1, col_sug_2 = st.columns(2)
-    with col_sug_1:
-        bloco_destino = st.selectbox(
-            "Enviar para qual bloco?", ["A", "B", "C"], key="training_suggestion_block"
+        destination_options = sheet_names + ["Criar nova ficha..."]
+        destination_choice = st.selectbox(
+            "Enviar para qual ficha?",
+            options=destination_options,
+            key="training_suggestion_destination",
         )
-    with col_sug_2:
+        new_sheet_name = ""
+        if destination_choice == "Criar nova ficha...":
+            new_sheet_name = st.text_input("Nome da nova ficha", key="training_suggestion_new_name")
+
+        target_name = new_sheet_name.strip() if destination_choice == "Criar nova ficha..." else destination_choice
+
         if st.button("Enviar treino sugerido", key="apply_training_suggestion_btn"):
             if suggestion_df.empty:
                 st.error("Escolha uma sugestão válida para enviar.")
+            elif not target_name:
+                st.error("Informe o nome da ficha destino.")
             else:
-                sheet_name, saved_df = apply_suggestion_to_block(
-                    user_id, bloco_destino, selected_suggestion.get("exercicios", [])
+                sheet_name, saved_df = apply_suggestion_to_sheet(
+                    user_id, target_name, selected_suggestion.get("exercicios", [])
                 )
                 st.session_state["selected_training_sheet"] = sheet_name
                 st.session_state["df_training_sheet"] = saved_df
                 st.success(f"{selected_suggestion_name} enviada para {sheet_name}.")
                 safe_rerun()
+
+    if st.button("Abrir sugestões de treino", key="open_training_suggestions"):
+        suggestion_dialog()
 
     editor_df = (
         st.session_state["df_training_sheet"].reindex(columns=TRAINING_SHEET_COLUMNS).copy()
@@ -7280,8 +7293,9 @@ def render_training_sheets_page(user_id: str):
         key="training_sheet_editor",
         column_config={
             "ordem": st.column_config.NumberColumn("Ordem", step=1, min_value=1, disabled=True),
-            "exercicio": st.column_config.SelectboxColumn(
-                "Exercício", options=exercise_suggestions + ["Outro exercício"]
+            "exercicio": st.column_config.TextColumn(
+                "Exercício",
+                help="Digite qualquer exercício ou use os clássicos como referência.",
             ),
             "grupo_muscular": st.column_config.TextColumn("Grupo muscular"),
             "series": st.column_config.NumberColumn("Séries", step=1, min_value=0),
